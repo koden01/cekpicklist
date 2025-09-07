@@ -1,0 +1,27 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- Dialog Sizing -->
+    <dimen name="dialog_margin">8dp</dimen>
+    <dimen name="dialog_padding">16dp</dimen>
+    <dimen name="dialog_min_width">280dp</dimen>
+    <dimen name="dialog_max_width">400dp</dimen>
+    
+    <!-- Picklist Dialog Specific -->
+    <dimen name="picklist_dialog_max_height">500dp</dimen>
+    <dimen name="picklist_recycler_height">300dp</dimen>
+    <dimen name="picklist_item_height">56dp</dimen>
+    
+    <!-- Confirmation Dialog Specific -->
+    <dimen name="confirmation_dialog_padding">24dp</dimen>
+    <dimen name="confirmation_dialog_min_width">300dp</dimen>
+    
+    <!-- Button Sizing -->
+    <dimen name="dialog_button_height">48dp</dimen>
+    <dimen name="dialog_button_padding">16dp</dimen>
+    <dimen name="dialog_button_text_size">16sp</dimen>
+    
+    <!-- Text Sizing -->
+    <dimen name="dialog_title_size">18sp</dimen>
+    <dimen name="dialog_message_size">16sp</dimen>
+    <dimen name="dialog_item_text_size">14sp</dimen>
+</resources>

@@ -1,0 +1,21 @@
+<?xml version="1.0" encoding="utf-8"?>
+<shape xmlns:android="http://schemas.android.com/apk/res/android"
+    android:shape="rectangle">
+    
+    <!-- Gradient background dengan efek neon -->
+    <gradient
+        android:type="linear"
+        android:angle="135"
+        android:startColor="#FF1744"
+        android:centerColor="#FF5722"
+        android:endColor="#D32F2F" />
+    
+    <!-- Border dengan efek glow -->
+    <stroke
+        android:width="2dp"
+        android:color="#FF6B6B" />
+    
+    <!-- Corner radius untuk efek modern -->
+    <corners android:radius="12dp" />
+    
+</shape>

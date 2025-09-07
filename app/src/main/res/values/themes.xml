@@ -1,0 +1,111 @@
+<resources xmlns:tools="http://schemas.android.com/tools">
+    <!-- Base application theme. -->
+    <style name="Base.Theme.CekPicklist" parent="Theme.Material3.DayNight.NoActionBar">
+        <!-- Customize your light theme here. -->
+        <item name="colorPrimary">#4CAF50</item>
+        <item name="colorPrimaryVariant">#388E3C</item>
+        <item name="colorOnPrimary">#FFFFFF</item>
+        <item name="colorSecondary">#8BC34A</item>
+        <item name="colorOnSecondary">#FFFFFF</item>
+        <item name="android:statusBarColor">#4CAF50</item>
+        <item name="android:navigationBarColor">#4CAF50</item>
+    </style>
+
+    <style name="Theme.CekPicklist" parent="Base.Theme.CekPicklist" />
+
+    <!-- Custom Dialog Theme -->
+    <style name="CustomDialogTheme" parent="Theme.Material3.DayNight.Dialog">
+        <item name="android:windowBackground">@drawable/bg_dialog</item>
+        <item name="android:windowIsFloating">true</item>
+        <item name="android:windowContentOverlay">@null</item>
+        <item name="android:windowNoTitle">true</item>
+        <item name="android:windowIsTranslucent">false</item>
+        <item name="android:backgroundDimEnabled">true</item>
+        <item name="android:textColorPrimary">@android:color/black</item>
+        <item name="android:textColorSecondary">@android:color/black</item>
+        <item name="android:textColorTertiary">@android:color/black</item>
+        <item name="android:textColor">@android:color/black</item>
+        <item name="android:buttonBarButtonStyle">@style/CustomDialogButtonStyle</item>
+        <!-- Override Material3 default colors -->
+        <item name="colorPrimary">#4CAF50</item>
+        <item name="colorOnPrimary">@android:color/black</item>
+        <item name="colorSecondary">#8BC34A</item>
+        <item name="colorOnSecondary">@android:color/black</item>
+        <item name="colorSurface">@android:color/white</item>
+        <item name="colorOnSurface">@android:color/black</item>
+        <item name="colorOnSurfaceVariant">@android:color/black</item>
+        <!-- Remove padding from theme to avoid conflicts -->
+    </style>
+
+    <!-- Simple Confirmation Dialog Theme -->
+    <style name="SimpleDialogTheme" parent="Theme.Material3.DayNight.Dialog">
+        <item name="android:windowBackground">@android:color/white</item>
+        <item name="android:windowIsFloating">true</item>
+        <item name="android:windowContentOverlay">@null</item>
+        <item name="android:windowNoTitle">true</item>
+        <item name="android:windowIsTranslucent">false</item>
+        <item name="android:backgroundDimEnabled">true</item>
+        <item name="android:textColorPrimary">@android:color/black</item>
+        <item name="android:textColorSecondary">@android:color/black</item>
+        <item name="android:textColorTertiary">@android:color/black</item>
+        <item name="android:textColor">@android:color/black</item>
+        <item name="android:buttonBarButtonStyle">@style/CustomDialogButtonStyle</item>
+        <!-- Override Material3 default colors -->
+        <item name="colorPrimary">#4CAF50</item>
+        <item name="colorOnPrimary">@android:color/black</item>
+        <item name="colorSecondary">#8BC34A</item>
+        <item name="colorOnSecondary">@android:color/black</item>
+        <item name="colorSurface">@android:color/white</item>
+        <item name="colorOnSurface">@android:color/black</item>
+        <item name="colorOnSurfaceVariant">@android:color/black</item>
+    </style>
+
+    <!-- Custom Dialog Button Style -->
+    <style name="CustomDialogButtonStyle" parent="Widget.Material3.Button.TextButton">
+        <item name="android:textColor">#4CAF50</item>
+        <item name="android:textSize">@dimen/dialog_button_text_size</item>
+        <item name="android:textStyle">bold</item>
+        <item name="android:padding">@dimen/dialog_button_padding</item>
+        <item name="android:minHeight">@dimen/dialog_button_height</item>
+        <item name="android:background">@android:color/transparent</item>
+    </style>
+
+    <!-- Round Dialog Theme dengan Tombol Rata Tengah -->
+    <style name="RoundDialogTheme" parent="Theme.Material3.DayNight.Dialog">
+        <item name="android:windowBackground">@drawable/bg_round_dialog</item>
+        <item name="android:windowIsFloating">true</item>
+        <item name="android:windowContentOverlay">@null</item>
+        <item name="android:windowNoTitle">true</item>
+        <item name="android:windowIsTranslucent">false</item>
+        <item name="android:backgroundDimEnabled">true</item>
+        <item name="android:textColorPrimary">@android:color/black</item>
+        <item name="android:textColorSecondary">@android:color/black</item>
+        <item name="android:textColorTertiary">@android:color/black</item>
+        <item name="android:textColor">@android:color/black</item>
+        <item name="android:buttonBarButtonStyle">@style/RoundDialogButtonStyle</item>
+        <item name="android:windowMinWidthMajor">@dimen/confirmation_dialog_min_width</item>
+        <item name="android:windowMinWidthMinor">@dimen/confirmation_dialog_min_width</item>
+        <!-- Override Material3 default colors -->
+        <item name="colorPrimary">#4CAF50</item>
+        <item name="colorOnPrimary">@android:color/black</item>
+        <item name="colorSecondary">#8BC34A</item>
+        <item name="colorOnSecondary">@android:color/black</item>
+        <item name="colorSurface">@android:color/white</item>
+        <item name="colorOnSurface">@android:color/black</item>
+        <item name="colorOnSurfaceVariant">@android:color/black</item>
+    </style>
+
+    <!-- Round Dialog Button Style -->
+    <style name="RoundDialogButtonStyle" parent="Widget.Material3.Button.TextButton">
+        <item name="android:textColor">#4CAF50</item>
+        <item name="android:textSize">16sp</item>
+        <item name="android:textStyle">bold</item>
+        <item name="android:padding">16dp</item>
+        <item name="android:minHeight">48dp</item>
+        <item name="android:background">@android:color/transparent</item>
+        <item name="android:layout_width">0dp</item>
+        <item name="android:layout_weight">1</item>
+        <item name="android:gravity">center</item>
+    </style>
+
+</resources>

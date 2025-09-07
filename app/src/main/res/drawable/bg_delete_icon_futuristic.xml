@@ -1,0 +1,18 @@
+<?xml version="1.0" encoding="utf-8"?>
+<shape xmlns:android="http://schemas.android.com/apk/res/android"
+    android:shape="oval">
+    
+    <!-- Gradient untuk efek pulsing -->
+    <gradient
+        android:type="radial"
+        android:gradientRadius="20dp"
+        android:startColor="#FF4081"
+        android:centerColor="#E91E63"
+        android:endColor="#C2185B" />
+    
+    <!-- Border dengan efek neon -->
+    <stroke
+        android:width="3dp"
+        android:color="#FF80AB" />
+    
+</shape>
