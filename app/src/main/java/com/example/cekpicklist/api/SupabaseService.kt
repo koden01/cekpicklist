@@ -25,7 +25,7 @@ class SupabaseService {
     
     suspend fun getPicklists(): List<String> = withContext(Dispatchers.IO) {
         try {
-            println("🔍 Fetching picklists from Supabase for today only...")
+            println("🔍 Fetching picklists from Supabase for today only with pagination...")
             
             // Dapatkan tanggal hari ini dalam format YYYY-MM-DD
             val today = LocalDate.now().toString()
@@ -35,41 +35,70 @@ class SupabaseService {
             println("📅 Today's date: $today")
             println("🕐 Current time: $now")
             println("🌍 Timezone: $timezone")
-            println("🔍 Query URL: $supabaseUrl/rest/v1/picklist?select=no_picklist,created_at&created_at=gte.$today&order=created_at.desc")
             
-            val request = Request.Builder()
-                .url("$supabaseUrl/rest/v1/picklist?select=no_picklist,created_at&created_at=gte.$today&order=created_at.desc")
-                .addHeader("apikey", supabaseKey)
-                .addHeader("Authorization", "Bearer $supabaseKey")
-                .build()
+            val allPicklists = mutableSetOf<String>()
+            var offset = 0
+            val limit = 1000
+            var hasMoreData = true
             
-            val response = client.newCall(request).execute()
-            println("📦 Supabase getPicklists response code: ${response.code}")
-            if (response.isSuccessful) {
-                val responseBody = response.body?.string() ?: "[]"
-                println("📦 Supabase getPicklists response body: $responseBody")
-                println("📦 Response length: ${responseBody.length} characters")
-                val jsonArray = JSONArray(responseBody)
-                val picklists = mutableSetOf<String>() // Gunakan Set untuk unik
-                println("📊 Total records found: ${jsonArray.length()}")
+            while (hasMoreData) {
+                val queryUrl = "$supabaseUrl/rest/v1/picklist?select=no_picklist,created_at&created_at=gte.$today&order=created_at.desc&limit=$limit&offset=$offset"
+                println("🔍 Query URL (offset=$offset): $queryUrl")
                 
-                for (i in 0 until jsonArray.length()) {
-                    val jsonObject = jsonArray.getJSONObject(i)
-                    val noPicklist = jsonObject.getString("no_picklist")
-                    val createdAt = if (jsonObject.has("created_at") && !jsonObject.isNull("created_at")) {
-                        jsonObject.getString("created_at")
-                    } else {
-                        "null"
+                val request = Request.Builder()
+                    .url(queryUrl)
+                    .addHeader("apikey", supabaseKey)
+                    .addHeader("Authorization", "Bearer $supabaseKey")
+                    .build()
+                
+                val response = client.newCall(request).execute()
+                println("📦 Supabase getPicklists response code: ${response.code}")
+                
+                if (response.isSuccessful) {
+                    val responseBody = response.body?.string() ?: "[]"
+                    val jsonArray = JSONArray(responseBody)
+                    val batchSize = jsonArray.length()
+                    
+                    println("📦 Batch ${(offset/limit) + 1} - Response length: ${responseBody.length} characters")
+                    println("📊 Batch ${(offset/limit) + 1} - Records found: $batchSize")
+                    
+                    if (batchSize == 0) {
+                        hasMoreData = false
+                        break
                     }
-                    picklists.add(noPicklist)
-                    println("📋 Picklist: $noPicklist, Created: $createdAt")
+                    
+                    for (i in 0 until batchSize) {
+                        val jsonObject = jsonArray.getJSONObject(i)
+                        val noPicklist = jsonObject.getString("no_picklist")
+                        val createdAt = if (jsonObject.has("created_at") && !jsonObject.isNull("created_at")) {
+                            jsonObject.getString("created_at")
+                        } else {
+                            "null"
+                        }
+                        allPicklists.add(noPicklist)
+                        println("📋 Picklist: $noPicklist, Created: $createdAt")
+                    }
+                    
+                    // Jika batch size kurang dari limit, berarti sudah habis
+                    if (batchSize < limit) {
+                        hasMoreData = false
+                    } else {
+                        offset += limit
+                    }
+                    
+                    // Delay antar batch untuk menghindari rate limiting
+                    if (hasMoreData) {
+                        kotlinx.coroutines.delay(100) // 100ms delay
+                    }
+                } else {
+                    println("❌ Supabase getPicklists request failed with code: ${response.code}")
+                    break
                 }
-                println("✅ Found ${picklists.size} unique picklist numbers: ${picklists.take(10)}")
-                picklists.toList() // Konversi kembali ke List
-            } else {
-                println("❌ Supabase getPicklists request failed with code: ${response.code}")
-                emptyList()
             }
+            
+            println("✅ Found ${allPicklists.size} unique picklist numbers total: ${allPicklists.take(10)}")
+            allPicklists.toList() // Konversi kembali ke List
+            
         } catch (e: Exception) {
             println("❌ Error fetching picklists: ${e.message}")
             e.printStackTrace()
@@ -161,7 +190,7 @@ class SupabaseService {
             
             // Sesuai dengan struktur tabel picklist_scan yang sebenarnya
             val jsonObject = JSONObject().apply {
-                put("no_picklist", picklistScan.noPicklist)
+                put("no_picklist", picklistScan.noPicklist)  // Menggunakan no_picklist sebagai primary key
                 put("product_id", picklistScan.productId)
                 put("article_id", picklistScan.articleId)
                 put("article_name", picklistScan.articleName)
@@ -194,11 +223,18 @@ class SupabaseService {
         }
     }
     
-    // Fungsi baru untuk mendapatkan data scan berdasarkan picklist number
+    // Fungsi baru untuk mendapatkan data scan berdasarkan picklist number (HANYA HARI INI)
     suspend fun getPicklistScans(picklistNumber: String): List<JSONObject> = withContext(Dispatchers.IO) {
         try {
+            // Dapatkan tanggal hari ini dalam format YYYY-MM-DD
+            val today = LocalDate.now().toString()
+            println("📅 Fetching picklist scans for today: $today")
+            
             val encodedPicklistNumber = URLEncoder.encode(picklistNumber, "UTF-8")
-            val queryUrl = "$supabaseUrl/rest/v1/picklist_scan?no_picklist=eq.$encodedPicklistNumber&order=created_at.desc"
+            // Filter hanya data hari ini dengan created_at >= hari ini
+            val queryUrl = "$supabaseUrl/rest/v1/picklist_scan?no_picklist=eq.$encodedPicklistNumber&created_at=gte.$today&order=created_at.desc"
+            
+            println("🔍 Query URL: $queryUrl")
             
             val request = Request.Builder()
                 .url(queryUrl)
@@ -207,6 +243,7 @@ class SupabaseService {
                 .build()
             
             val response = client.newCall(request).execute()
+            println("📦 Supabase getPicklistScans response code: ${response.code}")
             
             if (response.isSuccessful) {
                 val responseBody = response.body?.string() ?: "[]"
@@ -217,8 +254,15 @@ class SupabaseService {
                     for (i in 0 until jsonArray.length()) {
                         scans.add(jsonArray.getJSONObject(i))
                     }
+                    println("✅ Found ${scans.size} scan records for today")
                     return@withContext scans
+                } else {
+                    println("⚠️ No scan records found for today")
                 }
+            } else {
+                println("❌ Query failed with code: ${response.code}")
+                val errorBody = response.body?.string()
+                println("❌ Error response: $errorBody")
             }
             
             emptyList()

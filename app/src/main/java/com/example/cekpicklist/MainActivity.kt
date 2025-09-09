@@ -13,6 +13,7 @@ import android.widget.Toast
 import android.widget.ImageView
 import android.widget.TextView
 import android.widget.FrameLayout
+import android.widget.LinearLayout
 import android.view.Gravity
 import androidx.activity.OnBackPressedCallback
 import androidx.activity.viewModels
@@ -272,8 +273,8 @@ class MainActivity : AppCompatActivity() {
     private fun navigateBackToPicklistInput() {
         Log.d("MainActivity", "🔥 Navigasi kembali ke PicklistInputActivity")
         
-        // Hentikan auto-post timer
-        viewModel.stopAutoPostTimer()
+        // Simpan data ke Supabase sebelum kembali
+        viewModel.returnToPicklistInput()
         
         // Clear data yang tidak perlu
         viewModel.clearError()
@@ -1111,47 +1112,27 @@ class MainActivity : AppCompatActivity() {
      */
     private fun updateRealtimeStatusIndicator(isConnected: Boolean) {
         try {
-            // Cari atau buat indicator di toolbar
-            val toolbar = findViewById<androidx.appcompat.widget.Toolbar>(R.id.toolbar)
-            if (toolbar != null) {
-                // Update atau buat indicator
-                val indicator = toolbar.findViewById<ImageView>(R.id.realtime_indicator)
-                if (indicator == null) {
-                    // Buat indicator baru jika belum ada
-                    val newIndicator = ImageView(this)
-                    newIndicator.id = R.id.realtime_indicator
-                    newIndicator.layoutParams = androidx.appcompat.widget.Toolbar.LayoutParams(
-                        androidx.appcompat.widget.Toolbar.LayoutParams.WRAP_CONTENT,
-                        androidx.appcompat.widget.Toolbar.LayoutParams.WRAP_CONTENT
-                    ).apply {
-                        gravity = android.view.Gravity.END
-                        marginEnd = 16
-                    }
-                    toolbar.addView(newIndicator)
-                }
-                
-                // Update icon berdasarkan status
-                val icon = if (isConnected) {
-                    R.drawable.ic_signal_wifi_4_bar // Icon WiFi terhubung
-                } else {
-                    R.drawable.ic_signal_wifi_off // Icon WiFi terputus
-                }
-                
-                toolbar.findViewById<ImageView>(R.id.realtime_indicator)?.setImageResource(icon)
-                
-                // Update color
-                val color = if (isConnected) {
-                    getColor(android.R.color.holo_green_dark)
-                } else {
-                    getColor(android.R.color.holo_red_dark)
-                }
-                
-                toolbar.findViewById<ImageView>(R.id.realtime_indicator)?.setColorFilter(color)
-                
-                Log.d("MainActivity", "🔥 Realtime status indicator updated: $isConnected")
+            // Update icon berdasarkan status
+            val icon = if (isConnected) {
+                R.drawable.ic_signal_wifi_4_bar // Icon WiFi terhubung
+            } else {
+                R.drawable.ic_signal_wifi_off // Icon WiFi terputus
             }
+            
+            binding.ivWifiStatus.setImageResource(icon)
+            
+            // Update color
+            val color = if (isConnected) {
+                getColor(android.R.color.holo_green_dark)
+            } else {
+                getColor(android.R.color.holo_red_dark)
+            }
+            
+            binding.ivWifiStatus.setColorFilter(color)
+            
+            Log.d("MainActivity", "🔥 WiFi status indicator updated: $isConnected")
         } catch (e: Exception) {
-            Log.e("MainActivity", "🔥 Error updating realtime status indicator: ${e.message}", e)
+            Log.e("MainActivity", "🔥 Error updating WiFi status indicator: ${e.message}", e)
         }
     }
     
@@ -1159,7 +1140,7 @@ class MainActivity : AppCompatActivity() {
      * Tampilkan animasi completion confetti ball dengan suara terompet meriah dan tepuk tangan
      */
     private fun showCompletionAnimation() {
-        Log.d("MainActivity", "🔥 Menampilkan animasi completion dengan confetti ball, terompet meriah, dan tepuk tangan")
+        Log.d("MainActivity", "🔥 Menampilkan animasi completion dengan overlay yang memenuhi layar")
         
         // Sembunyikan tombol submit
         binding.btnSubmit.visibility = View.GONE
@@ -1172,26 +1153,26 @@ class MainActivity : AppCompatActivity() {
             playApplauseSound()
         }, 500)
         
-        // Tampilkan animasi confetti ball besar
+        // Tampilkan animasi overlay yang memenuhi layar
         binding.root.post {
-            // Buat animasi confetti ball programmatically
-            val confettiView = createCheckmarkAnimation()
-            binding.root.addView(confettiView)
+            // Buat overlay yang memenuhi layar
+            val overlayView = createFullScreenOverlay()
+            binding.root.addView(overlayView)
             
             // Animasi fade in dengan efek dramatis
-            confettiView.alpha = 0f
-            confettiView.animate()
+            overlayView.alpha = 0f
+            overlayView.animate()
                 .alpha(1f)
                 .setDuration(500)
                 .start()
             
             // Hapus view setelah 3 detik
-            confettiView.postDelayed({
-                confettiView.animate()
+            overlayView.postDelayed({
+                overlayView.animate()
                     .alpha(0f)
                     .setDuration(500)
                     .withEndAction {
-                        binding.root.removeView(confettiView)
+                        binding.root.removeView(overlayView)
                     }
                     .start()
             }, 2500)
@@ -1208,45 +1189,108 @@ class MainActivity : AppCompatActivity() {
     }
     
     /**
-     * Buat animasi confetti ball dengan suara terompet meriah
+     * Buat overlay yang memenuhi layar dengan animasi konfirmasi di tengah
      */
-    private fun createCheckmarkAnimation(): View {
-        // Menggunakan confetti ball emoji dengan TextView
-        val confettiView = TextView(this)
-        confettiView.text = "🎊" // Confetti ball emoji
-        confettiView.textSize = 150f // Ukuran besar untuk efek dramatis
-        confettiView.gravity = Gravity.CENTER
+    private fun createFullScreenOverlay(): View {
+        // Buat FrameLayout yang memenuhi layar
+        val overlayLayout = FrameLayout(this)
+        overlayLayout.setBackgroundColor(android.graphics.Color.parseColor("#80000000")) // Semi-transparent black
         
-        // Set warna emoji (optional)
-        confettiView.setTextColor(getColor(android.R.color.holo_green_dark))
-        
+        // Layout parameters untuk memenuhi layar
         val layoutParams = FrameLayout.LayoutParams(
+            FrameLayout.LayoutParams.MATCH_PARENT,
+            FrameLayout.LayoutParams.MATCH_PARENT
+        )
+        overlayLayout.layoutParams = layoutParams
+        
+        // Buat container untuk konten di tengah
+        val centerContainer = LinearLayout(this)
+        centerContainer.orientation = LinearLayout.VERTICAL
+        centerContainer.gravity = Gravity.CENTER
+        
+        val centerParams = FrameLayout.LayoutParams(
             FrameLayout.LayoutParams.WRAP_CONTENT,
             FrameLayout.LayoutParams.WRAP_CONTENT
         )
-        layoutParams.gravity = Gravity.CENTER
-        confettiView.layoutParams = layoutParams
+        centerParams.gravity = Gravity.CENTER
+        centerContainer.layoutParams = centerParams
         
-        // Tambahkan efek animasi scale untuk confetti ball
-        confettiView.scaleX = 0.5f
-        confettiView.scaleY = 0.5f
+        // Buat checkmark besar
+        val checkmarkView = TextView(this)
+        checkmarkView.text = "✅" // Checkmark emoji
+        checkmarkView.textSize = 120f // Ukuran besar
+        checkmarkView.gravity = Gravity.CENTER
+        checkmarkView.setTextColor(android.graphics.Color.parseColor("#4CAF50")) // Hijau
         
-        // Animasi scale up untuk efek pop
-        confettiView.animate()
-            .scaleX(1.2f)
-            .scaleY(1.2f)
-            .setDuration(300)
+        // Buat teks konfirmasi
+        val successText = TextView(this)
+        successText.text = "SELESAI!"
+        successText.textSize = 32f
+        successText.gravity = Gravity.CENTER
+        successText.setTextColor(android.graphics.Color.WHITE)
+        successText.typeface = android.graphics.Typeface.DEFAULT_BOLD
+        
+        // Buat teks sub-konfirmasi
+        val subText = TextView(this)
+        subText.text = "Semua item berhasil di-scan"
+        subText.textSize = 16f
+        subText.gravity = Gravity.CENTER
+        subText.setTextColor(android.graphics.Color.parseColor("#E0E0E0"))
+        val subTextParams = LinearLayout.LayoutParams(
+            LinearLayout.LayoutParams.WRAP_CONTENT,
+            LinearLayout.LayoutParams.WRAP_CONTENT
+        )
+        subTextParams.topMargin = 16
+        subText.layoutParams = subTextParams
+        
+        // Buat confetti emoji
+        val confettiView = TextView(this)
+        confettiView.text = "🎊"
+        confettiView.textSize = 80f
+        confettiView.gravity = Gravity.CENTER
+        val confettiParams = LinearLayout.LayoutParams(
+            LinearLayout.LayoutParams.WRAP_CONTENT,
+            LinearLayout.LayoutParams.WRAP_CONTENT
+        )
+        confettiParams.topMargin = 24
+        confettiView.layoutParams = confettiParams
+        
+        // Tambahkan semua view ke container
+        centerContainer.addView(checkmarkView)
+        centerContainer.addView(successText)
+        centerContainer.addView(subText)
+        centerContainer.addView(confettiView)
+        
+        // Tambahkan container ke overlay
+        overlayLayout.addView(centerContainer)
+        
+        // Animasi scale untuk efek pop
+        centerContainer.scaleX = 0.3f
+        centerContainer.scaleY = 0.3f
+        
+        centerContainer.animate()
+            .scaleX(1.0f)
+            .scaleY(1.0f)
+            .setDuration(400)
+            .setInterpolator(android.view.animation.OvershootInterpolator(1.2f))
             .withEndAction {
-                // Scale kembali ke normal
-                confettiView.animate()
-                    .scaleX(1f)
-                    .scaleY(1f)
-                    .setDuration(200)
+                // Animasi bounce ringan
+                centerContainer.animate()
+                    .scaleX(0.95f)
+                    .scaleY(0.95f)
+                    .setDuration(100)
+                    .withEndAction {
+                        centerContainer.animate()
+                            .scaleX(1.0f)
+                            .scaleY(1.0f)
+                            .setDuration(100)
+                            .start()
+                    }
                     .start()
             }
             .start()
         
-        return confettiView
+        return overlayLayout
     }
     
     private fun groupItemsByArticleAndSize(items: List<PicklistItem>): List<PicklistItem> {
@@ -1259,9 +1303,17 @@ class MainActivity : AppCompatActivity() {
         val result = grouped.map { (key, groupedItems) ->
             val firstItem = groupedItems.first()
             val totalQtyPl = groupedItems.sumOf { it.qtyPl }
-            val totalQtyScan = groupedItems.sumOf { it.qtyScan }
+            val rawTotalQtyScan = groupedItems.sumOf { it.qtyScan }
             
-            Log.d("MainActivity", "🔥 Group '$key': ${groupedItems.size} items, totalQtyPl=$totalQtyPl, totalQtyScan=$totalQtyScan")
+            // VALIDASI OVERSCAN: Reset qty scan ke 0 jika ada overscan
+            val finalTotalQtyScan = if (totalQtyPl > 0 && rawTotalQtyScan > totalQtyPl) {
+                Log.w("MainActivity", "🔥 OVERSCAN DETECTED IN GROUPING - RESET TO 0: $key - rawQtyScan=$rawTotalQtyScan, qtyPl=$totalQtyPl (data tidak valid)")
+                0
+            } else {
+                rawTotalQtyScan
+            }
+            
+            Log.d("MainActivity", "🔥 Group '$key': ${groupedItems.size} items, totalQtyPl=$totalQtyPl, rawQtyScan=$rawTotalQtyScan, finalQtyScan=$finalTotalQtyScan")
             
             PicklistItem(
                 id = firstItem.id,
@@ -1271,7 +1323,7 @@ class MainActivity : AppCompatActivity() {
                 size = firstItem.size,
                 productId = firstItem.productId,
                 qtyPl = totalQtyPl,
-                qtyScan = totalQtyScan,
+                qtyScan = finalTotalQtyScan,
                 createdAt = firstItem.createdAt,
                 warehouse = firstItem.warehouse,
                 tagStatus = firstItem.tagStatus

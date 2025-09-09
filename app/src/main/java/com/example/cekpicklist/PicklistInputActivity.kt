@@ -63,6 +63,9 @@ class PicklistInputActivity : AppCompatActivity() {
         setupBackPressHandler()
         Logger.PicklistInput.d("setupBackPressHandler completed")
         
+        setupVersionDisplay()
+        Logger.PicklistInput.d("setupVersionDisplay completed")
+        
         Logger.PicklistInput.i("PicklistInputActivity onCreate completed successfully")
     }
     
@@ -418,5 +421,27 @@ class PicklistInputActivity : AppCompatActivity() {
         Log.d("PicklistInputActivity", "🔥 Navigasi ke SettingsActivity")
         val intent = Intent(this, SettingsActivity::class.java)
         startActivity(intent)
+    }
+    
+    /**
+     * Setup version display yang otomatis terupdate
+     */
+    private fun setupVersionDisplay() {
+        try {
+            val packageInfo = packageManager.getPackageInfo(packageName, 0)
+            val versionName = packageInfo.versionName
+            val versionCode = packageInfo.longVersionCode
+            
+            // Format versi dengan style yang menarik
+            val versionText = "v$versionName (Build $versionCode)"
+            
+            binding.tvVersion.text = versionText
+            
+            Log.d("PicklistInputActivity", "🔥 Version display updated: $versionText")
+        } catch (e: Exception) {
+            Log.e("PicklistInputActivity", "🔥 Error getting version info: ${e.message}", e)
+            // Fallback ke versi default
+            binding.tvVersion.text = "v1.0"
+        }
     }
 }

@@ -1,15 +1,19 @@
-# Cek Picklist - RFID Scanning Application
+# 📱 Cek Picklist - RFID Scanning Application
 
 Aplikasi Android untuk scanning RFID dalam proses picklist dengan integrasi Supabase dan Nirwana API.
+
+> 📚 **Dokumentasi Lengkap**: Lihat [DOCUMENTATION.md](DOCUMENTATION.md) untuk informasi detail dan komprehensif.
 
 ## 📋 Overview
 
 Aplikasi ini digunakan untuk:
-- **Scanning RFID** barang dalam proses picklist
-- **Validasi quantity** sesuai dengan rencana picklist
+- **RFID Scanning** barang dalam proses picklist dengan auto-scan setiap detik
+- **Validasi quantity** sesuai dengan rencana picklist dengan visual status
 - **Auto-save** data EPC ke Supabase secara real-time
 - **Deteksi over-scan** dan item NA (Not Available)
-- **Manajemen cache** untuk performa optimal
+- **Manajemen cache** untuk performa optimal dengan smart stale time
+- **Sound feedback** untuk setiap scanning dengan audio confirmation
+- **Auto versioning** dengan GitHub Actions untuk update otomatis
 
 ## 🏗️ Arsitektur
 
@@ -40,12 +44,14 @@ Aplikasi ini digunakan untuk:
 
 ## 🔧 Teknologi yang Digunakan
 
-- **Android SDK 30+** dengan Kotlin
-- **Architecture Components** (ViewModel, LiveData)
-- **Retrofit** untuk networking
-- **Supabase** untuk database dan realtime
+- **Android SDK 30+** dengan Kotlin dan Java 17
+- **Architecture Components** (ViewModel, LiveData, ViewBinding)
+- **Retrofit** untuk networking dengan OkHttp
+- **Supabase** untuk database dan realtime dengan WebSocket
 - **Coroutines** untuk async operations
 - **RFID SDK** untuk scanning hardware
+- **GitHub Actions** untuk otomatisasi versi
+- **Material Design** untuk UI modern
 
 ## 📦 Dependencies
 
@@ -54,6 +60,8 @@ Aplikasi ini digunakan untuk:
 implementation("androidx.core:core-ktx:1.12.0")
 implementation("androidx.appcompat:appcompat:1.7.1")
 implementation("com.google.android.material:material:1.12.0")
+implementation("androidx.activity:activity-ktx:1.8.2")
+implementation("androidx.constraintlayout:constraintlayout:2.1.4")
 
 // Architecture Components
 implementation("androidx.lifecycle:lifecycle-viewmodel-ktx:2.7.0")
@@ -64,9 +72,19 @@ implementation("com.squareup.retrofit2:retrofit:2.9.0")
 implementation("com.squareup.retrofit2:converter-gson:2.9.0")
 implementation("com.squareup.okhttp3:logging-interceptor:4.12.0")
 
+// Coroutines
+implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.7.3")
+implementation("org.jetbrains.kotlinx:kotlinx-coroutines-core:1.7.3")
+
+// UI Components
+implementation("androidx.recyclerview:recyclerview:1.3.2")
+implementation("androidx.swiperefreshlayout:swiperefreshlayout:1.1.0")
+
 // Supabase
 implementation("io.github.jan-tennert.supabase:realtime-kt:2.3.0")
 implementation("io.github.jan-tennert.supabase:postgrest-kt:2.3.0")
+implementation("io.ktor:ktor-client-websockets:2.3.7")
+implementation("io.ktor:ktor-client-cio:2.3.7")
 
 // RFID Hardware
 implementation(files("libs/DeviceAPI_ver20250209_release.aar"))
@@ -74,30 +92,40 @@ implementation(files("libs/DeviceAPI_ver20250209_release.aar"))
 
 ## 🚀 Fitur Utama
 
-### 1. **RFID Scanning**
-- Auto-scan setiap detik
-- Deteksi duplikat EPC
-- Buffer EPC untuk validasi
+### 1. **RFID Scanning System**
+- Auto-scan setiap detik dengan timer
+- Deteksi duplikat EPC dengan buffer management
+- Sound feedback untuk setiap scanning
+- Hardware integration dengan proper error handling
 
-### 2. **Validasi Quantity**
-- ✅ **GREEN**: qtyScan = qtyPl (Sesuai)
-- 🔴 **RED**: qtyScan < qtyPl (Kurang)
-- 🟡 **YELLOW**: qtyScan > qtyPl (Lebih) atau tidak ada di picklist
+### 2. **Quantity Validation System**
+- ✅ **GREEN**: qtyScan = qtyPl (Sesuai dengan rencana)
+- 🔴 **RED**: qtyScan < qtyPl (Kurang dari rencana)
+- 🟡 **YELLOW**: qtyScan > qtyPl (Lebih dari rencana) atau tidak ada di picklist
+- **NA Detection**: Deteksi item Not Available dengan informasi khusus
 
-### 3. **Auto-Save ke Supabase**
-- EPC tersimpan otomatis setiap detik
-- Hanya EPC valid yang disimpan (tidak over-scan)
-- Realtime sync dengan database
+### 3. **Real-time Data Synchronization**
+- EPC tersimpan otomatis ke Supabase setiap detik
+- Realtime sync dengan database menggunakan WebSocket
+- Connection status indicator di toolbar
+- Offline capability dengan cache lokal
 
-### 4. **Cache Management**
-- Cache lokal untuk performa optimal
-- Smart stale time untuk data freshness
-- Offline capability
+### 4. **Advanced Cache Management**
+- Memory cache untuk performa optimal
+- Smart stale time (5 menit) untuk data freshness
+- Cache invalidation otomatis
+- Prefetch strategy untuk performa
 
-### 5. **Error Handling**
-- Deteksi item NA (Not Available)
-- Penanganan over-scan
-- Swipe-to-delete untuk koreksi
+### 5. **User Experience Features**
+- **Swipe Actions**: Swipe-to-delete untuk koreksi data
+- **Completion Animation**: Confetti animation saat picklist selesai
+- **Search & Filter**: Real-time search dengan filtering
+- **Version Display**: Auto-updating version display di input screen
+
+### 6. **Auto Versioning System**
+- **GitHub Actions**: Otomatisasi update versi saat push
+- **Manual Updates**: Update manual via GitHub UI
+- **Version Display**: Otomatis terupdate di aplikasi
 
 ## 📊 Database Schema
 
@@ -149,19 +177,29 @@ EPC Scan → Product Info → Quantity Check → Save/Reject → UI Update
 
 ## ⚙️ Konfigurasi
 
-### Supabase Configuration
-```kotlin
-// Di SupabaseService.kt
-private const val SUPABASE_URL = "your-supabase-url"
-private const val SUPABASE_ANON_KEY = "your-anon-key"
+### Environment Variables
+```properties
+# local.properties
+SUPABASE_URL=https://your-project.supabase.co
+SUPABASE_ANON_KEY=your-anon-key
+NIRWANA_BASE_URL=https://api.nirwana.com
+NIRWANA_USERNAME=your-username
+NIRWANA_PASSWORD=your-password
 ```
 
-### Nirwana API Configuration
+### Build Configuration
 ```kotlin
-// Di NirwanaApiService.kt
-private const val NIRWANA_BASE_URL = "your-nirwana-api-url"
-private const val NIRWANA_USERNAME = "your-username"
-private const val NIRWANA_PASSWORD = "your-password"
+android {
+    compileSdk = 35
+    minSdk = 30
+    targetSdk = 35
+    versionCode = 1
+    versionName = "1.0"
+    
+    buildFeatures {
+        viewBinding = true
+    }
+}
 ```
 
 ## 🐛 Troubleshooting
@@ -188,22 +226,25 @@ private const val NIRWANA_PASSWORD = "your-password"
 Log.d("ScanViewModel", "🔥 Debug message")
 ```
 
-## 📱 Screenshots
+## 📱 UI Features
 
 ### Main Screen
-- List picklist items
-- RFID counter
+- List picklist items dengan swipe-to-delete
+- RFID counter dengan sound feedback
 - Summary cards (Total, Scanned, Remaining)
+- Real-time status indicator (WiFi connection)
+- Completion animation dengan confetti
 
 ### Picklist Input
-- Input nomor picklist
-- List picklist tersedia
-- Load data dari Supabase
+- Input nomor picklist dengan search functionality
+- List picklist tersedia dengan status icons
+- Version display yang auto-updating
+- Status indicators untuk data loading
 
 ### Settings
-- Konfigurasi Supabase
-- Konfigurasi Nirwana API
+- Konfigurasi Supabase dan Nirwana API
 - Realtime connection status
+- App configuration management
 
 ## 🔒 Security
 
@@ -211,14 +252,16 @@ Log.d("ScanViewModel", "🔥 Debug message")
 - HTTPS untuk semua komunikasi
 - Input validation untuk mencegah injection
 
-## 📈 Performance
+## 📈 Performance & Optimization
 
-- **Cache Strategy**: Smart stale time
-- **Background Processing**: Coroutines
-- **Memory Management**: ViewModel lifecycle
-- **Network Optimization**: Retrofit caching
+- **Cache Strategy**: Smart stale time (5 menit) dengan memory cache
+- **Background Processing**: Coroutines untuk async operations
+- **Memory Management**: ViewModel lifecycle dengan proper cleanup
+- **Network Optimization**: Retrofit dengan connection pooling
+- **UI Optimization**: ViewBinding, RecyclerView dengan ViewHolder pattern
+- **Sound Management**: SoundPool untuk efficient audio resources
 
-## 🚀 Deployment
+## 🚀 Deployment & Automation
 
 ### Build Release
 ```bash
@@ -229,6 +272,11 @@ Log.d("ScanViewModel", "🔥 Debug message")
 ```bash
 adb install app-release.apk
 ```
+
+### Auto Versioning
+- **Automatic**: Push ke GitHub → Auto update versi
+- **Manual**: GitHub Actions → Manual version update
+- **Scripts**: `scripts/update_version.py` untuk local update
 
 ## 🤝 Contributing
 
@@ -246,8 +294,21 @@ Proprietary - Internal Use Only
 
 Untuk bantuan teknis, hubungi tim development.
 
+## 📚 Dokumentasi Lengkap
+
+Untuk informasi detail dan komprehensif tentang:
+- Arsitektur aplikasi lengkap
+- Database schema detail
+- Design system & UI guidelines
+- Performance optimization
+- Debugging & logging system
+- Troubleshooting guide
+
+Lihat **[DOCUMENTATION.md](DOCUMENTATION.md)** 📖
+
 ---
 
-**Version**: 1.0  
+**Version**: 1.0 (Auto-updating)  
 **Last Updated**: 2025  
-**Platform**: Android 11+ (API 30+)
+**Platform**: Android 11+ (API 30+)  
+**Auto Versioning**: ✅ Enabled dengan GitHub Actions

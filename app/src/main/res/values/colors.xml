@@ -2,4 +2,36 @@
 <resources>
     <color name="black">#FF000000</color>
     <color name="white">#FFFFFFFF</color>
+    
+    <!-- Yellow/Gold Theme Colors untuk Smile Icon -->
+    <color name="primary_yellow">#FFD700</color>
+    <color name="primary_yellow_dark">#B8860B</color>
+    <color name="primary_yellow_light">#FFEB3B</color>
+    <color name="accent_yellow">#FFF59D</color>
+    <color name="background_yellow">#FFFDE7</color>
+    <color name="surface_yellow">#FFF8E1</color>
+    
+    <!-- Smile Icon Colors -->
+    <color name="smile_face">#FFD700</color>
+    <color name="smile_face_shadow">#B8860B</color>
+    <color name="smile_face_highlight">#FFEB3B</color>
+    <color name="smile_eyes">#000000</color>
+    <color name="smile_eyes_highlight">#FFFFFF</color>
+    <color name="smile_mouth">#000000</color>
+    <color name="smile_cheeks">#FFB74D</color>
+    <color name="smile_cheeks_highlight">#FFCC02</color>
+    
+    <!-- 3D Effect Colors -->
+    <color name="shadow_3d">#F57F17</color>
+    <color name="highlight_3d">#FFF59D</color>
+    <color name="glow_effect">#FFD700</color>
+    
+    <!-- Text Colors -->
+    <color name="text_primary">#212121</color>
+    <color name="text_secondary">#757575</color>
+    <color name="text_on_yellow">#000000</color>
+    
+    <!-- Version Display Colors -->
+    <color name="version_text">#9E9E9E</color>
+    <color name="version_text_accent">#FFD700</color>
 </resources>
