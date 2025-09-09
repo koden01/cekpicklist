@@ -62,6 +62,9 @@ class ScanViewModel(application: Application) : AndroidViewModel(application) {
     // Mapping EPC ke item untuk penyimpanan yang benar
     private val epcToItemMapping = mutableMapOf<String, PicklistItem>()
     
+    // Flag untuk mencegah double save
+    private var isDataSaved = false
+    
     // Flag untuk mencegah pemanggilan berulang
     private var isPicklistsLoading = false
     private var isPicklistItemsLoading = false
@@ -142,6 +145,10 @@ class ScanViewModel(application: Application) : AndroidViewModel(application) {
     fun loadPicklistItems(picklistNo: String) {
         Log.i("ScanViewModel", "🔥 loadPicklistItems dipanggil untuk: $picklistNo")
         
+        // **PERUBAHAN**: Reset completion state saat load picklist baru
+        _isComplete.value = false
+        Log.i("ScanViewModel", "🔥 Completion state di-reset untuk picklist baru")
+        
         // Cek apakah sudah dalam proses loading
         if (isPicklistItemsLoading) {
             Log.i("ScanViewModel", "🔥 loadPicklistItems sudah dalam proses, skip")
@@ -149,6 +156,9 @@ class ScanViewModel(application: Application) : AndroidViewModel(application) {
         }
         
         currentPicklistNumber = picklistNo
+        
+        // Reset flag untuk picklist baru
+        isDataSaved = false
         
         viewModelScope.launch {
             try {
@@ -160,7 +170,13 @@ class ScanViewModel(application: Application) : AndroidViewModel(application) {
                 val cachedItems = cacheManager.getCachedArticlesForPicklist(picklistNo)
                 if (cachedItems.isNotEmpty()) {
                     Log.i("ScanViewModel", "🔥 Menggunakan cached data untuk: $picklistNo (${cachedItems.size} items)")
-                    _picklistItems.value = cachedItems
+                    
+                    // **DEBUGGING**: Log semua item dari cache
+                    Log.i("ScanViewModel", "🔥 === CACHED ITEMS DEBUG ===")
+                    cachedItems.forEach { item ->
+                        Log.i("ScanViewModel", "🔥 Cached item: ${item.articleName} ${item.size} - qtyPl=${item.qtyPl}")
+                    }
+                    Log.i("ScanViewModel", "🔥 === END CACHED ITEMS DEBUG ===")
                     
                 // Load qty scan dari cache
                 val itemsWithQtyScan = loadQtyScanFromCache(cachedItems)
@@ -212,6 +228,12 @@ class ScanViewModel(application: Application) : AndroidViewModel(application) {
         try {
             Log.i("ScanViewModel", "🔥 Fetching fresh picklist items dari Supabase untuk: $picklistNo")
             val items = repository.getPicklistItems(picklistNo)
+            
+            // **DEBUGGING**: Log jumlah item yang dikembalikan dari repository
+            Log.i("ScanViewModel", "🔥 Repository mengembalikan ${items.size} items untuk picklist: $picklistNo")
+            items.forEach { item ->
+                Log.d("ScanViewModel", "🔥 Repository item: ${item.articleName} ${item.size} - qtyPl=${item.qtyPl}")
+            }
             
             // Load qty scan dari cache jika ada
             val itemsWithQtyScan = loadQtyScanFromCache(items)
@@ -469,9 +491,18 @@ class ScanViewModel(application: Application) : AndroidViewModel(application) {
     
     /**
      * Handle picklist update dari realtime
+     * PERUBAHAN: Jangan ubah qtyPl yang sudah dimuat untuk menjaga konsistensi
      */
     private fun handlePicklistUpdate(picklistUpdate: PicklistUpdate) {
         Log.i("ScanViewModel", "🔥 Picklist update received: ${picklistUpdate.action} - ${picklistUpdate.articleName} ${picklistUpdate.size}")
+        
+        // PERUBAHAN: Cek apakah item sudah ada di picklistItems yang sedang aktif
+        val currentItems = _picklistItems.value ?: emptyList()
+        val existingItem = currentItems.find { item ->
+            item.articleName == picklistUpdate.articleName && 
+            item.size == picklistUpdate.size &&
+            item.noPicklist == picklistUpdate.noPicklist
+        }
         
         when (picklistUpdate.action) {
             "INSERT" -> {
@@ -497,7 +528,14 @@ class ScanViewModel(application: Application) : AndroidViewModel(application) {
                 Log.i("ScanViewModel", "🔥 Picklist item added to cache via realtime")
             }
             "UPDATE" -> {
-                // Update picklist item di cache
+                // PERUBAHAN: Jangan ubah qtyPl jika item sudah aktif di picklistItems
+                if (existingItem != null) {
+                    Log.w("ScanViewModel", "🔥 SKIP UPDATE qtyPl untuk item aktif: ${picklistUpdate.articleName} ${picklistUpdate.size} - qtyPl tetap ${existingItem.qtyPl} (tidak diubah ke ${picklistUpdate.qty})")
+                    Log.w("ScanViewModel", "🔥 qtyPl harus tetap konsisten dengan load pertama untuk menghindari kebingungan")
+                    return
+                }
+                
+                // Update picklist item di cache hanya jika item tidak aktif
                 val updatedItem = PicklistItem(
                     id = "", // ID akan di-generate oleh Supabase
                     noPicklist = picklistUpdate.noPicklist,
@@ -515,10 +553,17 @@ class ScanViewModel(application: Application) : AndroidViewModel(application) {
                 cacheManager.updatePicklistItemInCache(updatedItem)
                 cacheManager.updateCacheTimestamp()
                 
-                Log.i("ScanViewModel", "🔥 Picklist item updated in cache via realtime")
+                Log.i("ScanViewModel", "🔥 Picklist item updated in cache via realtime (item tidak aktif)")
             }
             "DELETE" -> {
-                // Hapus picklist item dari cache
+                // PERUBAHAN: Jangan hapus item jika sedang aktif di picklistItems
+                if (existingItem != null) {
+                    Log.w("ScanViewModel", "🔥 SKIP DELETE untuk item aktif: ${picklistUpdate.articleName} ${picklistUpdate.size} - item tetap di picklistItems")
+                    Log.w("ScanViewModel", "🔥 Item aktif tidak boleh dihapus di tengah proses untuk menjaga konsistensi")
+                    return
+                }
+                
+                // Hapus picklist item dari cache hanya jika item tidak aktif
                 val itemToRemove = PicklistItem(
                     id = "", // ID akan di-generate oleh Supabase
                     noPicklist = picklistUpdate.noPicklist,
@@ -536,7 +581,7 @@ class ScanViewModel(application: Application) : AndroidViewModel(application) {
                 cacheManager.removePicklistItemFromCache(itemToRemove)
                 cacheManager.updateCacheTimestamp()
                 
-                Log.i("ScanViewModel", "🔥 Picklist item removed from cache via realtime")
+                Log.i("ScanViewModel", "🔥 Picklist item removed from cache via realtime (item tidak aktif)")
             }
         }
         
@@ -684,8 +729,17 @@ class ScanViewModel(application: Application) : AndroidViewModel(application) {
         autoPostTimer = viewModelScope.launch {
             try {
                 delay(1000) // Delay 1 detik setelah EPC baru ditemukan
+                
+                // Cek apakah coroutine masih aktif sebelum melanjutkan
+                if (isActive) {
                 processScannedEPCsAuto()
                 Log.i("ScanViewModel", "🔥 Auto-post selesai setelah delay 1 detik")
+                } else {
+                    Log.d("ScanViewModel", "🔥 Auto-post timer dibatalkan sebelum selesai")
+                }
+            } catch (e: CancellationException) {
+                Log.d("ScanViewModel", "🔥 Auto-post timer dibatalkan: ${e.message}")
+                // CancellationException adalah normal, tidak perlu log sebagai error
             } catch (e: Exception) {
                 Log.e("ScanViewModel", "🔥 Error dalam auto-post timer dengan delay: ${e.message}", e)
             }
@@ -699,6 +753,13 @@ class ScanViewModel(application: Application) : AndroidViewModel(application) {
         Log.i("ScanViewModel", "🔥 Menghentikan auto-post timer")
         autoPostTimer?.cancel()
         autoPostTimer = null
+    }
+    
+    /**
+     * Cek apakah auto-post timer sedang berjalan
+     */
+    fun isAutoPostTimerRunning(): Boolean {
+        return autoPostTimer?.isActive == true
     }
     
     /**
@@ -730,6 +791,7 @@ class ScanViewModel(application: Application) : AndroidViewModel(application) {
                 // Update picklist items berdasarkan hasil scan
                 val currentItems = _picklistItems.value?.toMutableList() ?: mutableListOf()
                 val updatedItems = mutableListOf<PicklistItem>()
+                val processedItems = mutableMapOf<String, PicklistItem>() // Track items yang sudah diproses - menggunakan id sebagai key
                 
                 Log.i("ScanViewModel", "🔥 Auto-Update ${currentItems.size} items")
                 
@@ -750,16 +812,24 @@ class ScanViewModel(application: Application) : AndroidViewModel(application) {
                     val itemForMapping: PicklistItem
                     
                     if (existingItem != null) {
+                        // Cek apakah item ini sudah diproses dalam batch ini
+                        val existingProcessedItem = processedItems[existingItem.id] // Gunakan id sebagai key
+                        if (existingProcessedItem != null) {
+                            // Update quantity scan untuk item yang sudah diproses
+                            Log.i("ScanViewModel", "🔥 Auto-Item sudah diproses, update qty scan dari ${existingProcessedItem.qtyScan} ke ${existingProcessedItem.qtyScan + 1}")
+                            val updatedItem = existingProcessedItem.copy(qtyScan = existingProcessedItem.qtyScan + 1)
+                            processedItems[existingItem.id] = updatedItem // Gunakan id sebagai key
+                            itemForMapping = updatedItem
+                        } else {
                         // Update quantity scan untuk item yang sudah ada
                         Log.i("ScanViewModel", "🔥 Auto-Item sudah ada, update qty scan dari ${existingItem.qtyScan} ke ${existingItem.qtyScan + 1}")
                         val updatedItem = existingItem.copy(qtyScan = existingItem.qtyScan + 1)
-                        updatedItems.add(updatedItem)
-                        currentItems.remove(existingItem)
+                            processedItems[existingItem.id] = updatedItem // Gunakan id sebagai key
+                            itemForMapping = updatedItem
+                        }
                         
                         // Mark EPC sebagai sudah diproses
                         processedEpcInBatch.add(scanResult.rfid)
-                        
-                        itemForMapping = updatedItem
                     } else {
                         // Tambahkan item baru dengan qty_pl = 0 dan qty_scan = 1
                         Log.i("ScanViewModel", "🔥 Auto-Item baru, menambahkan: ${scanResult.articleName} ${scanResult.size} (RSSI: ${scanResult.rssi})")
@@ -775,7 +845,7 @@ class ScanViewModel(application: Application) : AndroidViewModel(application) {
                             warehouse = scanResult.warehouse,
                             tagStatus = scanResult.tagStatus
                         )
-                        updatedItems.add(newItem)
+                        processedItems[newItem.id] = newItem // Gunakan id sebagai key
                         
                         // Mark EPC sebagai sudah diproses
                         processedEpcInBatch.add(scanResult.rfid)
@@ -790,10 +860,17 @@ class ScanViewModel(application: Application) : AndroidViewModel(application) {
                     epcToItemMapping[scanResult.rfid] = itemForMapping
                 }
                 
-                // Tambahkan item yang tidak di-scan
-                updatedItems.addAll(currentItems)
+                // Tambahkan item yang sudah diproses ke updatedItems
+                updatedItems.addAll(processedItems.values)
+                
+                // Tambahkan item yang tidak di-scan (yang tidak ada di processedItems)
+                val unprocessedItems = currentItems.filter { item ->
+                    !processedItems.containsKey(item.id) // Gunakan id sebagai key
+                }
+                updatedItems.addAll(unprocessedItems)
                 
                 Log.i("ScanViewModel", "🔥 Auto-Processed ${processedEpcInBatch.size} EPCs")
+                Log.i("ScanViewModel", "🔥 Auto-Updated items: ${updatedItems.size} total")
                 
                 // Update processed EPC buffer
                 processedEpcBuffer.addAll(processedEpcInBatch)
@@ -822,23 +899,189 @@ class ScanViewModel(application: Application) : AndroidViewModel(application) {
         
         if (picklistItems.isEmpty()) {
             _isComplete.value = false
+            Log.d("ScanViewModel", "🔥 checkCompletionStatus: Tidak ada picklist items")
             return
         }
         
-        // Cek apakah semua item sudah complete (qtyScan == qtyPl)
-        val allComplete = picklistItems.all { item ->
-            !item.isNAItem() && item.qtyScan == item.qtyPl
+        // Debug logging untuk setiap item
+        Log.d("ScanViewModel", "🔥 checkCompletionStatus: Checking ${picklistItems.size} picklist items")
+        
+        var completeCount = 0
+        var naItemCount = 0
+        var mismatchCount = 0
+        
+        picklistItems.forEach { item ->
+            val isNAItem = item.isNAItem()
+            val isQuantityMatch = item.qtyScan == item.qtyPl
+            val isComplete = !isNAItem && isQuantityMatch
+            
+            if (isNAItem) {
+                naItemCount++
+                Log.w("ScanViewModel", "🔥 NA Item detected: ${item.articleName} ${item.size} - productId='${item.productId}', articleId='${item.articleId}', articleName='${item.articleName}'")
+                Log.w("ScanViewModel", "🔥 NA Item will be EXCLUDED from completion check")
+            } else if (isQuantityMatch) {
+                completeCount++
+                Log.d("ScanViewModel", "🔥 COMPLETE Item: ${item.articleName} ${item.size} - qtyPl=${item.qtyPl}, qtyScan=${item.qtyScan}")
+            } else {
+                mismatchCount++
+                Log.d("ScanViewModel", "🔥 INCOMPLETE Item: ${item.articleName} ${item.size} - qtyPl=${item.qtyPl}, qtyScan=${item.qtyScan}")
+            }
+            
+            Log.d("ScanViewModel", "🔥 Item detail: ${item.articleName} ${item.size} - qtyPl=${item.qtyPl}, qtyScan=${item.qtyScan}, isNAItem=$isNAItem, isComplete=$isComplete")
         }
+        
+        Log.d("ScanViewModel", "🔥 === COMPLETION SUMMARY ===")
+        Log.d("ScanViewModel", "🔥 Total picklist items: ${picklistItems.size}")
+        Log.d("ScanViewModel", "🔥 Complete items: $completeCount")
+        Log.d("ScanViewModel", "🔥 NA items: $naItemCount") 
+        Log.d("ScanViewModel", "🔥 Incomplete items: $mismatchCount")
+        
+        // **PERUBAHAN LOGIKA**: Implementasi completion untuk tiga skenario khusus
+        val allComplete = checkSpecialCompletionLogic(picklistItems)
+        
+        Log.d("ScanViewModel", "🔥 Special completion logic result: $allComplete")
+        
+        Log.d("ScanViewModel", "🔥 checkCompletionStatus: allComplete=$allComplete, currentIsComplete=${_isComplete.value}")
         
         if (allComplete && !(_isComplete.value ?: false)) {
             Log.i("ScanViewModel", "🔥 Semua item sudah complete! Trigger animasi dan simpan data")
             _isComplete.value = true
             
             // Simpan data ke Supabase saat semua item sukses
+            Log.i("ScanViewModel", "🔥 CALLING saveDataToSupabaseOnSuccess() - semua item complete")
             saveDataToSupabaseOnSuccess()
         } else {
             _isComplete.value = false
         }
+    }
+    
+    /**
+     * Implementasi logic completion untuk tiga skenario khusus:
+     * 1. Item qtyPl = 0: declare complete (user bisa hapus dengan tap sampah)
+     * 2. Item qtyScan > qtyPl: declare complete (user bisa reset dengan tap sampah)
+     * 3. Item NA: declare complete (user bisa hapus dengan tap sampah)
+     */
+    private fun checkSpecialCompletionLogic(picklistItems: List<PicklistItem>): Boolean {
+        Log.d("ScanViewModel", "🔥 === SPECIAL COMPLETION LOGIC ===")
+        
+        var allComplete = true
+        
+        picklistItems.forEach { item ->
+            val isNAItem = item.isNAItem()
+            val isNonPicklist = item.qtyPl == 0
+            val isOverscanned = item.qtyScan > item.qtyPl
+            val isNormalComplete = item.qtyScan == item.qtyPl
+            
+            when {
+                isNAItem -> {
+                    Log.d("ScanViewModel", "🔥 NA Item: ${item.articleName} ${item.size} - DECLARE COMPLETE (user bisa hapus dengan tap sampah)")
+                    // Item NA dianggap complete karena user bisa hapus dengan tap sampah
+                }
+                isNonPicklist -> {
+                    Log.d("ScanViewModel", "🔥 Non-Picklist Item: ${item.articleName} ${item.size} - qtyPl=0, qtyScan=${item.qtyScan} - DECLARE COMPLETE (user bisa hapus dengan tap sampah)")
+                    // Item non-picklist dianggap complete karena user bisa hapus dengan tap sampah
+                }
+                isOverscanned -> {
+                    Log.d("ScanViewModel", "🔥 Overscanned Item: ${item.articleName} ${item.size} - qtyPl=${item.qtyPl}, qtyScan=${item.qtyScan} - DECLARE COMPLETE (user bisa reset dengan tap sampah)")
+                    // Item overscanned dianggap complete karena user bisa reset dengan tap sampah
+                }
+                isNormalComplete -> {
+                    Log.d("ScanViewModel", "🔥 Normal Complete Item: ${item.articleName} ${item.size} - qtyPl=${item.qtyPl}, qtyScan=${item.qtyScan} - COMPLETE")
+                    // Item normal yang sudah sesuai
+                }
+                else -> {
+                    Log.d("ScanViewModel", "🔥 Incomplete Item: ${item.articleName} ${item.size} - qtyPl=${item.qtyPl}, qtyScan=${item.qtyScan} - NOT COMPLETE")
+                    allComplete = false
+                }
+            }
+        }
+        
+        Log.d("ScanViewModel", "🔥 === SPECIAL COMPLETION RESULT: $allComplete ===")
+        return allComplete
+    }
+    
+    /**
+     * Handle tap sampah untuk item berdasarkan skenario:
+     * 1. Item qtyPl = 0: hapus EPC dan article
+     * 2. Item qtyScan > qtyPl: reset qtyScan ke 0
+     * 3. Item NA: hapus article dan EPC
+     */
+    fun handleItemDelete(itemId: String) {
+        Log.i("ScanViewModel", "🔥 handleItemDelete dipanggil untuk itemId: $itemId")
+        
+        val currentItems = _picklistItems.value?.toMutableList() ?: mutableListOf()
+        val itemIndex = currentItems.indexOfFirst { it.id == itemId }
+        
+        if (itemIndex == -1) {
+            Log.w("ScanViewModel", "🔥 Item dengan id $itemId tidak ditemukan")
+            return
+        }
+        
+        val item = currentItems[itemIndex]
+        val isNAItem = item.isNAItem()
+        val isNonPicklist = item.qtyPl == 0
+        val isOverscanned = item.qtyScan > item.qtyPl
+        
+        when {
+            isNAItem -> {
+                Log.i("ScanViewModel", "🔥 Menghapus NA item: ${item.articleName} ${item.size}")
+                // Hapus item NA dari list
+                currentItems.removeAt(itemIndex)
+                
+                // Hapus EPC mapping untuk item ini
+                val epcsToRemove = epcToItemMapping.filter { it.value.id == itemId }.keys
+                epcsToRemove.forEach { epc ->
+                    epcToItemMapping.remove(epc)
+                    processedEpcBuffer.remove(epc)
+                    epcBuffer.remove(epc)
+                }
+                Log.i("ScanViewModel", "🔥 Dihapus ${epcsToRemove.size} EPC untuk NA item")
+            }
+            isNonPicklist -> {
+                Log.i("ScanViewModel", "🔥 Menghapus non-picklist item: ${item.articleName} ${item.size}")
+                // Hapus item non-picklist dari list
+                currentItems.removeAt(itemIndex)
+                
+                // Hapus EPC mapping untuk item ini
+                val epcsToRemove = epcToItemMapping.filter { it.value.id == itemId }.keys
+                epcsToRemove.forEach { epc ->
+                    epcToItemMapping.remove(epc)
+                    processedEpcBuffer.remove(epc)
+                    epcBuffer.remove(epc)
+                }
+                Log.i("ScanViewModel", "🔥 Dihapus ${epcsToRemove.size} EPC untuk non-picklist item")
+            }
+            isOverscanned -> {
+                Log.i("ScanViewModel", "🔥 Reset overscanned item: ${item.articleName} ${item.size} dari qtyScan=${item.qtyScan} ke 0")
+                // Reset qtyScan ke 0 untuk item overscanned
+                val updatedItem = item.copy(qtyScan = 0)
+                currentItems[itemIndex] = updatedItem
+                
+                // Hapus EPC mapping untuk item ini (user bisa scan ulang)
+                val epcsToRemove = epcToItemMapping.filter { it.value.id == itemId }.keys
+                epcsToRemove.forEach { epc ->
+                    epcToItemMapping.remove(epc)
+                    processedEpcBuffer.remove(epc)
+                    epcBuffer.remove(epc)
+                }
+                Log.i("ScanViewModel", "🔥 Reset ${epcsToRemove.size} EPC untuk overscanned item - siap untuk scan ulang")
+            }
+            else -> {
+                Log.w("ScanViewModel", "🔥 Item ${item.articleName} ${item.size} tidak memerlukan delete action")
+                return
+            }
+        }
+        
+        // Update picklist items
+        _picklistItems.value = currentItems
+        
+        // Update qty mismatch items
+        updateQtyMismatchItems(currentItems)
+        
+        // Cek completion status setelah delete
+        checkCompletionStatus()
+        
+        Log.i("ScanViewModel", "🔥 Item delete action selesai untuk: ${item.articleName} ${item.size}")
     }
     
     /**
@@ -851,13 +1094,15 @@ class ScanViewModel(application: Application) : AndroidViewModel(application) {
         // Hentikan auto-post timer
         stopAutoPostTimer()
         
-        // Simpan data ke Supabase sebelum kembali
-        saveDataToSupabaseOnBack()
+        // Simpan data ke Supabase sebelum kembali - SYNCHRONOUS
+        Log.i("ScanViewModel", "🔥 CALLING saveDataToSupabaseOnBackSync() - kembali ke MainActivity")
+        saveDataToSupabaseOnBackSync()
         
         // Clear data UI tapi TIDAK clear EPC buffer
         _picklistItems.value = emptyList()
         _isComplete.value = false
-        currentPicklistNumber = ""
+        // JANGAN clear currentPicklistNumber di sini karena sudah digunakan di saveDataToSupabaseOnBackSync
+        // currentPicklistNumber akan di-clear saat loadPicklistItems dipanggil untuk picklist baru
         
         // EPC buffer dan processedEpcBuffer TIDAK di-clear
         // Ini memungkinkan user melanjutkan scan dari progress sebelumnya
@@ -996,6 +1241,15 @@ class ScanViewModel(application: Application) : AndroidViewModel(application) {
     private fun saveDataToSupabaseOnSuccess() {
         Log.i("ScanViewModel", "🔥 Simpan data ke Supabase saat semua item sukses")
         
+        // Cek apakah data sudah disimpan
+        if (isDataSaved) {
+            Log.w("ScanViewModel", "🔥 Data sudah disimpan, skip saveDataToSupabaseOnSuccess")
+            return
+        }
+        
+        // Set flag SEBELUM memulai operasi save untuk mencegah race condition
+        isDataSaved = true
+        
         viewModelScope.launch {
             try {
                 // Ambil semua item yang sudah di-scan
@@ -1068,13 +1322,26 @@ class ScanViewModel(application: Application) : AndroidViewModel(application) {
     }
     
     /**
-     * Simpan data ke Supabase saat kembali ke MainActivity
+     * Simpan data ke Supabase saat kembali ke MainActivity - SYNCHRONOUS
+     * Menggunakan runBlocking untuk memastikan data tersimpan sebelum ViewModel di-clear
      */
-    fun saveDataToSupabaseOnBack() {
-        Log.i("ScanViewModel", "🔥 Simpan data ke Supabase saat kembali ke MainActivity")
+    private fun saveDataToSupabaseOnBackSync() {
+        Log.i("ScanViewModel", "🔥 Simpan data ke Supabase saat kembali ke MainActivity (SYNC)")
         
-        viewModelScope.launch {
+        // Cek apakah data sudah disimpan
+        if (isDataSaved) {
+            Log.w("ScanViewModel", "🔥 Data sudah disimpan, skip saveDataToSupabaseOnBackSync")
+            return
+        }
+        
+        // Set flag SEBELUM memulai operasi save untuk mencegah race condition
+        isDataSaved = true
+        
+        runBlocking {
             try {
+                // Simpan currentPicklistNumber sebelum di-clear
+                val picklistNumber = currentPicklistNumber
+                
                 // Ambil semua item yang sudah di-scan
                 val currentItems = _picklistItems.value ?: emptyList()
                 val scannedItems = currentItems.filter { it.qtyScan > 0 }
@@ -1115,7 +1382,7 @@ class ScanViewModel(application: Application) : AndroidViewModel(application) {
                         }
                         
                         val picklistScan = PicklistScan(
-                            noPicklist = currentPicklistNumber,
+                            noPicklist = picklistNumber, // Gunakan picklistNumber yang sudah disimpan
                             productId = item.productId ?: "UNKNOWN",
                             articleId = item.articleId,
                             articleName = item.articleName,
@@ -1142,6 +1409,17 @@ class ScanViewModel(application: Application) : AndroidViewModel(application) {
                 Log.e("ScanViewModel", "🔥 Error saat menyimpan data (back ke MainActivity): ${e.message}", e)
             }
         }
+    }
+    
+    /**
+     * Simpan data ke Supabase saat kembali ke MainActivity - ASYNC (untuk backward compatibility)
+     * DEPRECATED: Gunakan saveDataToSupabaseOnBackSync() untuk mencegah duplikasi
+     */
+    fun saveDataToSupabaseOnBack() {
+        Log.w("ScanViewModel", "🔥 DEPRECATED: saveDataToSupabaseOnBack() dipanggil - gunakan saveDataToSupabaseOnBackSync()")
+        Log.w("ScanViewModel", "🔥 Fungsi ini dihapus untuk mencegah duplikasi data")
+        // Fungsi ini dihapus untuk mencegah duplikasi data
+        // Gunakan saveDataToSupabaseOnBackSync() sebagai gantinya
     }
     
         fun processScannedEPCs() {
@@ -1174,6 +1452,7 @@ class ScanViewModel(application: Application) : AndroidViewModel(application) {
                 // Update picklist items berdasarkan hasil scan
                 val currentItems = _picklistItems.value?.toMutableList() ?: mutableListOf()
                 val updatedItems = mutableListOf<PicklistItem>()
+                val processedItems = mutableMapOf<String, PicklistItem>() // Track items yang sudah diproses - menggunakan id sebagai key
                 
                 Log.i("ScanViewModel", "🔥 Update ${currentItems.size} items")
                 
@@ -1194,16 +1473,24 @@ class ScanViewModel(application: Application) : AndroidViewModel(application) {
                     val itemForMapping: PicklistItem
                     
                     if (existingItem != null) {
+                        // Cek apakah item ini sudah diproses dalam batch ini
+                        val existingProcessedItem = processedItems[existingItem.id] // Gunakan id sebagai key
+                        if (existingProcessedItem != null) {
+                            // Update quantity scan untuk item yang sudah diproses
+                            Log.i("ScanViewModel", "🔥 Item sudah diproses, update qty scan dari ${existingProcessedItem.qtyScan} ke ${existingProcessedItem.qtyScan + 1}")
+                            val updatedItem = existingProcessedItem.copy(qtyScan = existingProcessedItem.qtyScan + 1)
+                            processedItems[existingItem.id] = updatedItem // Gunakan id sebagai key
+                            itemForMapping = updatedItem
+                        } else {
                         // Update quantity scan untuk item yang sudah ada
                         Log.i("ScanViewModel", "🔥 Item sudah ada, update qty scan dari ${existingItem.qtyScan} ke ${existingItem.qtyScan + 1}")
                         val updatedItem = existingItem.copy(qtyScan = existingItem.qtyScan + 1)
-                        updatedItems.add(updatedItem)
-                        currentItems.remove(existingItem)
+                            processedItems[existingItem.id] = updatedItem // Gunakan id sebagai key
+                            itemForMapping = updatedItem
+                        }
                         
                         // Mark EPC sebagai sudah diproses
                         processedEpcInBatch.add(scanResult.rfid)
-                        
-                        itemForMapping = updatedItem
                     } else {
                         // Tambahkan item baru dengan qty_pl = 0 dan qty_scan = 1
                         Log.i("ScanViewModel", "🔥 Item baru, menambahkan: ${scanResult.articleName} ${scanResult.size} (RSSI: ${scanResult.rssi})")
@@ -1219,7 +1506,7 @@ class ScanViewModel(application: Application) : AndroidViewModel(application) {
                             warehouse = scanResult.warehouse,
                             tagStatus = scanResult.tagStatus
                         )
-                        updatedItems.add(newItem)
+                        processedItems[newItem.id] = newItem // Gunakan id sebagai key
                         
                         // Mark EPC sebagai sudah diproses
                         processedEpcInBatch.add(scanResult.rfid)
@@ -1247,10 +1534,17 @@ class ScanViewModel(application: Application) : AndroidViewModel(application) {
                     epcToItemMapping[scanResult.rfid] = itemForMapping
                 }
                 
-                // Tambahkan item yang tidak di-scan
-                updatedItems.addAll(currentItems)
+                // Tambahkan item yang sudah diproses ke updatedItems
+                updatedItems.addAll(processedItems.values)
+                
+                // Tambahkan item yang tidak di-scan (yang tidak ada di processedItems)
+                val unprocessedItems = currentItems.filter { item ->
+                    !processedItems.containsKey(item.id) // Gunakan id sebagai key
+                }
+                updatedItems.addAll(unprocessedItems)
                 
                 Log.i("ScanViewModel", "🔥 Processed ${processedEpcInBatch.size} EPCs")
+                Log.i("ScanViewModel", "🔥 Updated items: ${updatedItems.size} total")
                 
                 // Update processed EPC buffer
                 processedEpcBuffer.addAll(processedEpcInBatch)
@@ -1300,33 +1594,61 @@ class ScanViewModel(application: Application) : AndroidViewModel(application) {
     
     /**
      * Update qty mismatch items (item yang tidak sesuai)
+     * Tampilkan item yang belum selesai dari picklist DAN item yang tidak ada di picklist (overscan)
      */
     private fun updateQtyMismatchItems(items: List<PicklistItem>) {
-        val mismatchItems = items.filter { !it.isComplete() }
+        val mismatchItems = items.filter { item ->
+            when {
+                // Item tidak ada di picklist (overscan) - TAMPILKAN
+                item.qtyPl == 0 && item.qtyScan > 0 -> true
+                // Item dari picklist yang belum selesai - TAMPILKAN
+                item.qtyPl > 0 && item.qtyScan != item.qtyPl -> true
+                // Item dari picklist yang sudah selesai - HIDE
+                item.qtyPl > 0 && item.qtyScan == item.qtyPl -> false
+                // Item lainnya - HIDE
+                else -> false
+            }
+        }
         _qtyMismatchItems.value = mismatchItems
         Log.i("ScanViewModel", "🔥 Qty mismatch items updated: ${mismatchItems.size} items")
     }
     
     /**
      * Get filtered items - hide completed items (qty_scan == qty_pl)
+     * Tampilkan item yang belum selesai dari picklist DAN item yang tidak ada di picklist (overscan)
      */
     fun getFilteredItems(): List<PicklistItem> {
         val items = _picklistItems.value ?: emptyList()
         
-        // Filter: hanya tampilkan item yang BELUM selesai menggunakan isComplete()
-        val incompleteItems = items.filter { !it.isComplete() }
+        // Filter: tampilkan item yang perlu diperhatikan
+        val visibleItems = items.filter { item ->
+            when {
+                // Item tidak ada di picklist (overscan) - TAMPILKAN
+                item.qtyPl == 0 && item.qtyScan > 0 -> true
+                // Item dari picklist yang belum selesai - TAMPILKAN
+                item.qtyPl > 0 && item.qtyScan != item.qtyPl -> true
+                // Item dari picklist yang sudah selesai - HIDE
+                item.qtyPl > 0 && item.qtyScan == item.qtyPl -> false
+                // Item lainnya - HIDE
+                else -> false
+            }
+        }
         
         // Urutkan: item tidak ada di picklist di atas, lalu item picklist yang belum selesai
-        val sortedItems = incompleteItems.sortedWith(compareBy<PicklistItem> { it.qtyPl == 0 }.thenBy { it.articleName })
+        val sortedItems = visibleItems.sortedWith(compareBy<PicklistItem> { it.articleName })
         
         // Log untuk debugging
-        Log.i("ScanViewModel", "🔥 getFilteredItems: Total=${items.size}, Incomplete=${incompleteItems.size}, Final=${sortedItems.size}")
+        Log.i("ScanViewModel", "🔥 getFilteredItems: Total=${items.size}, Visible=${visibleItems.size}, Final=${sortedItems.size}")
         
         // Debug log untuk setiap item
         items.forEach { item ->
             val status = item.getQtyStatus()
             val isComplete = item.isComplete()
-            Log.d("ScanViewModel", "🔥 Item: ${item.articleName} ${item.size} - qtyPl=${item.qtyPl}, qtyScan=${item.qtyScan}, Status=$status, isComplete=$isComplete")
+            val isPicklistItem = item.qtyPl > 0
+            val isOverscan = item.qtyPl == 0 && item.qtyScan > 0
+            val isIncomplete = isPicklistItem && item.qtyScan != item.qtyPl
+            val isVisible = visibleItems.contains(item)
+            Log.d("ScanViewModel", "🔥 Item: ${item.articleName} ${item.size} - qtyPl=${item.qtyPl}, qtyScan=${item.qtyScan}, Status=$status, isComplete=$isComplete, isPicklistItem=$isPicklistItem, isOverscan=$isOverscan, isIncomplete=$isIncomplete, isVisible=$isVisible")
         }
         
         return sortedItems
@@ -1429,27 +1751,44 @@ class ScanViewModel(application: Application) : AndroidViewModel(application) {
         Log.i("ScanViewModel", "🔥 EPC buffer dihapus: ${bufferSize} EPC dan ${processedBufferSize} processed EPC dihapus")
         Log.i("ScanViewModel", "🔥 EPC mapping dihapus: ${epcToItemMapping.size} mapping dihapus")
         
-        // Hanya simpan artikel yang ada di picklist (qtyPl > 0) dan reset qty scan
+        // **PERUBAHAN LOGIKA**: Simpan SEMUA artikel dari picklist (termasuk qtyPl = 0) dan reset qty scan
+        // Hanya hapus artikel yang benar-benar tidak ada di picklist (bukan dari loadPicklistItems)
         val currentItems = _picklistItems.value?.toMutableList() ?: mutableListOf()
-        val picklistItems = currentItems.filter { item ->
-            item.qtyPl > 0 // Hanya artikel yang ada di picklist
-        }.map { item ->
+        
+        // Reset qty scan untuk SEMUA item, tapi pertahankan semua item dari picklist
+        val picklistItems = currentItems.map { item ->
+            if (item.qtyPl > 0) {
+                // Item dari picklist - reset qty scan
             Log.i("ScanViewModel", "🔥 Reset qty scan untuk artikel picklist: ${item.articleName} ${item.size} dari ${item.qtyScan} ke 0")
             item.copy(qtyScan = 0)
+            } else {
+                // Item dengan qtyPl = 0 - tetap pertahankan tapi reset qty scan
+                Log.i("ScanViewModel", "🔥 Reset qty scan untuk artikel qtyPl=0: ${item.articleName} ${item.size} dari ${item.qtyScan} ke 0")
+            item.copy(qtyScan = 0)
+            }
         }
         
-        val removedItems = currentItems.filter { it.qtyPl == 0 }
-        Log.i("ScanViewModel", "🔥 Menghapus ${removedItems.size} artikel non-picklist: ${removedItems.map { "${it.articleName} ${it.size}" }}")
+        // **PERUBAHAN**: Jangan hapus item dengan qtyPl = 0 karena itu adalah bagian dari picklist
+        // Hanya hapus item yang benar-benar tidak ada di picklist (non-picklist items)
+        val removedItems = currentItems.filter { 
+            it.qtyPl == 0 && it.qtyScan == 0 // Hanya hapus item yang tidak ada di picklist DAN tidak pernah di-scan
+        }
+        Log.i("ScanViewModel", "🔥 Menghapus ${removedItems.size} artikel non-picklist yang tidak pernah di-scan: ${removedItems.map { "${it.articleName} ${it.size}" }}")
         
-        _picklistItems.value = picklistItems
+        // **PERUBAHAN**: Pertahankan semua item dari picklist, termasuk yang qtyPl = 0
+        val finalItems = picklistItems.filter { item ->
+            !removedItems.contains(item) // Hanya hapus item yang benar-benar non-picklist
+        }
+        
+        _picklistItems.value = finalItems
         
         // Update qty mismatch items
-        updateQtyMismatchItems(picklistItems)
+        updateQtyMismatchItems(finalItems)
         
         // Cek completion status setelah clear
         checkCompletionStatus()
         
-        Log.i("ScanViewModel", "🔥 Clear non-picklist selesai: ${removedItems.size} artikel non-picklist dihapus, ${picklistItems.size} artikel picklist tetap")
+        Log.i("ScanViewModel", "🔥 Clear non-picklist selesai: ${removedItems.size} artikel non-picklist dihapus, ${finalItems.size} artikel picklist tetap")
         Log.i("ScanViewModel", "🔥 EPC buffer dihapus: siap untuk scan baru dari awal")
     }
     
@@ -1601,24 +1940,39 @@ class ScanViewModel(application: Application) : AndroidViewModel(application) {
                 }
                 
                 if (itemsToUse.isNotEmpty()) {
-                    // VALIDASI: Reset overscan ke 0 sebelum menghitung status
-                    val validatedItems = itemsToUse.map { item ->
-                        if (item.qtyPl > 0 && item.qtyScan > item.qtyPl) {
-                            Log.w("ScanViewModel", "🔥 OVERSCAN DETECTED IN STATUS UPDATE - RESET TO 0: ${item.articleName} ${item.size} - qtyScan=${item.qtyScan}, qtyPl=${item.qtyPl}")
-                            item.copy(qtyScan = 0)
-                        } else {
-                            item
-                        }
+                    // **PERUBAHAN LOGIKA**: Jangan reset overscan ke 0 karena data Supabase sudah valid
+                    // val validatedItems = itemsToUse.map { item ->
+                    //     if (item.qtyPl > 0 && item.qtyScan > item.qtyPl) {
+                    //         Log.w("ScanViewModel", "🔥 OVERSCAN DETECTED IN STATUS UPDATE - RESET TO 0: ${item.articleName} ${item.size} - qtyScan=${item.qtyScan}, qtyPl=${item.qtyPl}")
+                    //         item.copy(qtyScan = 0)
+                    //     } else {
+                    //         item
+                    //     }
+                    // }
+                    
+                    // Gunakan data asli tanpa reset
+                    val validatedItems = itemsToUse
+                    Log.i("ScanViewModel", "🔥 Menggunakan data asli tanpa reset overscan - data Supabase sudah valid")
+                    
+                    // **DEBUGGING**: Log detail untuk melacak data yang digunakan
+                    Log.i("ScanViewModel", "🔥 === STATUS UPDATE DEBUG ===")
+                    Log.i("ScanViewModel", "🔥 Picklist: $picklistNo")
+                    Log.i("ScanViewModel", "🔥 Items to use: ${validatedItems.size}")
+                    Log.i("ScanViewModel", "🔥 Data source: ${if (cachedItems.isEmpty() && currentPicklistNumber == picklistNo) "current items" else "cache"}")
+                    validatedItems.forEach { item ->
+                        Log.d("ScanViewModel", "🔥 Status item: ${item.articleName} ${item.size} - qtyPl=${item.qtyPl}, qtyScan=${item.qtyScan}")
                     }
+                    Log.i("ScanViewModel", "🔥 === END STATUS UPDATE DEBUG ===")
                     
                     val totalQty = validatedItems.sumOf { it.qtyPl }
                     val scannedQty = validatedItems.sumOf { it.qtyScan }
                     val remainingQty = totalQty - scannedQty
                     
-                    // Picklist dianggap "sudah di-scan" jika SEMUA item sudah selesai (qtyScan = qtyPl)
-                    val completedItems = validatedItems.count { it.qtyPl > 0 && it.qtyScan == it.qtyPl }
-                    val totalPicklistItems = validatedItems.count { it.qtyPl > 0 }
-                    val isScanned = totalPicklistItems > 0 && completedItems == totalPicklistItems
+                    // **PERUBAHAN LOGIKA**: Picklist dianggap "sudah di-scan" jika setidaknya ada satu RFID yang di-scan dan masuk ke Supabase
+                    val hasAnyScannedItems = validatedItems.any { it.qtyScan > 0 }
+                    val isScanned = hasAnyScannedItems
+                    
+                    Log.i("ScanViewModel", "🔥 Picklist $picklistNo: hasAnyScannedItems=$hasAnyScannedItems, isScanned=$isScanned")
                     
                     val status = PicklistStatus(
                         picklistNumber = picklistNo,
@@ -1630,7 +1984,7 @@ class ScanViewModel(application: Application) : AndroidViewModel(application) {
                     )
                     
                     statuses.add(status)
-                    Log.i("ScanViewModel", "🔥 Picklist $picklistNo: total=$totalQty, scanned=$scannedQty, remaining=$remainingQty, completed=$completedItems/$totalPicklistItems, isScanned=$isScanned (data dari ${if (cachedItems.isEmpty() && currentPicklistNumber == picklistNo) "current items" else "cache"})")
+                    Log.i("ScanViewModel", "🔥 Picklist $picklistNo: total=$totalQty, scanned=$scannedQty, remaining=$remainingQty, hasAnyScannedItems=$hasAnyScannedItems, isScanned=$isScanned (data dari ${if (cachedItems.isEmpty() && currentPicklistNumber == picklistNo) "current items" else "cache"})")
                 } else {
                     // Jika tidak ada data di cache, buat status default
                     val status = PicklistStatus(
@@ -1662,14 +2016,41 @@ class ScanViewModel(application: Application) : AndroidViewModel(application) {
     
     /**
      * Update cache dengan qty scan yang baru setelah Submit
+     * **PERUBAHAN**: Pastikan cache berisi SEMUA item picklist asli, bukan hanya yang di-scan
      */
     private fun updateCacheWithScannedQty() {
         Log.i("ScanViewModel", "🔥 Update cache dengan qty scan yang baru")
         
         val currentItems = _picklistItems.value ?: emptyList()
         if (currentItems.isNotEmpty()) {
-            // Update cache dengan data yang sudah di-scan
-            cacheManager.cacheArticles(currentItems)
+            // **PERUBAHAN LOGIKA**: Dapatkan semua item picklist asli dari cache, bukan hanya currentItems
+            val existingCachedArticles = cacheManager.getCachedArticles()?.toMutableList() ?: mutableListOf()
+            
+            Log.i("ScanViewModel", "🔥 Existing cached articles: ${existingCachedArticles.size}")
+            Log.i("ScanViewModel", "🔥 Current items to update: ${currentItems.size}")
+            
+            // Update qtyScan untuk item yang sudah di-scan, tapi pertahankan semua item asli
+            val updatedCachedArticles = existingCachedArticles.map { cachedItem ->
+                // **PERUBAHAN**: Gunakan id yang unik untuk matching, bukan composite key
+                val updatedItem = currentItems.find { current ->
+                    current.id == cachedItem.id
+                }
+                
+                if (updatedItem != null) {
+                    // Update qtyScan untuk item yang sudah di-scan
+                    Log.i("ScanViewModel", "🔥 Update cache qtyScan: ${cachedItem.articleName} ${cachedItem.size} (id=${cachedItem.id}) dari ${cachedItem.qtyScan} ke ${updatedItem.qtyScan}")
+                    cachedItem.copy(qtyScan = updatedItem.qtyScan)
+                } else {
+                    // Pertahankan item asli jika tidak ada di currentItems
+                    Log.i("ScanViewModel", "🔥 Pertahankan item asli: ${cachedItem.articleName} ${cachedItem.size} (id=${cachedItem.id}) qtyScan=${cachedItem.qtyScan}")
+                    cachedItem
+                }
+            }
+            
+            // Cache semua item (yang sudah di-update qtyScan-nya)
+            cacheManager.cacheArticles(updatedCachedArticles)
+            
+            Log.i("ScanViewModel", "🔥 Cache updated: ${updatedCachedArticles.size} items (${currentItems.size} items dengan qtyScan ter-update)")
             
             // Update picklist statuses dengan delay untuk memastikan cache sudah ter-update
             val picklists = _picklists.value ?: emptyList()
@@ -1680,8 +2061,6 @@ class ScanViewModel(application: Application) : AndroidViewModel(application) {
                     updatePicklistStatuses(picklists)
                 }
             }
-            
-            Log.i("ScanViewModel", "🔥 Cache updated dengan ${currentItems.size} items")
         }
     }
     
@@ -1692,6 +2071,45 @@ class ScanViewModel(application: Application) : AndroidViewModel(application) {
      */
     private suspend fun loadQtyScanFromCache(freshItems: List<PicklistItem>): List<PicklistItem> {
         Log.i("ScanViewModel", "🔥 Load qty scan dari cache untuk ${freshItems.size} items")
+        
+        // **DEBUGGING**: Log semua item yang masuk untuk melacak item yang hilang
+        Log.i("ScanViewModel", "🔥 === INPUT ITEMS DEBUG ===")
+        freshItems.forEach { item ->
+            Log.i("ScanViewModel", "🔥 Input item: ${item.articleName} ${item.size} - qtyPl=${item.qtyPl}")
+        }
+        Log.i("ScanViewModel", "🔥 === END INPUT ITEMS DEBUG ===")
+        
+        // **STEP 1: Group items by article_name and size sebelum memproses**
+        val groupedFreshItems = freshItems.groupBy { "${it.articleName}_${it.size}" }
+            .map { (key, groupedItems) ->
+                val firstItem = groupedItems.first()
+                val totalQtyPl = groupedItems.sumOf { it.qtyPl }
+                
+                Log.d("ScanViewModel", "🔥 Group '$key': ${groupedItems.size} items, totalQtyPl=$totalQtyPl")
+                
+                PicklistItem(
+                    id = firstItem.id,
+                    noPicklist = firstItem.noPicklist,
+                    articleId = firstItem.articleId,
+                    articleName = firstItem.articleName,
+                    size = firstItem.size,
+                    productId = firstItem.productId,
+                    qtyPl = totalQtyPl,
+                    qtyScan = 0, // Reset ke 0
+                    createdAt = firstItem.createdAt,
+                    warehouse = firstItem.warehouse,
+                    tagStatus = firstItem.tagStatus
+                )
+            }
+        
+        Log.i("ScanViewModel", "🔥 STEP 1: Grouped ${freshItems.size} items into ${groupedFreshItems.size} unique items")
+        
+        // **VALIDASI**: Pastikan qtyPl tidak berubah setelah grouping
+        Log.i("ScanViewModel", "🔥 === QTYPL VALIDATION ===")
+        groupedFreshItems.forEach { item ->
+            Log.i("ScanViewModel", "🔥 Validated item: ${item.articleName} ${item.size} - qtyPl=${item.qtyPl} (tidak boleh berubah)")
+        }
+        Log.i("ScanViewModel", "🔥 === END QTYPL VALIDATION ===")
         
         val cachedItems = cacheManager.getCachedArticles() ?: emptyList()
         val itemsWithQtyScan = mutableListOf<PicklistItem>()
@@ -1715,9 +2133,9 @@ class ScanViewModel(application: Application) : AndroidViewModel(application) {
         loadEpcBufferFromSavedData(picklistScans)
         
         // VALIDASI: Hilangkan EPC yang overscan dan tidak ada di picklist dari buffer
-        validateAndCleanEpcBuffer(freshItems, picklistScans)
+        validateAndCleanEpcBuffer(groupedFreshItems, picklistScans)
         
-        freshItems.forEach { freshItem ->
+        groupedFreshItems.forEach { freshItem ->
             // Cari item yang sama di cache berdasarkan article_name dan size
             val cachedItem = cachedItems.find { cached ->
                 cached.articleName == freshItem.articleName && 
@@ -1725,34 +2143,48 @@ class ScanViewModel(application: Application) : AndroidViewModel(application) {
                 cached.noPicklist == freshItem.noPicklist
             }
             
-            // Hitung qty scan dari tabel picklist_scan berdasarkan article_name dan size
-            val scanQty = picklistScans.count { scan ->
+            // **PERUBAHAN LOGIKA**: Hitung qty scan berdasarkan DISTINCT EPC per artikel
+            // Jangan gunakan count() karena bisa menghitung EPC duplikat
+            val articleScans = picklistScans.filter { scan ->
                 scan.getString("article_name") == freshItem.articleName &&
                 scan.getString("size") == freshItem.size
             }
             
+            // Gunakan distinct EPC untuk menghitung qty scan yang benar
+            val distinctEpcs = articleScans.map { scan -> scan.getString("epc") }.distinct()
+            val scanQty = distinctEpcs.size
+            
             val cacheQty = cachedItem?.qtyScan ?: 0
             
-            // Gunakan qty scan yang lebih tinggi antara cache dan Supabase
-            val rawQtyScan = maxOf(scanQty, cacheQty)
+            // **STEP 2: Gunakan qty scan dari Supabase sebagai sumber utama (bukan cache)**
+            val rawQtyScan = scanQty // Prioritaskan data dari Supabase, bukan cache
             
-            // VALIDASI: Jika ada overscan atau item non-picklist, kembalikan qty scan ke 0 karena tidak valid
+            // **PERUBAHAN LOGIKA**: Gunakan data dari Supabase sebagai sumber utama
+            // Jangan reset qtyScan ke 0 jika data sudah tersimpan di Supabase
             val finalQtyScan = if (freshItem.qtyPl > 0) {
                 if (rawQtyScan > freshItem.qtyPl) {
-                    // OVERSCAN DETECTED: Reset ke 0 karena data tidak valid
-                    Log.w("ScanViewModel", "🔥 OVERSCAN DETECTED - RESET TO 0: ${freshItem.articleName} ${freshItem.size} - rawQtyScan=$rawQtyScan, qtyPl=${freshItem.qtyPl} (scanQty=$scanQty, cacheQty=$cacheQty)")
-                    0
+                    // OVERSCAN DETECTED: Tapi tetap gunakan data dari Supabase karena sudah tersimpan
+                    Log.w("ScanViewModel", "🔥 OVERSCAN DETECTED - GUNAKAN SUPABASE: ${freshItem.articleName} ${freshItem.size} - rawQtyScan=$rawQtyScan, qtyPl=${freshItem.qtyPl} (data sudah tersimpan di Supabase)")
+                    rawQtyScan // Gunakan data dari Supabase meskipun overscan
                 } else {
                     rawQtyScan // Data valid, gunakan qty scan yang ada
                 }
             } else {
-                // NON-PICKLIST DETECTED: Reset ke 0 karena data tidak valid
-                Log.w("ScanViewModel", "🔥 NON-PICKLIST DETECTED - RESET TO 0: ${freshItem.articleName} ${freshItem.size} - qtyPl=0 (data tidak valid)")
-                0
+                // **PERUBAHAN LOGIKA**: Jangan reset non-picklist ke 0 karena data Supabase sudah valid
+                // NON-PICKLIST DETECTED: Tetap gunakan data dari Supabase meskipun tidak ada di picklist
+                Log.w("ScanViewModel", "🔥 NON-PICKLIST DETECTED - GUNAKAN SUPABASE: ${freshItem.articleName} ${freshItem.size} - qtyPl=0, rawQtyScan=$rawQtyScan (data tersimpan di Supabase)")
+                rawQtyScan // Gunakan data dari Supabase meskipun non-picklist
             }
             
-            // Log untuk debugging
-            Log.d("ScanViewModel", "🔥 VALIDATION: ${freshItem.articleName} ${freshItem.size} - qtyPl=${freshItem.qtyPl}, scanQty=$scanQty, cacheQty=$cacheQty, rawQtyScan=$rawQtyScan, finalQtyScan=$finalQtyScan")
+            // Log untuk debugging dengan detail lebih lengkap
+            Log.i("ScanViewModel", "🔥 VALIDATION DETAIL: ${freshItem.articleName} ${freshItem.size}")
+            Log.i("ScanViewModel", "🔥   - qtyPl (picklist): ${freshItem.qtyPl}")
+            Log.i("ScanViewModel", "🔥   - articleScans (total): ${articleScans.size}")
+            Log.i("ScanViewModel", "🔥   - distinctEpcs: ${distinctEpcs.size}")
+            Log.i("ScanViewModel", "🔥   - scanQty (Supabase): $scanQty")
+            Log.i("ScanViewModel", "🔥   - cacheQty (local): $cacheQty")
+            Log.i("ScanViewModel", "🔥   - rawQtyScan (final): $rawQtyScan")
+            Log.i("ScanViewModel", "🔥   - finalQtyScan (validated): $finalQtyScan")
             
             if (finalQtyScan > 0) {
                 val itemWithQtyScan = freshItem.copy(qtyScan = finalQtyScan)
@@ -1762,20 +2194,67 @@ class ScanViewModel(application: Application) : AndroidViewModel(application) {
                     Log.d("ScanViewModel", "🔥 Supabase: ${freshItem.articleName} = $scanQty")
                 }
             } else if (freshItem.qtyPl > 0) {
-                // Hanya tampilkan item picklist dengan qty scan = 0 (reset overscan)
+                // Item dari picklist dengan qty scan = 0 (belum di-scan)
                 val itemWithQtyScan = freshItem.copy(qtyScan = 0)
                 itemsWithQtyScan.add(itemWithQtyScan)
                 Log.d("ScanViewModel", "🔥 Item picklist dengan qty scan = 0 ditampilkan: ${freshItem.articleName} ${freshItem.size}")
             } else {
-                // Item non-picklist (qtyPl = 0) dihilangkan dari tampilan
-                Log.d("ScanViewModel", "🔥 Item non-picklist dihilangkan dari tampilan: ${freshItem.articleName} ${freshItem.size}")
+                // **PERUBAHAN LOGIKA**: Item dengan qtyPl = 0 juga harus ditampilkan karena bagian dari picklist
+                // Jangan hilangkan item dengan qtyPl = 0 karena mereka adalah bagian dari picklist yang asli
+                val itemWithQtyScan = freshItem.copy(qtyScan = 0)
+                itemsWithQtyScan.add(itemWithQtyScan)
+                Log.d("ScanViewModel", "🔥 Item qtyPl=0 tetap ditampilkan (bagian dari picklist): ${freshItem.articleName} ${freshItem.size}")
             }
         }
         
         Log.i("ScanViewModel", "🔥 Load qty scan selesai: ${itemsWithQtyScan.size} items")
         
-        // Bersihkan data overscan yang sudah ada di database jika diperlukan
-        cleanupOverscanData(itemsWithQtyScan, picklistScans)
+        // **DEBUGGING**: Log semua item yang berhasil ditambahkan untuk melacak item yang hilang
+        Log.i("ScanViewModel", "🔥 === OUTPUT ITEMS DEBUG ===")
+        itemsWithQtyScan.forEach { item ->
+            Log.i("ScanViewModel", "🔥 Output item: ${item.articleName} ${item.size} - qtyPl=${item.qtyPl}, qtyScan=${item.qtyScan}")
+        }
+        Log.i("ScanViewModel", "🔥 === END OUTPUT ITEMS DEBUG ===")
+        
+        // **VALIDASI FINAL**: Pastikan qtyPl tidak berubah dari grouped input ke output
+        Log.i("ScanViewModel", "🔥 === FINAL QTYPL VALIDATION ===")
+        val inputQtyPlMap = groupedFreshItems.associateBy { "${it.articleName}_${it.size}" }
+        val outputQtyPlMap = itemsWithQtyScan.associateBy { "${it.articleName}_${it.size}" }
+        
+        var qtyPlChanged = false
+        outputQtyPlMap.forEach { (key, outputItem) ->
+            val inputItem = inputQtyPlMap[key]
+            if (inputItem != null && inputItem.qtyPl != outputItem.qtyPl) {
+                Log.e("ScanViewModel", "🔥 ERROR: qtyPl BERUBAH! ${outputItem.articleName} ${outputItem.size} - Input qtyPl=${inputItem.qtyPl}, Output qtyPl=${outputItem.qtyPl}")
+                qtyPlChanged = true
+            }
+        }
+        
+        if (!qtyPlChanged) {
+            Log.i("ScanViewModel", "🔥 ✅ VALIDASI BERHASIL: Semua qtyPl tetap konsisten")
+        } else {
+            Log.e("ScanViewModel", "🔥 ❌ VALIDASI GAGAL: Ada qtyPl yang berubah!")
+        }
+        Log.i("ScanViewModel", "🔥 === END FINAL QTYPL VALIDATION ===")
+        
+        // **STEP 3: Log summary untuk debugging**
+        val totalQtyPl = itemsWithQtyScan.sumOf { it.qtyPl }
+        val totalQtyScan = itemsWithQtyScan.sumOf { it.qtyScan }
+        val totalSupabaseRecords = picklistScans.size
+        
+        Log.i("ScanViewModel", "🔥 SUMMARY LOAD QTY SCAN:")
+        Log.i("ScanViewModel", "🔥   - Input items (raw): ${freshItems.size}")
+        Log.i("ScanViewModel", "🔥   - Input items (grouped): ${groupedFreshItems.size}")
+        Log.i("ScanViewModel", "🔥   - Output items: ${itemsWithQtyScan.size}")
+        Log.i("ScanViewModel", "🔥   - Items lost: ${groupedFreshItems.size - itemsWithQtyScan.size}")
+        Log.i("ScanViewModel", "🔥   - Total qtyPl (picklist): $totalQtyPl")
+        Log.i("ScanViewModel", "🔥   - Total qtyScan (displayed): $totalQtyScan")
+        Log.i("ScanViewModel", "🔥   - Total Supabase records: $totalSupabaseRecords")
+        Log.i("ScanViewModel", "🔥   - Remaining: ${totalQtyPl - totalQtyScan}")
+        
+        // **PERUBAHAN**: Nonaktifkan cleanup overscan data karena data Supabase sudah valid
+        // cleanupOverscanData(itemsWithQtyScan, picklistScans)
+        Log.i("ScanViewModel", "🔥 Cleanup overscan data dinonaktifkan - data Supabase sudah valid")
         
         return itemsWithQtyScan
     }
@@ -1807,20 +2286,17 @@ class ScanViewModel(application: Application) : AndroidViewModel(application) {
                 // Cek apakah artikel ada di picklist
                 val picklistItem = freshItems.find { it.articleName == articleName && it.size == size }
                 
-                if (picklistItem != null && picklistItem.qtyPl > 0) {
-                    // Artikel valid di picklist, hitung qty scan
+                if (picklistItem != null) {
+                    // **PERUBAHAN LOGIKA**: Prioritaskan data yang sudah tersimpan di Supabase
+                    // Jika EPC sudah ada di Supabase, anggap valid meskipun qtyPl mungkin tidak akurat
                     val scanQty = picklistScans.count { 
                         it.getString("article_name") == articleName && it.getString("size") == size 
                     }
                     
-                    if (scanQty <= picklistItem.qtyPl) {
-                        // Tidak overscan, EPC valid
+                    // **PERUBAHAN LOGIKA**: Jangan hapus EPC yang sudah tersimpan di Supabase
+                    // Karena data tersebut sudah valid dan berhasil disimpan
                         validEpcBuffer.add(epc)
-                        Log.d("ScanViewModel", "🔥 EPC VALID: $epc untuk $articleKey (scanQty=$scanQty, qtyPl=${picklistItem.qtyPl})")
-                    } else {
-                        // Overscan, EPC tidak valid
-                        Log.w("ScanViewModel", "🔥 EPC OVERSCAN REMOVED: $epc untuk $articleKey (scanQty=$scanQty > qtyPl=${picklistItem.qtyPl})")
-                    }
+                    Log.d("ScanViewModel", "🔥 EPC VALID (SUPABASE): $epc untuk $articleKey (data tersimpan di Supabase, scanQty=$scanQty, qtyPl=${picklistItem.qtyPl})")
                 } else {
                     // Artikel tidak ada di picklist, EPC tidak valid
                     Log.w("ScanViewModel", "🔥 EPC NON-PICKLIST REMOVED: $epc untuk $articleKey (tidak ada di picklist)")
@@ -1840,32 +2316,30 @@ class ScanViewModel(application: Application) : AndroidViewModel(application) {
                 val size = scanRecord.getString("size")
                 val picklistItem = freshItems.find { it.articleName == articleName && it.size == size }
                 
-                if (picklistItem != null && picklistItem.qtyPl > 0) {
+                if (picklistItem != null) {
+                    // **PERUBAHAN LOGIKA**: Prioritaskan data yang sudah tersimpan di Supabase
+                    // Jika EPC sudah ada di Supabase, anggap valid meskipun qtyPl mungkin tidak akurat
                     val scanQty = picklistScans.count { 
                         it.getString("article_name") == articleName && it.getString("size") == size 
                     }
                     
-                    if (scanQty <= picklistItem.qtyPl) {
+                    // **PERUBAHAN LOGIKA**: Jangan hapus EPC yang sudah tersimpan di Supabase
+                    // Karena data tersebut sudah valid dan berhasil disimpan
                         validProcessedEpcBuffer.add(epc)
-                    }
+                    Log.d("ScanViewModel", "🔥 PROCESSED EPC VALID (SUPABASE): $epc untuk ${articleName}_${size} (data tersimpan di Supabase, scanQty=$scanQty, qtyPl=${picklistItem.qtyPl})")
                 }
             }
         }
         
-        // Update buffer dengan EPC yang valid
-        val removedEpcCount = epcBuffer.size - validEpcBuffer.size
-        val removedProcessedCount = processedEpcBuffer.size - validProcessedEpcBuffer.size
+        // **PERUBAHAN LOGIKA**: Jangan hapus EPC yang sudah tersimpan di Supabase
+        // Karena data tersebut sudah valid dan berhasil disimpan
+        // epcBuffer.clear()
+        // epcBuffer.addAll(validEpcBuffer)
         
-        epcBuffer.clear()
-        epcBuffer.addAll(validEpcBuffer)
+        // processedEpcBuffer.clear()
+        // processedEpcBuffer.addAll(validProcessedEpcBuffer)
         
-        processedEpcBuffer.clear()
-        processedEpcBuffer.addAll(validProcessedEpcBuffer)
-        
-        // Update scan counter
-        _scanCounter.value = epcBuffer.size
-        
-        Log.i("ScanViewModel", "🔥 EPC Buffer cleaned: removed $removedEpcCount EPCs, $removedProcessedCount processed EPCs")
+        Log.i("ScanViewModel", "🔥 EPC Buffer validation selesai: ${epcBuffer.size} EPC tetap ada (tidak ada yang dihapus)")
         Log.i("ScanViewModel", "🔥 Final EPC buffer size: ${epcBuffer.size}, processed: ${processedEpcBuffer.size}")
     }
     
@@ -1886,26 +2360,26 @@ class ScanViewModel(application: Application) : AndroidViewModel(application) {
                 
                 if (articleScans.isNotEmpty()) {
                     if (item.qtyPl == 0) {
-                        // NON-PICKLIST DETECTED: Hapus SEMUA scan records karena data tidak valid
-                        Log.w("ScanViewModel", "🔥 NON-PICKLIST CLEANUP - HAPUS SEMUA: ${item.articleName} ${item.size} - scanRecords=${articleScans.size}, qtyPl=0 (data tidak valid)")
+                        // **PERUBAHAN LOGIKA**: Jangan hapus data non-picklist karena data Supabase sudah valid
+                        // NON-PICKLIST DETECTED: Tetap gunakan data dari Supabase meskipun tidak ada di picklist
+                        Log.w("ScanViewModel", "🔥 NON-PICKLIST CLEANUP - GUNAKAN SUPABASE: ${item.articleName} ${item.size} - scanRecords=${articleScans.size}, qtyPl=0 (data tersimpan di Supabase)")
                         
-                        Log.i("ScanViewModel", "🔥 Menghapus SEMUA ${articleScans.size} scan records untuk ${item.articleName} karena non-picklist")
+                        Log.i("ScanViewModel", "🔥 Data non-picklist tetap digunakan: ${articleScans.size} scan records untuk ${item.articleName} karena data Supabase sudah valid")
                         
-                        // TODO: Implementasi hapus SEMUA scan records dari database
-                        // Untuk sementara hanya log, implementasi hapus bisa ditambahkan nanti
+                        // **PERUBAHAN**: Tidak menghapus data dari Supabase karena sudah valid
                         articleScans.forEach { scan ->
-                            Log.d("ScanViewModel", "🔥 Scan record non-picklist yang akan dihapus: ${scan.getString("epc")}")
+                            Log.d("ScanViewModel", "🔥 Scan record non-picklist yang tetap digunakan: ${scan.getString("epc")}")
                         }
                     } else if (articleScans.size > item.qtyPl) {
-                        // OVERSCAN DETECTED: Hapus SEMUA scan records karena data tidak valid
-                        Log.w("ScanViewModel", "🔥 OVERSCAN CLEANUP - HAPUS SEMUA: ${item.articleName} ${item.size} - scanRecords=${articleScans.size}, qtyPl=${item.qtyPl} (data tidak valid)")
+                        // **PERUBAHAN LOGIKA**: Jangan hapus data overscan karena data Supabase sudah valid
+                        // OVERSCAN DETECTED: Tetap gunakan data dari Supabase meskipun overscan
+                        Log.w("ScanViewModel", "🔥 OVERSCAN CLEANUP - GUNAKAN SUPABASE: ${item.articleName} ${item.size} - scanRecords=${articleScans.size}, qtyPl=${item.qtyPl} (data tersimpan di Supabase)")
                         
-                        Log.i("ScanViewModel", "🔥 Menghapus SEMUA ${articleScans.size} scan records untuk ${item.articleName} karena overscan")
+                        Log.i("ScanViewModel", "🔥 Data overscan tetap digunakan: ${articleScans.size} scan records untuk ${item.articleName} karena data Supabase sudah valid")
                         
-                        // TODO: Implementasi hapus SEMUA scan records dari database
-                        // Untuk sementara hanya log, implementasi hapus bisa ditambahkan nanti
+                        // **PERUBAHAN**: Tidak menghapus data dari Supabase karena sudah valid
                         articleScans.forEach { scan ->
-                            Log.d("ScanViewModel", "🔥 Scan record overscan yang akan dihapus: ${scan.getString("epc")}")
+                            Log.d("ScanViewModel", "🔥 Scan record overscan yang tetap digunakan: ${scan.getString("epc")}")
                         }
                     }
                 }

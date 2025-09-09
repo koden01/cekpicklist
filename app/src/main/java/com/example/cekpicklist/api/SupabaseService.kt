@@ -164,6 +164,14 @@ class SupabaseService {
                         )
                     }
                     println("✅ SUCCESS! Loaded ${items.size} items for picklist: $picklistNo")
+                    
+                    // **DEBUGGING**: Log semua item yang dikembalikan dari Supabase
+                    println("🔥 === SUPABASE ITEMS DEBUG ===")
+                    items.forEach { item ->
+                        println("🔥 Supabase item: ${item.articleName} ${item.size} - qtyPl=${item.qtyPl}, qtyScan=${item.qtyScan}")
+                    }
+                    println("🔥 === END SUPABASE ITEMS DEBUG ===")
+                    
                     return@withContext items
                 } else {
                     println("⚠️ Empty response for picklist: $picklistNo")

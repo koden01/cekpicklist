@@ -28,8 +28,14 @@ import com.example.cekpicklist.data.PicklistItem
 import com.example.cekpicklist.databinding.ActivityMainBinding
 import com.example.cekpicklist.utils.ToastUtils
 import com.example.cekpicklist.utils.Logger
+import com.example.cekpicklist.utils.VersionComparator
 import com.example.cekpicklist.viewmodel.ScanViewModel
 import com.example.cekpicklist.viewmodel.ScanViewModelFactory
+import com.example.cekpicklist.service.AutoUpdateService
+import android.content.BroadcastReceiver
+import android.content.Context
+import android.content.IntentFilter
+import androidx.appcompat.app.AlertDialog
 import com.rscja.deviceapi.RFIDWithUHFUART
 import com.rscja.deviceapi.entity.UHFTAGInfo
 import com.rscja.deviceapi.exception.ConfigurationException
@@ -48,6 +54,9 @@ class MainActivity : AppCompatActivity() {
     }
     private lateinit var picklistAdapter: PicklistAdapter
     private var rfidReader: RFIDWithUHFUART? = null
+    
+    // Auto-update components
+    private lateinit var updateReceiver: BroadcastReceiver
     private var isScanning = false
     private var isRfidSupported = false
     
@@ -219,6 +228,9 @@ class MainActivity : AppCompatActivity() {
         // Log dengan tag yang unik dan mudah dikenali
         android.util.Log.e("CEKPICKLIST_MAIN", "ONCREATE DIMULAI")
         
+        // Reset toast counter saat activity baru dimulai
+        ToastUtils.resetToastCounter()
+        
         super.onCreate(savedInstanceState)
         android.util.Log.e("CEKPICKLIST_MAIN", "super.onCreate selesai")
         
@@ -255,6 +267,9 @@ class MainActivity : AppCompatActivity() {
         
         // Initialize sound system
         initSound()
+        
+        // Setup auto-update system
+        setupAutoUpdate()
         
         // Prefetch sudah dilakukan di PicklistInputActivity, tidak perlu duplikasi
         
@@ -950,11 +965,24 @@ class MainActivity : AppCompatActivity() {
                 picklistAdapter.updateItems(finalFilteredItems)
                 
                 // Update summary cards dengan data yang benar
+                // **PERUBAHAN**: Gunakan original items untuk summary, bukan filtered items
+                // Ini memastikan total qtyPl tetap konsisten meskipun ada filtering
                 val totalQty = items.sumOf { it.qtyPl }
                 val scannedQty = items.sumOf { it.qtyScan }
                 val remainingQty = totalQty - scannedQty
                 
-                Log.d("MainActivity", "Total Qty: $totalQty, Scanned: $scannedQty, Remaining: $remainingQty")
+                Log.i("MainActivity", "🔥 === SUMMARY UPDATE ===")
+                Log.i("MainActivity", "🔥 Total items (original): ${items.size}")
+                Log.i("MainActivity", "🔥 Filtered items (displayed): ${finalFilteredItems.size}")
+                Log.i("MainActivity", "🔥 Total Qty (picklist): $totalQty")
+                Log.i("MainActivity", "🔥 Scanned Qty (displayed): $scannedQty")
+                Log.i("MainActivity", "🔥 Remaining Qty: $remainingQty")
+                
+                // Log detail per item untuk debugging
+                items.forEach { item ->
+                    Log.d("MainActivity", "🔥 Item: ${item.articleName} ${item.size} - qtyPl=${item.qtyPl}, qtyScan=${item.qtyScan}")
+                }
+                
                 updateSummaryCards(totalQty, remainingQty)
                 
                 // Tombol Submit sudah dihilangkan - menggunakan auto-post
@@ -1305,12 +1333,12 @@ class MainActivity : AppCompatActivity() {
             val totalQtyPl = groupedItems.sumOf { it.qtyPl }
             val rawTotalQtyScan = groupedItems.sumOf { it.qtyScan }
             
-            // VALIDASI OVERSCAN: Reset qty scan ke 0 jika ada overscan
-            val finalTotalQtyScan = if (totalQtyPl > 0 && rawTotalQtyScan > totalQtyPl) {
-                Log.w("MainActivity", "🔥 OVERSCAN DETECTED IN GROUPING - RESET TO 0: $key - rawQtyScan=$rawTotalQtyScan, qtyPl=$totalQtyPl (data tidak valid)")
-                0
-            } else {
-                rawTotalQtyScan
+            // **PERUBAHAN LOGIKA**: Jangan reset overscan karena data dari ScanViewModel sudah valid
+            // Data overscan sudah ditangani di ScanViewModel dan tersimpan di Supabase
+            val finalTotalQtyScan = rawTotalQtyScan
+            
+            if (totalQtyPl > 0 && rawTotalQtyScan > totalQtyPl) {
+                Log.i("MainActivity", "🔥 OVERSCAN DETECTED IN GROUPING - GUNAKAN DATA ASLI: $key - rawQtyScan=$rawTotalQtyScan, qtyPl=$totalQtyPl (data sudah valid dari Supabase)")
             }
             
             Log.d("MainActivity", "🔥 Group '$key': ${groupedItems.size} items, totalQtyPl=$totalQtyPl, rawQtyScan=$rawTotalQtyScan, finalQtyScan=$finalTotalQtyScan")
@@ -1352,121 +1380,76 @@ class MainActivity : AppCompatActivity() {
         
         // Handle tombol fisik untuk scanning RFID
         when (keyCode) {
-            // Tombol Function Keys (F1-F8) - Sesuai demo UHF
+            // Tombol Function Keys (F1-F8) - Gunakan fungsi default device
             KeyEvent.KEYCODE_F1 -> {
-                if (repeatCount == 0) {
-                    Log.d("MainActivity", "🔥 Tombol fisik ditekan: F1 (Function Key 1) - Code: $keyCode")
-                    toggleScanning()
-                }
-                return true
+                Log.d("MainActivity", "🔥 Tombol fisik ditekan: F1 (Function Key 1) - Code: $keyCode (Fungsi default device)")
+                return super.onKeyDown(keyCode, event)
             }
             KeyEvent.KEYCODE_F2 -> {
-                if (repeatCount == 0) {
-                    Log.d("MainActivity", "🔥 Tombol fisik ditekan: F2 (Function Key 2) - Code: $keyCode")
-                    toggleScanning()
-                }
-                return true
+                Log.d("MainActivity", "🔥 Tombol fisik ditekan: F2 (Function Key 2) - Code: $keyCode (Fungsi default device)")
+                return super.onKeyDown(keyCode, event)
             }
             KeyEvent.KEYCODE_F3 -> {
-                if (repeatCount == 0) {
-                    Log.d("MainActivity", "🔥 Tombol fisik ditekan: F3 (Function Key 3) - Code: $keyCode")
-                    toggleScanning()
-                }
-                return true
+                Log.d("MainActivity", "🔥 Tombol fisik ditekan: F3 (Function Key 3) - Code: $keyCode (Fungsi default device)")
+                return super.onKeyDown(keyCode, event)
             }
             KeyEvent.KEYCODE_F4 -> {
-                if (repeatCount == 0) {
-                    Log.d("MainActivity", "🔥 Tombol fisik ditekan: F4 (Function Key 4) - Code: $keyCode")
-                    toggleScanning()
-                }
-                return true
+                Log.d("MainActivity", "🔥 Tombol fisik ditekan: F4 (Function Key 4) - Code: $keyCode (Fungsi default device)")
+                return super.onKeyDown(keyCode, event)
             }
             KeyEvent.KEYCODE_F5 -> {
-                if (repeatCount == 0) {
-                    Log.d("MainActivity", "🔥 Tombol fisik ditekan: F5 (Function Key 5) - Code: $keyCode")
-                    toggleScanning()
-                }
-                return true
+                Log.d("MainActivity", "🔥 Tombol fisik ditekan: F5 (Function Key 5) - Code: $keyCode (Fungsi default device)")
+                return super.onKeyDown(keyCode, event)
             }
             KeyEvent.KEYCODE_F6 -> {
-                if (repeatCount == 0) {
-                    Log.d("MainActivity", "🔥 Tombol fisik ditekan: F6 (Function Key 6) - Code: $keyCode")
-                    toggleScanning()
-                }
-                return true
+                Log.d("MainActivity", "🔥 Tombol fisik ditekan: F6 (Function Key 6) - Code: $keyCode (Fungsi default device)")
+                return super.onKeyDown(keyCode, event)
             }
             KeyEvent.KEYCODE_F7 -> {
-                if (repeatCount == 0) {
-                    Log.d("MainActivity", "🔥 Tombol fisik ditekan: F7 (Function Key 7) - Code: $keyCode")
-                    toggleScanning()
-                }
-                return true
+                Log.d("MainActivity", "🔥 Tombol fisik ditekan: F7 (Function Key 7) - Code: $keyCode (Fungsi default device)")
+                return super.onKeyDown(keyCode, event)
             }
             KeyEvent.KEYCODE_F8 -> {
-                if (repeatCount == 0) {
-                    Log.d("MainActivity", "🔥 Tombol fisik ditekan: F8 (Function Key 8) - Code: $keyCode")
-                    toggleScanning()
-                }
-                return true
+                Log.d("MainActivity", "🔥 Tombol fisik ditekan: F8 (Function Key 8) - Code: $keyCode (Fungsi default device)")
+                return super.onKeyDown(keyCode, event)
             }
             
-            // Tombol Menu - Sesuai demo UHF
+            // Tombol Menu - Gunakan fungsi default device
             KeyEvent.KEYCODE_MENU -> {
-                if (repeatCount == 0) {
-                    Log.d("MainActivity", "🔥 Tombol fisik ditekan: MENU - Code: $keyCode")
-                    toggleScanning()
-                }
-                return true
+                Log.d("MainActivity", "🔥 Tombol fisik ditekan: MENU - Code: $keyCode (Fungsi default device)")
+                return super.onKeyDown(keyCode, event)
             }
             
-            // Tombol Volume Up/Down - Alternatif untuk scanning
+            // Tombol Volume Up/Down - Gunakan fungsi default device
             KeyEvent.KEYCODE_VOLUME_UP -> {
-                if (repeatCount == 0) {
-                    Log.d("MainActivity", "🔥 Tombol fisik ditekan: VOLUME_UP - Code: $keyCode")
-                    toggleScanning()
-                }
-                return true
+                Log.d("MainActivity", "🔥 Tombol fisik ditekan: VOLUME_UP - Code: $keyCode (Fungsi default device)")
+                return super.onKeyDown(keyCode, event)
             }
             KeyEvent.KEYCODE_VOLUME_DOWN -> {
-                if (repeatCount == 0) {
-                    Log.d("MainActivity", "🔥 Tombol fisik ditekan: VOLUME_DOWN - Code: $keyCode")
-                    toggleScanning()
-                }
-                return true
+                Log.d("MainActivity", "🔥 Tombol fisik ditekan: VOLUME_DOWN - Code: $keyCode (Fungsi default device)")
+                return super.onKeyDown(keyCode, event)
             }
             
-            // Tombol Camera - Sering digunakan untuk scanning
+            // Tombol Camera - Gunakan fungsi default device
             KeyEvent.KEYCODE_CAMERA -> {
-                if (repeatCount == 0) {
-                    Log.d("MainActivity", "🔥 Tombol fisik ditekan: CAMERA - Code: $keyCode")
-                    toggleScanning()
-                }
-                return true
+                Log.d("MainActivity", "🔥 Tombol fisik ditekan: CAMERA - Code: $keyCode (Fungsi default device)")
+                return super.onKeyDown(keyCode, event)
             }
             
-            // Tombol Enter/DPAD_CENTER - Untuk konfirmasi
+            // Tombol Enter/DPAD_CENTER - Gunakan fungsi default device
             KeyEvent.KEYCODE_ENTER -> {
-                if (repeatCount == 0) {
-                    Log.d("MainActivity", "🔥 Tombol fisik ditekan: ENTER - Code: $keyCode")
-                    toggleScanning()
-                }
-                return true
+                Log.d("MainActivity", "🔥 Tombol fisik ditekan: ENTER - Code: $keyCode (Fungsi default device)")
+                return super.onKeyDown(keyCode, event)
             }
             KeyEvent.KEYCODE_DPAD_CENTER -> {
-                if (repeatCount == 0) {
-                    Log.d("MainActivity", "🔥 Tombol fisik ditekan: DPAD_CENTER - Code: $keyCode")
-                    toggleScanning()
-                }
-                return true
+                Log.d("MainActivity", "🔥 Tombol fisik ditekan: DPAD_CENTER - Code: $keyCode (Fungsi default device)")
+                return super.onKeyDown(keyCode, event)
             }
             
-            // Tombol Space - Alternatif untuk scanning
+            // Tombol Space - Gunakan fungsi default device
             KeyEvent.KEYCODE_SPACE -> {
-                if (repeatCount == 0) {
-                    Log.d("MainActivity", "🔥 Tombol fisik ditekan: SPACE - Code: $keyCode")
-                    toggleScanning()
-                }
-                return true
+                Log.d("MainActivity", "🔥 Tombol fisik ditekan: SPACE - Code: $keyCode (Fungsi default device)")
+                return super.onKeyDown(keyCode, event)
             }
             
             // Tombol Back - Untuk navigasi
@@ -1524,9 +1507,9 @@ class MainActivity : AppCompatActivity() {
                 return true
             }
             
-            // Tombol lainnya - Log saja tanpa action
+            // Tombol lainnya - Gunakan fungsi default device
             else -> {
-                Log.d("MainActivity", "🔥 Tombol fisik ditekan: $keyName - Code: $keyCode (Tidak ada action)")
+                Log.d("MainActivity", "🔥 Tombol fisik ditekan: $keyName - Code: $keyCode (Fungsi default device)")
                 return super.onKeyDown(keyCode, event)
             }
         }
@@ -1553,9 +1536,9 @@ class MainActivity : AppCompatActivity() {
                 return true
             }
             
-            // Tombol lainnya - tidak ada action khusus
+            // Tombol lainnya - Gunakan fungsi default device
             else -> {
-                Log.d("MainActivity", "🔥 Tombol fisik dilepas: $keyName - Code: $keyCode (Tidak ada action)")
+                Log.d("MainActivity", "🔥 Tombol fisik dilepas: $keyName - Code: $keyCode (Fungsi default device)")
                 return super.onKeyUp(keyCode, event)
             }
         }
@@ -1648,5 +1631,88 @@ class MainActivity : AppCompatActivity() {
         
         // Release sound resources
         releaseSoundPool()
+        
+        // Unregister update receiver
+        try {
+            unregisterReceiver(updateReceiver)
+        } catch (e: Exception) {
+            Log.e("MainActivity", "Error unregistering update receiver: ${e.message}")
+        }
+    }
+    
+    /**
+     * Setup auto-update system
+     */
+    private fun setupAutoUpdate() {
+        Log.d("MainActivity", "🔥 Setting up auto-update system")
+        
+        // Setup broadcast receiver untuk update notifications
+        updateReceiver = object : BroadcastReceiver() {
+            override fun onReceive(context: Context?, intent: Intent?) {
+                when (intent?.action) {
+                    "com.example.cekpicklist.UPDATE_AVAILABLE" -> {
+                        val currentVersion = intent.getStringExtra("current_version")
+                        val latestVersion = intent.getStringExtra("latest_version")
+                        val updateType = intent.getStringExtra("update_type")
+                        
+                        showUpdateDialog(currentVersion, latestVersion, updateType)
+                    }
+                }
+            }
+        }
+        
+        // Register broadcast receiver
+        val filter = IntentFilter("com.example.cekpicklist.UPDATE_AVAILABLE")
+        registerReceiver(updateReceiver, filter)
+        
+        // Cek update saat startup (dengan delay untuk tidak mengganggu UI)
+        binding.root.postDelayed({
+            checkForUpdates()
+        }, 3000) // Delay 3 detik setelah startup
+    }
+    
+    /**
+     * Cek update dari Git repository
+     */
+    private fun checkForUpdates() {
+        Log.d("MainActivity", "🔥 Checking for updates...")
+        
+        val intent = Intent(this, AutoUpdateService::class.java).apply {
+            action = AutoUpdateService.ACTION_CHECK_UPDATE
+        }
+        startService(intent)
+    }
+    
+    /**
+     * Tampilkan dialog update
+     */
+    private fun showUpdateDialog(currentVersion: String?, latestVersion: String?, updateType: String?) {
+        val builder = AlertDialog.Builder(this, R.style.RoundDialogTheme)
+        
+        val updateTypeText = when (updateType) {
+            "MAJOR" -> "Major Update"
+            "MINOR" -> "Minor Update"
+            "PATCH" -> "Patch Update"
+            else -> "Update"
+        }
+        
+        builder.setTitle("🔄 $updateTypeText Tersedia")
+            .setMessage("""
+                Versi saat ini: $currentVersion
+                Versi terbaru: $latestVersion
+                
+                Update akan diunduh dan diinstall otomatis.
+                Apakah Anda ingin melanjutkan?
+            """.trimIndent())
+            .setPositiveButton("Update Sekarang") { _, _ ->
+                Log.d("MainActivity", "🔥 User confirmed update")
+                // Update sudah diunduh di background, tidak perlu action tambahan
+            }
+            .setNegativeButton("Nanti") { dialog, _ ->
+                Log.d("MainActivity", "🔥 User declined update")
+                dialog.dismiss()
+            }
+            .setCancelable(false)
+            .show()
     }
 }
