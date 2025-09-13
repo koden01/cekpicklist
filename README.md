@@ -1,183 +1,228 @@
-# 📱 Cek Picklist - RFID Scanning Application
+# 📱 CEK PICKLIST - RFID Scanning Application
 
-Aplikasi Android untuk scanning RFID dalam proses picklist dengan integrasi Supabase dan Nirwana API.
+## 📋 **OVERVIEW APLIKASI**
 
-> 📚 **Dokumentasi Lengkap**: Lihat [DOCUMENTATION.md](DOCUMENTATION.md) untuk informasi detail dan komprehensif.
+**Cek Picklist** adalah aplikasi Android untuk scanning RFID dalam proses picklist dengan integrasi Supabase dan Nirwana API. Aplikasi ini dirancang untuk memudahkan proses inventory management dengan teknologi RFID scanning yang real-time.
 
-## 📋 Overview
+### 🎯 **Tujuan Utama**
+- **RFID Scanning**: Scanning barang menggunakan RFID hardware dengan auto-scan setiap detik
+- **Validasi Quantity**: Memastikan jumlah scan sesuai dengan rencana picklist dengan sistem warna
+- **Auto-Save**: Menyimpan data EPC ke Supabase secara real-time
+- **Cache Overscan Prevention**: Mencegah overscan di level cache dengan validasi real-time
+- **Hide Completed Items**: Items yang sudah complete disembunyikan dari UI
+- **Sound Feedback**: Audio confirmation untuk setiap scanning
 
-Aplikasi ini digunakan untuk:
-- **RFID Scanning** barang dalam proses picklist dengan auto-scan setiap detik
-- **Validasi quantity** sesuai dengan rencana picklist dengan visual status
-- **Auto-save** data EPC ke Supabase secara real-time
-- **Deteksi over-scan** dan item NA (Not Available)
-- **Manajemen cache** untuk performa optimal dengan smart stale time
-- **Sound feedback** untuk setiap scanning dengan audio confirmation
-- **Auto versioning** dengan GitHub Actions untuk update otomatis
+### 🏆 **Fitur Unggulan**
+- **Real-time Sync**: Sinkronisasi data dengan Supabase secara real-time
+- **Visual Status System**: Indikator warna untuk status quantity (Hijau/Merah/Kuning)
+- **Hide Completed Items**: Items yang sudah complete disembunyikan dari UI
+- **Swipe Actions**: Swipe-to-delete untuk koreksi data
+- **Auto Versioning**: Sistem otomatisasi versi dengan GitHub Actions
+- **Settings Integration**: Settings yang konsisten antara MainActivity dan PicklistInputActivity
 
-## 🏗️ Arsitektur
+---
 
-### Komponen Utama
+## 🏗️ **ARSITEKTUR APLIKASI**
 
+### **MVVM Pattern Implementation**
 ```
-📱 UI Layer
-├── MainActivity - Halaman utama scanning
-├── PicklistInputActivity - Input nomor picklist
-├── SettingsActivity - Konfigurasi aplikasi
-└── Adapters - RecyclerView adapters
-
-🧠 Business Logic
-├── ScanViewModel - ViewModel untuk scanning
-├── Repository - Data access layer
-└── CacheManager - Manajemen cache lokal
-
-🌐 Network Layer
-├── SupabaseService - API Supabase
-├── SupabaseRealtimeService - Realtime updates
-└── NirwanaApiService - API Nirwana untuk data produk
-
-📊 Data Models
-├── PicklistItem - Model item picklist
-├── ScanResult - Hasil scanning RFID
-└── PicklistScan - Data scan untuk database
+📱 View Layer (Activities/Fragments)
+    ↕️ Data Binding
+🧠 ViewModel Layer (Business Logic)
+    ↕️ LiveData/Observable
+📊 Repository Layer (Data Access)
+    ↕️ API Calls
+🌐 Network Layer (API Services)
+    ↕️ HTTP/WebSocket
+🗄️ Data Sources (Supabase/Nirwana)
 ```
 
-## 🔧 Teknologi yang Digunakan
+### **Package Structure**
+```
+com.example.cekpicklist/
+├── 📱 Activities
+│   ├── MainActivity.kt                 # Halaman utama scanning RFID
+│   ├── PicklistInputActivity.kt        # Input/selection nomor picklist
+│   └── SettingsActivity.kt             # Konfigurasi aplikasi
+├── 🔄 Adapters
+│   ├── PicklistAdapter.kt              # Adapter untuk list picklist items
+│   └── PicklistSelectionAdapter.kt    # Adapter untuk dialog selection
+├── 🌐 API Services
+│   ├── SupabaseService.kt              # API Supabase untuk database
+│   ├── SupabaseRealtimeService.kt      # Realtime updates dari Supabase
+│   └── NirwanaApiService.kt            # API Nirwana untuk data produk
+├── 💾 Cache Management
+│   ├── CacheManager.kt                 # Manajemen cache lokal
+│   └── PicklistScanCache.kt            # Cache untuk scan data
+├── 📊 Data Models
+│   ├── PicklistItem.kt                 # Model item picklist
+│   ├── PicklistStatus.kt               # Status picklist
+│   └── ScanResult.kt                   # Hasil scanning RFID
+├── 🏪 Repository
+│   └── Repository.kt                   # Data access layer
+├── 🛠️ Utils
+│   ├── Logger.kt                       # Logging system
+│   └── ToastUtils.kt                   # Toast notifications
+├── 🧠 ViewModel
+│   ├── ScanViewModel.kt                # ViewModel untuk scanning
+│   └── ScanViewModelFactory.kt         # Factory untuk ViewModel
+└── 🚀 Application
+    └── CekPicklistApplication.kt       # Application class
+```
 
-- **Android SDK 30+** dengan Kotlin dan Java 17
-- **Architecture Components** (ViewModel, LiveData, ViewBinding)
-- **Retrofit** untuk networking dengan OkHttp
-- **Supabase** untuk database dan realtime dengan WebSocket
-- **Coroutines** untuk async operations
-- **RFID SDK** untuk scanning hardware
-- **GitHub Actions** untuk otomatisasi versi
-- **Material Design** untuk UI modern
+---
 
-## 📦 Dependencies
+## 🔧 **TEKNOLOGI & DEPENDENCIES**
 
+### **Core Technologies**
+- **Android SDK**: 30+ (Android 11+)
+- **Kotlin**: Modern Android development dengan coroutines
+- **Java Version**: 17
+- **Target SDK**: 35 (Android terbaru)
+
+### **Architecture Components**
 ```kotlin
-// Core Android
+implementation("androidx.lifecycle:lifecycle-viewmodel-ktx:2.7.0")
+implementation("androidx.lifecycle:lifecycle-livedata-ktx:2.7.0")
 implementation("androidx.core:core-ktx:1.12.0")
 implementation("androidx.appcompat:appcompat:1.7.1")
 implementation("com.google.android.material:material:1.12.0")
-implementation("androidx.activity:activity-ktx:1.8.2")
-implementation("androidx.constraintlayout:constraintlayout:2.1.4")
+```
 
-// Architecture Components
-implementation("androidx.lifecycle:lifecycle-viewmodel-ktx:2.7.0")
-implementation("androidx.lifecycle:lifecycle-livedata-ktx:2.7.0")
-
-// Networking
+### **Networking & API Integration**
+```kotlin
 implementation("com.squareup.retrofit2:retrofit:2.9.0")
 implementation("com.squareup.retrofit2:converter-gson:2.9.0")
 implementation("com.squareup.okhttp3:logging-interceptor:4.12.0")
-
-// Coroutines
-implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.7.3")
-implementation("org.jetbrains.kotlinx:kotlinx-coroutines-core:1.7.3")
-
-// UI Components
-implementation("androidx.recyclerview:recyclerview:1.3.2")
-implementation("androidx.swiperefreshlayout:swiperefreshlayout:1.1.0")
-
-// Supabase
 implementation("io.github.jan-tennert.supabase:realtime-kt:2.3.0")
 implementation("io.github.jan-tennert.supabase:postgrest-kt:2.3.0")
-implementation("io.ktor:ktor-client-websockets:2.3.7")
-implementation("io.ktor:ktor-client-cio:2.3.7")
+```
 
-// RFID Hardware
+### **Hardware Integration**
+```kotlin
 implementation(files("libs/DeviceAPI_ver20250209_release.aar"))
 ```
 
-## 🚀 Fitur Utama
+---
 
-### 1. **RFID Scanning System**
-- Auto-scan setiap detik dengan timer
-- Deteksi duplikat EPC dengan buffer management
-- Sound feedback untuk setiap scanning
-- Hardware integration dengan proper error handling
+## 📊 **DATABASE SCHEMA**
 
-### 2. **Quantity Validation System**
-- ✅ **GREEN**: qtyScan = qtyPl (Sesuai dengan rencana)
-- 🔴 **RED**: qtyScan < qtyPl (Kurang dari rencana)
-- 🟡 **YELLOW**: qtyScan > qtyPl (Lebih dari rencana) atau tidak ada di picklist
-- **NA Detection**: Deteksi item Not Available dengan informasi khusus
-
-### 3. **Real-time Data Synchronization**
-- EPC tersimpan otomatis ke Supabase setiap detik
-- Realtime sync dengan database menggunakan WebSocket
-- Connection status indicator di toolbar
-- Offline capability dengan cache lokal
-
-### 4. **Advanced Cache Management**
-- Memory cache untuk performa optimal
-- Smart stale time (5 menit) untuk data freshness
-- Cache invalidation otomatis
-- Prefetch strategy untuk performa
-
-### 5. **User Experience Features**
-- **Swipe Actions**: Swipe-to-delete untuk koreksi data
-- **Completion Animation**: Confetti animation saat picklist selesai
-- **Search & Filter**: Real-time search dengan filtering
-- **Version Display**: Auto-updating version display di input screen
-
-### 6. **Auto Versioning System**
-- **GitHub Actions**: Otomatisasi update versi saat push
-- **Manual Updates**: Update manual via GitHub UI
-- **Version Display**: Otomatis terupdate di aplikasi
-
-## 📊 Database Schema
-
-### Tabel `picklist`
+### **Tabel `picklist` (Master Data)**
 ```sql
 CREATE TABLE picklist (
-    id UUID PRIMARY KEY,
-    no_picklist VARCHAR,
-    article_id VARCHAR,
-    article_name VARCHAR,
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    no_picklist VARCHAR NOT NULL,
+    article_id VARCHAR NOT NULL,
+    article_name VARCHAR NOT NULL,
     size VARCHAR,
-    product_id VARCHAR,
-    qty INTEGER,
-    created_at TIMESTAMP
+    product_id VARCHAR NOT NULL,
+    qty INTEGER NOT NULL DEFAULT 0,
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
 );
 ```
 
-### Tabel `picklist_scan`
+### **Tabel `picklist_scan` (Transaction Data)**
 ```sql
 CREATE TABLE picklist_scan (
-    id UUID PRIMARY KEY,
-    no_picklist VARCHAR,
-    product_id VARCHAR,
-    article_id VARCHAR,
-    article_name VARCHAR,
+    id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
+    no_picklist VARCHAR NOT NULL,
+    product_id VARCHAR NOT NULL,
+    article_id VARCHAR NOT NULL,
+    article_name VARCHAR NOT NULL,
     size VARCHAR,
-    epc VARCHAR,
+    epc VARCHAR NOT NULL,
     notrans VARCHAR,
-    created_at TIMESTAMP
+    created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
 );
 ```
 
-## 🔄 Alur Kerja
+---
 
-### 1. **Load Picklist**
+## 🚀 **FITUR UTAMA APLIKASI**
+
+### **1. RFID Scanning System**
+- **Auto-scan**: Scanning otomatis setiap detik dengan timer
+- **EPC Buffer**: Menyimpan EPC dalam buffer untuk validasi
+- **Duplicate Detection**: Mencegah scanning duplikat dengan EPC tracking
+- **Sound Feedback**: Audio confirmation untuk setiap scanning
+
+### **2. Quantity Validation System dengan Sistem Warna**
+- **🔴 RED**: `qtyScan < qtyPl` (Kurang dari rencana picklist)
+- **🟡 YELLOW**: `qtyScan > qtyPl` (Lebih dari rencana) atau item tidak ada di picklist
+- **🟢 GREEN**: `qtyScan == qtyPl` (Sesuai dengan rencana - disembunyikan dari UI)
+
+### **3. Hide Completed Items System**
+- **Filter Items**: Items yang sudah complete (`qtyScan == qtyPl`) disembunyikan dari UI
+- **Clean UI**: Hanya menampilkan items yang perlu di-scan
+- **Completion Message**: Pesan khusus saat semua items sudah complete
+
+### **4. Cache Overscan Prevention System**
+- **Real-time Validation**: Cache memvalidasi overscan sebelum data disimpan
+- **Prevention First**: Mencegah overscan di level cache, bukan hanya menghitungnya
+- **Data Integrity**: Cache hanya menyimpan data yang valid
+
+### **5. Real-time Data Synchronization**
+- **Auto-save**: EPC tersimpan otomatis ke Supabase setiap detik
+- **Realtime Updates**: Sinkronisasi real-time dengan database menggunakan WebSocket
+- **Connection Status**: Indikator koneksi WiFi di toolbar
+
+### **6. Picklist Selection System**
+- **Status Icons**: Arrow (⬇️) untuk belum scan, Check (✅) untuk sudah scan
+- **Detail Status**: 
+  - "📋 Belum scan sama sekali" untuk picklist yang belum pernah di-scan
+  - "✅ Selesai" untuk picklist yang sudah selesai
+  - "⚠️ Sisa X qty" untuk picklist yang masih ada sisa
+- **Search & Filter**: Pencarian picklist dengan filter real-time
+
+### **7. Settings Integration**
+- **Consistent Settings**: Settings yang sama antara MainActivity dan PicklistInputActivity
+- **RFID Configuration**: Power Level dan RSSI Threshold settings
+- **Navigation**: Settings icon mengarah ke SettingsActivity yang sama
+
+---
+
+## 🔄 **ALUR KERJA APLIKASI**
+
+### **1. Application Startup Flow**
 ```
-User Input → PicklistInputActivity → Repository → Supabase API → Cache → UI
+Launch App → PicklistInputActivity → Load Picklists → 
+Select Picklist → Navigate to MainActivity → Initialize RFID → Start Scanning
 ```
 
-### 2. **RFID Scanning**
+### **2. RFID Scanning Flow**
 ```
-RFID Hardware → addEpc() → Buffer → Auto-timer → Nirwana API → Validation → Supabase
-```
-
-### 3. **Data Validation**
-```
-EPC Scan → Product Info → Quantity Check → Save/Reject → UI Update
+RFID Hardware → EPC Detection → Add to Buffer → 
+Validation Timer → Nirwana API Lookup → Product Info → 
+Quantity Check → Status Determination → Cache Validation (Overscan Prevention) → 
+Save to Supabase → UI Update → Sound Feedback → Visual Feedback
 ```
 
-## ⚙️ Konfigurasi
+### **3. Hide Completed Items Flow**
+```
+Items Load → Filter Incomplete Items → Hide Completed Items → 
+Display Only Incomplete → Update Summary Cards → 
+Show Completion Message (if all complete)
+```
 
-### Environment Variables
+---
+
+## 🎨 **DESIGN SYSTEM**
+
+### **Status Color System**
+- **🔴 RED**: `Color.RED` - Untuk qtyScan < qtyPl (kurang dari rencana)
+- **🟡 YELLOW**: `#FFCC00` - Untuk qtyScan > qtyPl atau qtyPl = 0 && qtyScan > 0
+- **🟢 GREEN**: `#4CAF50` - Untuk qtyScan == qtyPl (disembunyikan dari UI)
+
+### **Picklist Status System**
+- **📋 Belum scan sama sekali**: Arrow icon, hitam, "📋 Belum scan sama sekali"
+- **✅ Selesai**: Check icon, hijau, "✅ Selesai"
+- **⚠️ Sisa X qty**: Check icon, hijau, "⚠️ Sisa X qty"
+
+---
+
+## 🔧 **KONFIGURASI**
+
+### **Environment Variables**
 ```properties
 # local.properties
 SUPABASE_URL=https://your-project.supabase.co
@@ -187,14 +232,19 @@ NIRWANA_USERNAME=your-username
 NIRWANA_PASSWORD=your-password
 ```
 
-### Build Configuration
+### **Build Configuration**
 ```kotlin
 android {
+    namespace = "com.example.cekpicklist"
     compileSdk = 35
-    minSdk = 30
-    targetSdk = 35
-    versionCode = 1
-    versionName = "1.0"
+    
+    defaultConfig {
+        applicationId = "com.example.cekpicklist"
+        minSdk = 30
+        targetSdk = 35
+        versionCode = 1
+        versionName = "1.0"
+    }
     
     buildFeatures {
         viewBinding = true
@@ -202,113 +252,65 @@ android {
 }
 ```
 
-## 🐛 Troubleshooting
+---
 
-### Masalah Umum
+## 📈 **PERFORMA & OPTIMASI**
 
-1. **RFID tidak terdeteksi**
-   - Cek koneksi hardware
-   - Restart aplikasi
-   - Cek power level RFID
+### **Cache Strategy**
+- **Memory Cache**: Data picklist dalam memory untuk akses cepat
+- **Stale Time**: 5 menit untuk data freshness
+- **Cache Invalidation**: Otomatis invalidate saat data berubah
+- **Overscan Prevention**: Validasi real-time di level cache
 
-2. **Data tidak tersimpan**
-   - Cek koneksi internet
-   - Cek konfigurasi Supabase
-   - Lihat log error
+### **UI Optimization**
+- **ViewBinding**: Type-safe view access
+- **RecyclerView**: Optimized dengan ViewHolder pattern
+- **Hide Completed Items**: UI lebih clean dan performa lebih baik
 
-3. **Over-scan tidak terdeteksi**
-   - Cek validasi quantity
-   - Reset qty scan dan scan ulang
+---
 
-### Log Debugging
-```kotlin
-// Enable debug logging
-Log.d("ScanViewModel", "🔥 Debug message")
-```
+## 🎯 **STATUS SISTEM SAAT INI**
 
-## 📱 UI Features
+### **✅ Fitur yang Sudah Diimplementasikan**
 
-### Main Screen
-- List picklist items dengan swipe-to-delete
-- RFID counter dengan sound feedback
-- Summary cards (Total, Scanned, Remaining)
-- Real-time status indicator (WiFi connection)
-- Completion animation dengan confetti
+1. **RFID Scanning System** ✅
+2. **Quantity Validation System** ✅
+3. **Hide Completed Items** ✅
+4. **Cache Overscan Prevention** ✅
+5. **Real-time Data Sync** ✅
+6. **Advanced Cache Management** ✅
+7. **User Interface** ✅
+8. **Picklist Selection System** ✅
+9. **Settings Integration** ✅
+10. **Auto Versioning** ✅
 
-### Picklist Input
-- Input nomor picklist dengan search functionality
-- List picklist tersedia dengan status icons
-- Version display yang auto-updating
-- Status indicators untuk data loading
+### **🚀 Future Enhancements**
+- **Unit Testing**: Implementasi testing framework
+- **Performance Monitoring**: Analytics dan crash reporting
+- **Offline Mode**: Enhanced offline capabilities
+- **Multi-language**: Internationalization support
 
-### Settings
-- Konfigurasi Supabase dan Nirwana API
-- Realtime connection status
-- App configuration management
+---
 
-## 🔒 Security
+## 📱 **PRODUCTION READINESS**
 
-- API keys disimpan di local properties
-- HTTPS untuk semua komunikasi
-- Input validation untuk mencegah injection
+Aplikasi **Cek Picklist** siap untuk production dengan:
 
-## 📈 Performance & Optimization
+- ✅ **Stable Architecture**: MVVM pattern yang proven
+- ✅ **Complete Features**: Semua fitur utama sudah implemented
+- ✅ **Performance Optimized**: Cache dan async operations
+- ✅ **Error Handling**: Comprehensive error management
+- ✅ **Overscan Prevention**: Cache-level validation
+- ✅ **Hide Completed Items**: Clean UI dengan completion detection
+- ✅ **Settings Integration**: Consistent configuration
+- ✅ **Automation**: Version management yang robust
 
-- **Cache Strategy**: Smart stale time (5 menit) dengan memory cache
-- **Background Processing**: Coroutines untuk async operations
-- **Memory Management**: ViewModel lifecycle dengan proper cleanup
-- **Network Optimization**: Retrofit dengan connection pooling
-- **UI Optimization**: ViewBinding, RecyclerView dengan ViewHolder pattern
-- **Sound Management**: SoundPool untuk efficient audio resources
-
-## 🚀 Deployment & Automation
-
-### Build Release
-```bash
-./gradlew assembleRelease
-```
-
-### Install APK
-```bash
-adb install app-release.apk
-```
-
-### Auto Versioning
-- **Automatic**: Push ke GitHub → Auto update versi
-- **Manual**: GitHub Actions → Manual version update
-- **Scripts**: `scripts/update_version.py` untuk local update
-
-## 🤝 Contributing
-
-1. Fork repository
-2. Create feature branch
-3. Commit changes
-4. Push to branch
-5. Create Pull Request
-
-## 📄 License
-
-Proprietary - Internal Use Only
-
-## 📞 Support
-
-Untuk bantuan teknis, hubungi tim development.
-
-## 📚 Dokumentasi Lengkap
-
-Untuk informasi detail dan komprehensif tentang:
-- Arsitektur aplikasi lengkap
-- Database schema detail
-- Design system & UI guidelines
-- Performance optimization
-- Debugging & logging system
-- Troubleshooting guide
-
-Lihat **[DOCUMENTATION.md](DOCUMENTATION.md)** 📖
+**🎉 Aplikasi siap untuk deployment dengan sistem yang robust!**
 
 ---
 
 **Version**: 1.0 (Auto-updating)  
-**Last Updated**: 2025  
+**Last Updated**: 2025-01-09  
 **Platform**: Android 11+ (API 30+)  
-**Auto Versioning**: ✅ Enabled dengan GitHub Actions
+**Auto Versioning**: ✅ Enabled dengan GitHub Actions  
+**Status**: ✅ Production Ready

@@ -61,7 +61,30 @@ class PicklistAdapter : RecyclerView.Adapter<PicklistAdapter.ViewHolder>() {
             tvArticleName.text = item.articleName
             tvSize.text = item.size
             tvQtyPl.text = item.qtyPl.toString()
-            tvQtyScan.text = item.qtyScan.toString()
+            
+            // **PERBAIKAN**: Tampilkan RFID detect qty dengan informasi overscan
+            val qtyScanText = when {
+                item.qtyScan > item.qtyPl -> {
+                    val overscan = item.qtyScan - item.qtyPl
+                    "${item.qtyScan} (+$overscan)"
+                }
+                item.qtyScan == item.qtyPl && item.qtyPl > 0 -> {
+                    "${item.qtyScan} ✓"
+                }
+                else -> {
+                    item.qtyScan.toString()
+                }
+            }
+            tvQtyScan.text = qtyScanText
+            
+            // **LOGGING**: Log detail RFID detect qty
+            android.util.Log.d("PicklistAdapter", "🔥 RFID DETECT QTY: ${item.articleName} ${item.size}")
+            android.util.Log.d("PicklistAdapter", "🔥   - qtyPl (planned): ${item.qtyPl}")
+            android.util.Log.d("PicklistAdapter", "🔥   - qtyScan (detected): ${item.qtyScan}")
+            android.util.Log.d("PicklistAdapter", "🔥   - Display text: $qtyScanText")
+            if (item.qtyScan > item.qtyPl) {
+                android.util.Log.w("PicklistAdapter", "🔥   - OVERSCAN: +${item.qtyScan - item.qtyPl} items")
+            }
             
             // Hitung jarak geser berdasarkan lebar area merah yang sebenarnya (25%)
             itemView.post {

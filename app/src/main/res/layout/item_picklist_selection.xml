@@ -3,28 +3,37 @@
     xmlns:app="http://schemas.android.com/apk/res-auto"
     android:layout_width="match_parent"
     android:layout_height="wrap_content"
-    android:layout_marginVertical="1dp"
-    android:layout_marginHorizontal="2dp"
-    app:cardCornerRadius="8dp"
-    app:cardElevation="1dp"
+    android:layout_marginVertical="2dp"
+    android:layout_marginHorizontal="4dp"
+    app:cardCornerRadius="12dp"
+    app:cardElevation="2dp"
     android:foreground="?android:attr/selectableItemBackground">
 
     <LinearLayout
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
         android:orientation="horizontal"
-        android:padding="8dp"
+        android:padding="12dp"
         android:gravity="center_vertical"
         android:background="@android:color/white">
 
-        <!-- Icon Status -->
-        <ImageView
-            android:id="@+id/ivPicklistIcon"
-            android:layout_width="28dp"
-            android:layout_height="28dp"
-            android:src="@drawable/ic_arrow_down"
+        <!-- Icon Status dengan background -->
+        <FrameLayout
+            android:id="@+id/flIconBackground"
+            android:layout_width="40dp"
+            android:layout_height="40dp"
             android:layout_marginEnd="16dp"
-            android:visibility="visible" />
+            android:background="@drawable/ic_status_background"
+            android:gravity="center">
+            
+            <ImageView
+                android:id="@+id/ivPicklistIcon"
+                android:layout_width="24dp"
+                android:layout_height="24dp"
+                android:src="@drawable/ic_arrow_down"
+                android:visibility="visible" />
+                
+        </FrameLayout>
 
         <!-- Content -->
         <LinearLayout
@@ -39,10 +48,10 @@
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
                 android:text="PL-2024-001"
-                android:textSize="@dimen/dialog_item_text_size"
+                android:textSize="16sp"
                 android:textStyle="bold"
                 android:textColor="@android:color/black"
-                android:layout_marginBottom="2dp" />
+                android:layout_marginBottom="4dp" />
 
             <!-- Info tambahan -->
             <TextView
@@ -50,18 +59,19 @@
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
                 android:text="Hari ini"
-                android:textSize="12sp"
-                android:textColor="@android:color/darker_gray" />
+                android:textSize="13sp"
+                android:textColor="@android:color/darker_gray"
+                android:lineSpacingExtra="2dp" />
 
         </LinearLayout>
 
         <!-- Arrow indicator -->
         <ImageView
-            android:layout_width="16dp"
-            android:layout_height="16dp"
+            android:layout_width="20dp"
+            android:layout_height="20dp"
             android:src="@drawable/ic_more_modern"
             android:tint="@android:color/darker_gray"
-            android:alpha="0.6" />
+            android:alpha="0.7" />
 
     </LinearLayout>
 

@@ -411,7 +411,7 @@ class CacheManager(private val context: Context) {
         
         Log.d(TAG, "🔥 Adding scan to cache:")
         Log.d(TAG, "   Existing scans: ${existingScans.size}")
-        Log.d(TAG, "   New scan: ${newScan.articleName} ${newScan.size}")
+        Log.d(TAG, "   New scan: ${newScan.epc}")
         
         // Tambahkan scan baru
         existingScans.add(newScan)
@@ -431,13 +431,13 @@ class CacheManager(private val context: Context) {
         
         Log.d(TAG, "🔥 Updating scan in cache:")
         Log.d(TAG, "   Existing scans: ${existingScans.size}")
-        Log.d(TAG, "   Updated scan: ${updatedScan.articleName} ${updatedScan.size}")
+        Log.d(TAG, "   Updated scan: ${updatedScan.epc}")
         
-        // Cari dan update scan yang ada berdasarkan kombinasi noPicklist, articleId, dan size
+        // Cari dan update scan yang ada berdasarkan kombinasi noPicklist, articleId, dan epc
         val index = existingScans.indexOfFirst { 
             it.noPicklist == updatedScan.noPicklist && 
             it.articleId == updatedScan.articleId && 
-            it.size == updatedScan.size 
+            it.epc == updatedScan.epc
         }
         if (index != -1) {
             existingScans[index] = updatedScan
@@ -463,13 +463,13 @@ class CacheManager(private val context: Context) {
         
         Log.d(TAG, "🔥 Removing scan from cache:")
         Log.d(TAG, "   Existing scans: ${existingScans.size}")
-        Log.d(TAG, "   Scan to remove: ${scanToRemove.articleName} ${scanToRemove.size}")
+        Log.d(TAG, "   Scan to remove: ${scanToRemove.epc}")
         
-        // Hapus scan yang sesuai berdasarkan kombinasi noPicklist, articleId, dan size
+        // Hapus scan yang sesuai berdasarkan kombinasi noPicklist, articleId, dan epc
         val removed = existingScans.removeAll { 
             it.noPicklist == scanToRemove.noPicklist && 
             it.articleId == scanToRemove.articleId && 
-            it.size == scanToRemove.size 
+            it.epc == scanToRemove.epc
         }
         
         if (removed) {
@@ -502,6 +502,57 @@ class CacheManager(private val context: Context) {
             .remove(KEY_CACHED_SCANS)
             .apply()
         Log.d(TAG, "🔥 Scans cache cleared")
+    }
+    
+    /**
+     * Clear scan cache untuk picklist tertentu
+     */
+    fun clearScansCacheForPicklist(picklistNo: String) {
+        Log.d(TAG, "🔥 Clearing scans cache untuk picklist: $picklistNo")
+        
+        try {
+            val cachedScans = getCachedScans()?.toMutableList() ?: mutableListOf()
+            
+            // Filter out scans untuk picklist ini
+            val filteredScans = cachedScans.filter { it.noPicklist != picklistNo }
+            
+            // Cache data yang sudah di-filter
+            cacheScans(filteredScans)
+            
+            val removedCount = cachedScans.size - filteredScans.size
+            Log.d(TAG, "🔥 Removed $removedCount scans untuk picklist: $picklistNo")
+            Log.d(TAG, "🔥 Remaining scans: ${filteredScans.size}")
+            
+        } catch (e: Exception) {
+            Log.e(TAG, "🔥 Error clearing scans cache untuk picklist: ${e.message}", e)
+        }
+    }
+    
+    /**
+     * Clear hanya overscan dan non-picklist dari cache
+     * Pertahankan scan yang valid untuk picklist tertentu
+     */
+    fun clearOverscanAndNonPicklistFromCache(picklistNo: String) {
+        Log.d(TAG, "🔥 Clearing overscan dan non-picklist untuk picklist: $picklistNo")
+        
+        try {
+            val cachedScans = getCachedScans()?.toMutableList() ?: mutableListOf()
+            
+            // Filter hanya scan yang valid untuk picklist ini
+            val validScans = cachedScans.filter { scan ->
+                scan.noPicklist == picklistNo
+            }
+            
+            // Update cache dengan hanya scan yang valid
+            cacheScans(validScans)
+            
+            Log.d(TAG, "🔥 Overscan dan non-picklist cleared untuk picklist: $picklistNo")
+            Log.d(TAG, "   Before: ${cachedScans.size} scans")
+            Log.d(TAG, "   After: ${validScans.size} valid scans")
+            
+        } catch (e: Exception) {
+            Log.e(TAG, "🔥 Error clearing overscan dan non-picklist: ${e.message}", e)
+        }
     }
     
     /**

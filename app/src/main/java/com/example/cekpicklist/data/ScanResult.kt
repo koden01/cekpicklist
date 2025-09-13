@@ -71,12 +71,4 @@ data class Picklist(
 )
 
 // Updated to match actual picklist_scan table structure
-data class PicklistScan(
-    val noPicklist: String, // no_picklist
-    val productId: String, // product_id
-    val articleId: String?, // article_id
-    val articleName: String?, // article_name
-    val size: String?, // size
-    val epc: String, // epc (single EPC per record)
-    val notrans: String? = null // notrans
-)
+// PicklistScan moved to separate file

@@ -1,5 +1,6 @@
 package com.example.cekpicklist.api
 
+import android.util.Log
 import com.example.cekpicklist.data.PicklistItem
 import com.example.cekpicklist.data.PicklistScan
 import com.example.cekpicklist.data.Picklist
@@ -108,14 +109,10 @@ class SupabaseService {
     
     suspend fun getPicklistItems(picklistNo: String): List<PicklistItem> = withContext(Dispatchers.IO) {
         try {
-            println("🔍 Fetching picklist items for: $picklistNo")
-            
             // Menggunakan pola yang sama dengan readrfiddetekted
             val encodedPicklistNo = URLEncoder.encode(picklistNo, "UTF-8")
             // Sesuai dengan struktur tabel picklist yang diberikan
             val queryUrl = "$supabaseUrl/rest/v1/picklist?no_picklist=eq.$encodedPicklistNo&select=id,no_picklist,article_id,article_name,size,product_id,qty,created_at&order=created_at.asc"
-            
-            println("🔗 Query URL: $queryUrl")
             
             val request = Request.Builder()
                 .url(queryUrl)
@@ -133,21 +130,28 @@ class SupabaseService {
                 if (responseBody != "[]") {
                     val jsonArray = JSONArray(responseBody)
                     val items = mutableListOf<PicklistItem>()
+                    
+                    Log.d("SupabaseService", "Raw DB Records: ${jsonArray.length()} total")
+                    
                     // Ambil data scan untuk picklist ini
                     val scanData = getPicklistScans(picklistNo)
-                    println("🔍 Scan data untuk $picklistNo: ${scanData.size} items")
+                    Log.d("SupabaseService", "Scan data: ${scanData.size} items")
                     
                     for (i in 0 until jsonArray.length()) {
                         val jsonObject = jsonArray.getJSONObject(i)
                         val articleId = jsonObject.getString("article_id")
                         val size = jsonObject.getString("size")
                         
-                        // Hitung qtyScan dari data scan
-                        val qtyScan = scanData.count { scan ->
+                        // **PERBAIKAN**: Hitung qtyScan menggunakan distinct EPC untuk menghindari duplikasi
+                        val articleScans = scanData.filter { scan ->
                             scan.getString("article_id") == articleId && scan.getString("size") == size
                         }
                         
-                        println("🔍 Article: ${jsonObject.getString("article_name")} $size - qtyPl: ${jsonObject.getInt("qty")}, qtyScan: $qtyScan")
+                        // Gunakan distinct EPC untuk menghitung qty scan yang benar
+                        val distinctEpcs = articleScans.map { scan -> scan.getString("epc") }.distinct()
+                        val qtyScan = distinctEpcs.size
+                        
+                        println("🔍 Article: ${jsonObject.getString("article_name")} $size - qtyPl: ${jsonObject.getInt("qty")}, qtyScan: $qtyScan (${articleScans.size} total records, ${distinctEpcs.size} distinct EPCs)")
                         
                         items.add(
                             PicklistItem(
@@ -163,14 +167,7 @@ class SupabaseService {
                             )
                         )
                     }
-                    println("✅ SUCCESS! Loaded ${items.size} items for picklist: $picklistNo")
-                    
-                    // **DEBUGGING**: Log semua item yang dikembalikan dari Supabase
-                    println("🔥 === SUPABASE ITEMS DEBUG ===")
-                    items.forEach { item ->
-                        println("🔥 Supabase item: ${item.articleName} ${item.size} - qtyPl=${item.qtyPl}, qtyScan=${item.qtyScan}")
-                    }
-                    println("🔥 === END SUPABASE ITEMS DEBUG ===")
+                    Log.d("SupabaseService", "Loaded ${items.size} items for picklist: $picklistNo")
                     
                     return@withContext items
                 } else {
@@ -199,12 +196,10 @@ class SupabaseService {
             // Sesuai dengan struktur tabel picklist_scan yang sebenarnya
             val jsonObject = JSONObject().apply {
                 put("no_picklist", picklistScan.noPicklist)  // Menggunakan no_picklist sebagai primary key
-                put("product_id", picklistScan.productId)
                 put("article_id", picklistScan.articleId)
-                put("article_name", picklistScan.articleName)
-                put("size", picklistScan.size)
                 put("epc", picklistScan.epc)
-                put("notrans", picklistScan.notrans)
+                put("qty_scan", picklistScan.qtyScan)
+                put("created_at", picklistScan.createdAt)
             }
             
             val request = Request.Builder()

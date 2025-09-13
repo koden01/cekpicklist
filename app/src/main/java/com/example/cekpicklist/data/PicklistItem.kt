@@ -11,6 +11,7 @@ data class PicklistItem(
     val productId: String?, // product_id dari Supabase (nullable)
     val qtyPl: Int, // qty dari Supabase (planned quantity)
     val qtyScan: Int = 0, // scanned quantity, default 0
+    val scan: Boolean = false, // status scan dari Supabase (true/false)
     val createdAt: String? = null, // created_at dari Supabase
     val warehouse: String? = null, // warehouse untuk item NA
     val tagStatus: String? = null // tag_status untuk item NA

@@ -2,9 +2,12 @@ package com.example.cekpicklist
 
 import android.app.Application
 import android.util.Log
+import androidx.multidex.MultiDex
+import androidx.multidex.MultiDexApplication
 import com.example.cekpicklist.utils.ToastUtils
+import com.example.cekpicklist.utils.PerformanceOptimizer
 
-class CekPicklistApplication : Application() {
+class CekPicklistApplication : MultiDexApplication() {
     
     companion object {
         private const val TAG = "CekPicklistApp"
@@ -12,6 +15,12 @@ class CekPicklistApplication : Application() {
     
     override fun onCreate() {
         super.onCreate()
+        
+        // Initialize MultiDex untuk mengatasi masalah classloader
+        MultiDex.install(this)
+        
+        // Initialize performance optimizer
+        PerformanceOptimizer.initialize(this)
         
         // Reset toast counter saat aplikasi dimulai
         ToastUtils.resetToastCounter()
@@ -27,12 +36,19 @@ class CekPicklistApplication : Application() {
             Log.e(TAG, "Version: unknown")
         }
         
-        // Set up global exception handler
+        // Set up global exception handler dengan optimasi
         Thread.setDefaultUncaughtExceptionHandler { thread, throwable ->
             Log.e(TAG, "Uncaught exception in thread ${thread.name}: ${throwable.message}", throwable)
-            throwable.printStackTrace()
+            // Jangan print stack trace untuk mengurangi overhead
+            // throwable.printStackTrace()
         }
         
         Log.e(TAG, "=== APLIKASI SIAP ===")
+    }
+    
+    override fun onTerminate() {
+        super.onTerminate()
+        // Cleanup performance optimizer
+        PerformanceOptimizer.cleanup()
     }
 }

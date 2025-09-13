@@ -50,7 +50,11 @@
                         android:layout_height="24dp"
                         android:src="@drawable/ic_settings_modern"
                         android:contentDescription="Settings"
-                        android:alpha="0.6" />
+                        android:alpha="0.6"
+                        android:clickable="true"
+                        android:focusable="true"
+                        android:foreground="?android:attr/selectableItemBackground"
+                        android:padding="4dp" />
 
                 </LinearLayout>
 
@@ -81,6 +85,27 @@
                     android:focusable="true"
                     android:foreground="?android:attr/selectableItemBackground"
                     android:fontStyle="italic" />
+
+                <!-- RecyclerView untuk menampilkan list picklist -->
+                <androidx.recyclerview.widget.RecyclerView
+                    android:id="@+id/recyclerViewPicklists"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="16dp"
+                    android:maxHeight="300dp"
+                    android:visibility="gone" />
+
+                <!-- Empty state -->
+                <TextView
+                    android:id="@+id/tvEmptyState"
+                    android:layout_width="match_parent"
+                    android:layout_height="wrap_content"
+                    android:layout_marginTop="16dp"
+                    android:text="Tidak ada picklist tersedia"
+                    android:textSize="14sp"
+                    android:textColor="@android:color/darker_gray"
+                    android:gravity="center"
+                    android:visibility="gone" />
 
                 <!-- Status indicator -->
                 <LinearLayout

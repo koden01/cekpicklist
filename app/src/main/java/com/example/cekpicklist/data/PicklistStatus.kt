@@ -6,5 +6,6 @@ data class PicklistStatus(
     val remainingQty: Int = 0,
     val totalQty: Int = 0,
     val scannedQty: Int = 0,
-    val lastScanTime: String? = null
+    val lastScanTime: String? = null,
+    val overscanQty: Int = 0 // Jumlah item yang di-scan lebih dari yang direncanakan
 )

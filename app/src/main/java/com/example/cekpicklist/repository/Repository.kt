@@ -38,7 +38,17 @@ class Repository {
     }
     
     suspend fun getPicklistItems(picklistNo: String): List<PicklistItem> = withContext(Dispatchers.IO) {
-        supabaseService.getPicklistItems(picklistNo)
+        Log.d("Repository", "🔥 Getting picklist items for: $picklistNo")
+        val items = supabaseService.getPicklistItems(picklistNo)
+        Log.d("Repository", "🔥 Retrieved ${items.size} items from Supabase")
+        
+        // Debug log untuk item pertama saja
+        if (items.isNotEmpty()) {
+            val firstItem = items.first()
+            Log.d("Repository", "🔥 First item: ${firstItem.articleName} ${firstItem.size} - qtyPl=${firstItem.qtyPl}, qtyScan=${firstItem.qtyScan}, scan=${firstItem.scan}")
+        }
+        
+        items
     }
     
     suspend fun authenticateNirwana(): Boolean = withContext(Dispatchers.IO) {
@@ -169,10 +179,9 @@ class Repository {
         try {
             Log.d("Repository", "💾 Memulai savePicklistScan ke Supabase")
             Log.d("Repository", "💾 PicklistNumber: ${picklistScan.noPicklist}")
-            Log.d("Repository", "💾 ProductID: ${picklistScan.productId}")
-            Log.d("Repository", "💾 ArticleName: ${picklistScan.articleName}")
-            Log.d("Repository", "💾 Size: ${picklistScan.size}")
+            Log.d("Repository", "💾 ArticleID: ${picklistScan.articleId}")
             Log.d("Repository", "💾 EPC: ${picklistScan.epc}")
+            Log.d("Repository", "💾 QtyScan: ${picklistScan.qtyScan}")
             
             val result = supabaseService.savePicklistScan(picklistScan)
             Log.d("Repository", "💾 Save result: $result")

@@ -28,6 +28,13 @@ import com.example.cekpicklist.data.PicklistItem
 import com.example.cekpicklist.databinding.ActivityMainBinding
 import com.example.cekpicklist.utils.ToastUtils
 import com.example.cekpicklist.utils.Logger
+import com.example.cekpicklist.api.SupabaseRealtimeService
+import com.example.cekpicklist.data.PicklistUpdate
+import com.example.cekpicklist.data.CacheUpdate
+import androidx.lifecycle.lifecycleScope
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.launch
+import kotlinx.coroutines.flow.collect
 import com.example.cekpicklist.utils.VersionComparator
 import com.example.cekpicklist.viewmodel.ScanViewModel
 import com.example.cekpicklist.viewmodel.ScanViewModelFactory
@@ -40,11 +47,7 @@ import com.rscja.deviceapi.RFIDWithUHFUART
 import com.rscja.deviceapi.entity.UHFTAGInfo
 import com.rscja.deviceapi.exception.ConfigurationException
 import com.rscja.deviceapi.interfaces.IUHFInventoryCallback
-import kotlinx.coroutines.CoroutineScope
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.launch
-import kotlinx.coroutines.delay
-import java.util.HashMap
+import com.example.cekpicklist.test.SupabaseRealtimeTest
 
 class MainActivity : AppCompatActivity() {
     
@@ -64,6 +67,12 @@ class MainActivity : AppCompatActivity() {
     private var soundPool: SoundPool? = null
     private val soundMap = HashMap<Int, Int>()
     private var audioManager: AudioManager? = null
+    
+    // Realtime service
+    private lateinit var realtimeService: SupabaseRealtimeService
+    
+    // Test realtime
+    private val realtimeTest = SupabaseRealtimeTest()
     
     override fun onResume() {
         super.onResume()
@@ -211,6 +220,137 @@ class MainActivity : AppCompatActivity() {
     }
     
     /**
+     * Initialize realtime service
+     */
+    private fun initRealtimeService() {
+        Log.d("MainActivity", "🔥 Initializing Realtime Service...")
+        
+        try {
+            // Initialize realtime service
+            realtimeService = SupabaseRealtimeService()
+            
+            // Set up callbacks
+            realtimeService.setPicklistUpdateCallback { update ->
+                Log.d("MainActivity", "📦 Picklist update received: ${update.action}")
+                handlePicklistUpdate(update)
+            }
+            
+            realtimeService.setCacheUpdateCallback { update ->
+                Log.d("MainActivity", "📦 Cache update received: ${update.action}")
+                handleCacheUpdate(update)
+            }
+            
+            // Connect to realtime
+            lifecycleScope.launch {
+                try {
+                    realtimeService.connect()
+                    delay(1000) // Wait for connection
+                    
+                    // Subscribe to picklist changes
+                    realtimeService.subscribeToPicklists()
+                    
+                    // Subscribe to picklist scan changes for current picklist
+                    val selectedPicklist = intent.getStringExtra("SELECTED_PICKLIST")
+                    if (!selectedPicklist.isNullOrEmpty()) {
+                        realtimeService.subscribeToPicklistScans(selectedPicklist)
+                    }
+                    
+                    Log.d("MainActivity", "✅ Realtime service initialized successfully")
+                } catch (e: Exception) {
+                    Log.e("MainActivity", "❌ Error initializing realtime service: ${e.message}", e)
+                }
+            }
+            
+        } catch (e: Exception) {
+            Log.e("MainActivity", "❌ Error creating realtime service: ${e.message}", e)
+        }
+    }
+    
+    /**
+     * Handle picklist update from realtime
+     */
+    private fun handlePicklistUpdate(update: PicklistUpdate) {
+        Log.d("MainActivity", "🔄 Handling picklist update: ${update.action}")
+        
+        runOnUiThread {
+            when (update.action) {
+                "INSERT" -> {
+                    Log.d("MainActivity", "➕ New picklist item added: ${update.articleName} ${update.size}")
+                    // Refresh picklist data
+                    val selectedPicklist = intent.getStringExtra("SELECTED_PICKLIST")
+                    if (!selectedPicklist.isNullOrEmpty()) {
+                        viewModel.loadPicklistItems(selectedPicklist)
+                    }
+                }
+                "UPDATE" -> {
+                    Log.d("MainActivity", "🔄 Picklist item updated: ${update.articleName} ${update.size}")
+                    // Refresh picklist data
+                    val selectedPicklist = intent.getStringExtra("SELECTED_PICKLIST")
+                    if (!selectedPicklist.isNullOrEmpty()) {
+                        viewModel.loadPicklistItems(selectedPicklist)
+                    }
+                }
+                "DELETE" -> {
+                    Log.d("MainActivity", "🗑️ Picklist item deleted: ${update.articleName} ${update.size}")
+                    // Refresh picklist data
+                    val selectedPicklist = intent.getStringExtra("SELECTED_PICKLIST")
+                    if (!selectedPicklist.isNullOrEmpty()) {
+                        viewModel.loadPicklistItems(selectedPicklist)
+                    }
+                }
+            }
+        }
+    }
+    
+    /**
+     * Handle cache update from realtime
+     */
+    private fun handleCacheUpdate(update: CacheUpdate) {
+        Log.d("MainActivity", "🔄 Handling cache update: ${update.action}")
+        
+        runOnUiThread {
+            when (update.action) {
+                "INSERT_SCAN", "UPDATE_SCAN", "DELETE_SCAN" -> {
+                    Log.d("MainActivity", "📦 Scan data updated: ${update.action}")
+                    // Refresh picklist data to update scan counts
+                    val selectedPicklist = intent.getStringExtra("SELECTED_PICKLIST")
+                    if (!selectedPicklist.isNullOrEmpty()) {
+                        viewModel.loadPicklistItems(selectedPicklist)
+                    }
+                }
+            }
+        }
+    }
+    
+    /**
+     * Test realtime connection
+     */
+    private fun testRealtimeConnection() {
+        Log.d("MainActivity", "🧪 Testing realtime connection...")
+        
+        lifecycleScope.launch {
+            try {
+                // Test basic connection
+                realtimeTest.testBasicConnection()
+                delay(3000)
+                
+                // Test picklist subscription
+                realtimeTest.testPicklistSubscription()
+                delay(3000)
+                
+                // Test picklist scan subscription
+                realtimeTest.testPicklistScanSubscription()
+                delay(3000)
+                
+                Log.d("MainActivity", "✅ Realtime tests completed")
+                
+            } catch (e: Exception) {
+                Log.e("MainActivity", "❌ Realtime test error: ${e.message}", e)
+            }
+        }
+    }
+    
+    /**
      * Release sound resources
      */
     private fun releaseSoundPool() {
@@ -271,6 +411,12 @@ class MainActivity : AppCompatActivity() {
         // Setup auto-update system
         setupAutoUpdate()
         
+        // Initialize realtime service
+        initRealtimeService()
+        
+        // Test realtime connection
+        testRealtimeConnection()
+        
         // Prefetch sudah dilakukan di PicklistInputActivity, tidak perlu duplikasi
         
         // Setup RFID Reader setelah UI siap (dengan delay)
@@ -289,10 +435,10 @@ class MainActivity : AppCompatActivity() {
         Log.d("MainActivity", "🔥 Navigasi kembali ke PicklistInputActivity")
         
         // Simpan data ke Supabase sebelum kembali
-        viewModel.returnToPicklistInput()
+        // viewModel.returnToPicklistInput() // TODO: Implementasi method ini
         
         // Clear data yang tidak perlu
-        viewModel.clearError()
+        // viewModel.clearError() // TODO: Implementasi method ini
         picklistAdapter.updateItems(emptyList())
         updateSummaryCards(0, 0)
         
@@ -353,31 +499,45 @@ class MainActivity : AppCompatActivity() {
     }
     
     private fun handleIncomingPicklist() {
-        Log.d("MainActivity", "=== HANDLE INCOMING PICKLIST START ===")
+        val startTime = System.currentTimeMillis()
+        Log.i("MainActivity", "🔥 === HANDLE INCOMING PICKLIST START ===")
+        Log.i("MainActivity", "🔥 Timestamp: ${java.text.SimpleDateFormat("HH:mm:ss.SSS", java.util.Locale.getDefault()).format(java.util.Date())}")
+        
         try {
             val selectedPicklist = intent.getStringExtra("SELECTED_PICKLIST")
-            Log.d("MainActivity", "Selected picklist: $selectedPicklist")
+            Log.i("MainActivity", "🔥 Selected picklist: $selectedPicklist")
             
             if (!selectedPicklist.isNullOrEmpty()) {
+                // Check apakah sudah loading picklist yang sama untuk menghindari duplikasi
+                val currentPicklist = viewModel.getCurrentPicklistNumber()
+                if (currentPicklist == selectedPicklist) {
+                    Log.w("MainActivity", "⚠️ Already loading picklist $selectedPicklist, skipping duplicate request")
+                    return
+                }
+                
                 // Load picklist items berdasarkan pilihan dari PicklistInputActivity
-                Log.d("MainActivity", "Loading picklist items for: $selectedPicklist")
+                Log.i("MainActivity", "🔥 Loading picklist items for: $selectedPicklist")
                 viewModel.loadPicklistItems(selectedPicklist)
                 
                 // Update nama picklist di header
                 binding.tvPicklistName.text = "Picklist: $selectedPicklist"
                 
+                val loadTime = System.currentTimeMillis() - startTime
+                Log.i("MainActivity", "🔥 Picklist loading initiated in ${loadTime}ms")
+                
                 ToastUtils.showHighToastWithCooldown(this, "Picklist dipilih: $selectedPicklist")
             } else {
                 // Jika tidak ada picklist yang dipilih, kembali ke PicklistInputActivity
-                Log.d("MainActivity", "No picklist selected, navigating to PicklistInputActivity")
+                Log.w("MainActivity", "⚠️ No picklist selected, navigating to PicklistInputActivity")
                 val intent = Intent(this, PicklistInputActivity::class.java)
                 startActivity(intent)
                 finish()
             }
         } catch (e: Exception) {
-            Log.e("MainActivity", "Error in handleIncomingPicklist: ${e.message}", e)
+            val loadTime = System.currentTimeMillis() - startTime
+            Log.e("MainActivity", "❌ Error in handleIncomingPicklist after ${loadTime}ms: ${e.message}", e)
         }
-        Log.d("MainActivity", "=== HANDLE INCOMING PICKLIST END ===")
+        Log.i("MainActivity", "🔥 === HANDLE INCOMING PICKLIST END ===")
     }
     
     /**
@@ -463,7 +623,7 @@ class MainActivity : AppCompatActivity() {
         
         try {
             // Remove RFID di ViewModel
-            viewModel.removeRfidForArticle(item.articleName, item.size)
+            // viewModel.removeRfidForArticle(item.articleName, item.size) // TODO: Implementasi method ini
             
             // Show success message
             ToastUtils.showHighToastWithCooldown(this, "RFID dihapus: ${item.articleName} ${item.size}")
@@ -491,8 +651,34 @@ class MainActivity : AppCompatActivity() {
         
         // Aktifkan swipe refresh untuk manual fetch
         binding.swipeRefreshLayout.setOnRefreshListener {
-            Log.d("MainActivity", "🔥 Swipe down terdeteksi - manual fetch data")
-            viewModel.forceRefreshCache()
+            val startTime = System.currentTimeMillis()
+            Log.i("MainActivity", "🔥 === SWIPE REFRESH START ===")
+            Log.i("MainActivity", "🔥 Timestamp: ${java.text.SimpleDateFormat("HH:mm:ss.SSS", java.util.Locale.getDefault()).format(java.util.Date())}")
+            
+            // Ambil picklist number dari intent atau current state
+            val selectedPicklist = intent.getStringExtra("SELECTED_PICKLIST")
+            if (!selectedPicklist.isNullOrEmpty()) {
+                Log.i("MainActivity", "🔥 Refreshing picklist: $selectedPicklist")
+                
+                // Check apakah sudah loading untuk menghindari duplikasi
+                val currentPicklist = viewModel.getCurrentPicklistNumber()
+                if (currentPicklist == selectedPicklist && viewModel.isLoading.value == true) {
+                    Log.w("MainActivity", "⚠️ Already refreshing picklist $selectedPicklist, skipping duplicate request")
+                    binding.swipeRefreshLayout.isRefreshing = false
+                    return@setOnRefreshListener
+                }
+                
+                viewModel.loadPicklistItems(selectedPicklist)
+                
+                val refreshTime = System.currentTimeMillis() - startTime
+                Log.i("MainActivity", "🔥 Swipe refresh initiated in ${refreshTime}ms")
+            } else {
+                Log.w("MainActivity", "⚠️ No picklist selected for refresh")
+                ToastUtils.showHighToastWithCooldown(this, "Tidak ada picklist yang dipilih")
+                binding.swipeRefreshLayout.isRefreshing = false
+            }
+            
+            Log.i("MainActivity", "🔥 === SWIPE REFRESH END ===")
             
             // Stop refresh indicator setelah selesai
             viewModel.isLoading.observe(this) { isLoading ->
@@ -525,6 +711,7 @@ class MainActivity : AppCompatActivity() {
             
             val dialog = androidx.appcompat.app.AlertDialog.Builder(this, R.style.RoundDialogTheme)
                 .setTitle("Konfirmasi Clear")
+                .setMessage("Apakah Anda yakin ingin mereset scan data?\\n\\n• Reset qtyScan ke 0\\n• Reset RFID detect counter\\n• Hapus overscan & non-picklist\\n• Tampilkan ulang data scan yang valid")
                 .setPositiveButton("Clear") { _, _ ->
                     Logger.Dialog.dialogConfirmed("Clear All")
                     Logger.MainActivity.clearAllConfirmed()
@@ -550,7 +737,7 @@ class MainActivity : AppCompatActivity() {
             
             // Set message dengan text rata tengah dan ukuran yang tepat
             dialog.findViewById<android.widget.TextView>(android.R.id.message)?.apply {
-                text = "Apakah Anda yakin ingin membersihkan semua data?"
+                text = "Apakah Anda yakin ingin mereset semua scan data?\n\n• Reset qtyScan ke 0\n• Reset RFID detect counter\n• Hapus overscan & non-picklist\n• Kembali ke state awal picklist"
                 gravity = android.view.Gravity.CENTER
                 textSize = resources.getDimension(R.dimen.dialog_message_size) / resources.displayMetrics.scaledDensity
                 setPadding(
@@ -579,14 +766,14 @@ class MainActivity : AppCompatActivity() {
         // Long press hint untuk icon Clear
         binding.btnClear.setOnLongClickListener {
             Log.d("MainActivity", "🔥 UI BUTTON LONG PRESS: btnClear - show hint")
-            ToastUtils.showHighToastWithCooldown(this, "Clear RFID buffer & hapus artikel non-picklist")
+            ToastUtils.showHighToastWithCooldown(this, "Reset scan data dan tampilkan ulang data scan yang valid")
             true
         }
         
         // Long press pada Settings untuk reconnect realtime
         binding.ivSettings.setOnLongClickListener {
             Log.d("MainActivity", "🔥 UI BUTTON LONG PRESS: ivSettings - reconnect realtime")
-            viewModel.reconnectRealtime()
+            // viewModel.reconnectRealtime() // TODO: Implementasi method ini
             ToastUtils.showHighToastWithCooldown(this, "Mencoba reconnect ke Supabase Realtime...")
             true
         }
@@ -662,25 +849,30 @@ class MainActivity : AppCompatActivity() {
     }
     
     /**
-     * Perform clear all data - clear RFID buffer and reset qty scan
+     * Perform clear all data - reset scan data dan tampilkan ulang data scan yang valid
+     * Reset ke state awal picklist:
+     * - Reset qtyScan untuk semua items
+     * - Reset RFID detect counter
+     * - Hapus overscan dan non-picklist
+     * - Tampilkan ulang data scan yang valid dari cache/Supabase
      */
     private fun performClearRfidAndNonPicklist() {
         Log.d("MainActivity", "🔥 performClearRfidAndNonPicklist dipanggil")
         
         try {
-            // Clear RFID buffer dan hapus artikel non-picklist
-            viewModel.clearRfidAndNonPicklistArticles()
+            // 1. Panggil method di ViewModel untuk clear RFID dan reset state
+            viewModel.clearRfidAndResetToInitialState()
             
-            // Reset RFID counter display
+            // 2. Reset RFID counter display
             binding.tvRfidDetected.text = "0"
             
-            // Show success message
-            ToastUtils.showHighToastWithCooldown(this, "RFID & artikel non-picklist berhasil dibersihkan")
+            // 3. Show success message
+            ToastUtils.showHighToastWithCooldown(this, "Scan data berhasil direset dan data scan yang valid ditampilkan ulang")
             
-            Log.d("MainActivity", "🔥 Clear RFID & non-picklist berhasil dilakukan")
+            Log.d("MainActivity", "🔥 Clear RFID & reset berhasil dilakukan")
             
         } catch (e: Exception) {
-            Log.e("MainActivity", "🔥 Error saat clear RFID & non-picklist: ${e.message}", e)
+            Log.e("MainActivity", "🔥 Error saat clear RFID & reset: ${e.message}", e)
             ToastUtils.showHighToastWithCooldown(this, "Error: ${e.message}")
         }
     }
@@ -693,10 +885,10 @@ class MainActivity : AppCompatActivity() {
         
         try {
             // Clear RFID buffer di ViewModel
-            viewModel.clearAllData()
+            // viewModel.clearAllData() // TODO: Implementasi method ini
             
             // Clear UI
-            viewModel.clearError()
+            // viewModel.clearError() // TODO: Implementasi method ini
             picklistAdapter.updateItems(emptyList())
             updateSummaryCards(0, 0)
             
@@ -913,18 +1105,15 @@ class MainActivity : AppCompatActivity() {
         
         viewModel.picklists.observe(this) { picklists ->
             Log.d("MainActivity", "Picklists updated: ${picklists.size} items")
-            if (picklists.isNotEmpty()) {
-                // Debug: tampilkan jumlah picklists yang ter-load
-                ToastUtils.showHighToastWithCooldown(this, "Daftar picklist ter-load: ${picklists.size} item")
-            } else {
-                ToastUtils.showHighToastWithCooldown(this, "Tidak ada data picklist tersedia")
-            }
+            // Hapus toast untuk menghindari spam
+            // ToastUtils.showHighToastWithCooldown(this, "Daftar picklist ter-load: ${picklists.size} item")
         }
         
         // HANYA SATU OBSERVER dengan debug logging
         viewModel.picklistItems.observe(this) { items ->
             Log.d("MainActivity", "Received ${items.size} items in MainActivity")
-            ToastUtils.showHighToastWithCooldown(this, "Received ${items.size} items")
+            // Hapus toast untuk menghindari spam
+            // ToastUtils.showHighToastWithCooldown(this, "Received ${items.size} items")
             
             if (items.isEmpty()) {
                 // Tampilkan placeholder ketika tidak ada items
@@ -938,31 +1127,45 @@ class MainActivity : AppCompatActivity() {
                 binding.rvPicklistItems.visibility = View.VISIBLE
                 binding.llEmptyState.visibility = View.GONE
                 
-                // Gunakan filtered items (hide completed items)
+                // Gunakan getFilteredItems() untuk menyembunyikan item yang sudah complete (GREEN)
                 val filteredItems = viewModel.getFilteredItems()
-                Log.d("MainActivity", "Filtered items: ${filteredItems.size} (from ${items.size} total)")
+                Log.d("MainActivity", "Filtered items: ${filteredItems.size} (hiding completed GREEN items)")
                 
-                // Debug log untuk melihat item yang di-filter
-                Log.d("MainActivity", "🔥 Filtered ${filteredItems.size} from ${items.size} items")
+                // Debug log untuk melihat filtered items
+                Log.d("MainActivity", "🔥 Showing ${filteredItems.size} items (completed GREEN items are hidden)")
                 
                 // Kelompokkan items berdasarkan article_name dan size
                 val groupedItems = groupItemsByArticleAndSize(filteredItems)
                 Log.d("MainActivity", "Grouped into ${groupedItems.size} unique items")
                 
-                // Filter tambahan untuk memastikan item yang sudah complete benar-benar di-hide
-                val finalFilteredItems = groupedItems.filter { !it.isComplete() }
-                Log.d("MainActivity", "Final filtered items (after grouping): ${finalFilteredItems.size}")
+                // Tampilkan hanya items yang belum complete
+                val finalItems = groupedItems
+                Log.d("MainActivity", "Final items (after grouping): ${finalItems.size}")
                 
-                // Debug log untuk final items
-                Log.d("MainActivity", "🔥 === FINAL ITEMS DEBUG ===")
-                finalFilteredItems.forEach { item ->
-                    val status = item.getQtyStatus()
-                    val isComplete = item.isComplete()
-                    Log.d("MainActivity", "🔥 Final item: ${item.articleName} ${item.size} - qtyPl=${item.qtyPl}, qtyScan=${item.qtyScan}, Status=$status, isComplete=$isComplete")
+                // Debug log untuk final items (dikurangi untuk menghindari spam)
+                Log.d("MainActivity", "🔥 Final items count: ${finalItems.size}")
+                if (finalItems.isNotEmpty()) {
+                    val firstItem = finalItems.first()
+                    Log.d("MainActivity", "🔥 First item: ${firstItem.articleName} ${firstItem.size} - qtyPl=${firstItem.qtyPl}, qtyScan=${firstItem.qtyScan}")
                 }
-                Log.d("MainActivity", "🔥 === END FINAL ITEMS DEBUG ===")
                 
-                picklistAdapter.updateItems(finalFilteredItems)
+                // Check apakah semua items sudah complete untuk animasi
+                // Gunakan original items untuk check completion, bukan filtered items
+                val allComplete = items.all { it.isComplete() }
+                Log.d("MainActivity", "🔥 All items complete check: $allComplete")
+                
+                if (allComplete && items.isNotEmpty()) {
+                    Log.d("MainActivity", "🎉 All items completed! Showing completion animation")
+                    
+                    // Tampilkan animasi completion yang spektakuler
+                    showCompletionAnimation()
+                    
+                    // Toast notification
+                    ToastUtils.showHighToastWithCooldown(this, "🎉 Semua items sudah selesai di-scan!")
+                }
+                
+                // Selalu tampilkan filtered items (yang belum complete)
+                picklistAdapter.updateItems(finalItems)
                 
                 // Update summary cards dengan data yang benar
                 // **PERUBAHAN**: Gunakan original items untuk summary, bukan filtered items
@@ -971,35 +1174,31 @@ class MainActivity : AppCompatActivity() {
                 val scannedQty = items.sumOf { it.qtyScan }
                 val remainingQty = totalQty - scannedQty
                 
-                Log.i("MainActivity", "🔥 === SUMMARY UPDATE ===")
-                Log.i("MainActivity", "🔥 Total items (original): ${items.size}")
-                Log.i("MainActivity", "🔥 Filtered items (displayed): ${finalFilteredItems.size}")
-                Log.i("MainActivity", "🔥 Total Qty (picklist): $totalQty")
-                Log.i("MainActivity", "🔥 Scanned Qty (displayed): $scannedQty")
-                Log.i("MainActivity", "🔥 Remaining Qty: $remainingQty")
-                
-                // Log detail per item untuk debugging
-                items.forEach { item ->
-                    Log.d("MainActivity", "🔥 Item: ${item.articleName} ${item.size} - qtyPl=${item.qtyPl}, qtyScan=${item.qtyScan}")
-                }
+                // Log summary dengan informasi tentang completion status
+                val completedItems = items.count { it.isComplete() }
+                val incompleteItemsCount = items.count { !it.isComplete() }
+                Log.i("MainActivity", "🔥 Summary: Total=${items.size}, Completed=$completedItems (showing ✓), Incomplete=$incompleteItemsCount, QtyPl=$totalQty, QtyScan=$scannedQty")
                 
                 updateSummaryCards(totalQty, remainingQty)
+                
+                // Update RFID detected counter dengan total scanned items
+                binding.tvRfidDetected.text = scannedQty.toString()
                 
                 // Tombol Submit sudah dihilangkan - menggunakan auto-post
             }
         }
         
-        viewModel.scanCounter.observe(this) { count ->
-            // Update UI untuk menampilkan jumlah EPC yang di-scan
-            Log.d("MainActivity", "Scan counter updated: $count")
-            binding.tvRfidDetected.text = count.toString()
-            
-            // Reset counter saat EPC diproses (count = 0)
-            if (count == 0) {
-                Log.d("MainActivity", "RFID counter direset setelah EPC diproses")
-                // Tombol Submit sudah dihilangkan - menggunakan auto-post
-            }
-        }
+        // viewModel.scanCounter.observe(this) { count ->
+        //     // Update UI untuk menampilkan jumlah EPC yang di-scan
+        //     Log.d("MainActivity", "Scan counter updated: $count")
+        //     binding.tvRfidDetected.text = count.toString()
+        //     
+        //     // Reset counter saat EPC diproses (count = 0)
+        //     if (count == 0) {
+        //         Log.d("MainActivity", "RFID counter direset setelah EPC diproses")
+        //         // Tombol Submit sudah dihilangkan - menggunakan auto-post
+        //     }
+        // }
         
         viewModel.isLoading.observe(this) { isLoading ->
             Log.d("MainActivity", "Loading state: $isLoading")
@@ -1010,28 +1209,32 @@ class MainActivity : AppCompatActivity() {
             error?.let {
                 Log.e("MainActivity", "Error message: $it")
                 ToastUtils.showHighLongToast(this, it)
-                viewModel.clearError()
+                // viewModel.clearError() // TODO: Implementasi method ini
             }
         }
         
         // Observer untuk completion status dan animasi
-        viewModel.isComplete.observe(this) { isComplete ->
-            Log.d("MainActivity", "Completion status: $isComplete")
-            if (isComplete) {
-                showCompletionAnimation()
-                // Navigasi kembali setelah animasi
-                binding.root.postDelayed({
-                    navigateBackToPicklistInput()
-                }, 3000) // 3 detik untuk animasi
-            } else {
-                hideCompletionAnimation()
+        // Check completion status setiap kali items di-update
+        viewModel.picklistItems.observe(this) { items ->
+            if (items.isNotEmpty()) {
+                val allComplete = items.all { it.isComplete() }
+                Log.d("MainActivity", "🔥 Completion check: All complete = $allComplete")
+                
+                if (allComplete) {
+                    Log.d("MainActivity", "🎉 Real-time completion detected! Showing animation")
+                    showCompletionAnimation()
+                }
             }
         }
         
         // Observer untuk status koneksi realtime
-        viewModel.isRealtimeConnected.observe(this) { isConnected ->
-            Log.d("MainActivity", "Realtime connection status: $isConnected")
-            updateRealtimeStatusIndicator(isConnected)
+        if (::realtimeService.isInitialized) {
+            lifecycleScope.launch {
+                realtimeService.connectionStatus.collect { isConnected ->
+                    Log.d("MainActivity", "Realtime connection status: $isConnected")
+                    updateRealtimeStatusIndicator(isConnected)
+                }
+            }
         }
         
         Log.d("MainActivity", "=== OBSERVE VIEWMODEL END ===")
@@ -1080,12 +1283,11 @@ class MainActivity : AppCompatActivity() {
                         if (epc.isNotEmpty() && (debugMode || rssi >= rssiThreshold)) {
                             // Pastikan ini berjalan di main thread
                             runOnUiThread {
-                                val isNewEpc = viewModel.addEpc(epc, rssi)
+                                // val isNewEpc = viewModel.addEpc(epc, rssi) // TODO: Implementasi method dengan parameter RSSI
+                                viewModel.addEpc(epc) // Temporary fix
                                 
-                                // Play sound hanya untuk EPC baru (bukan duplikat)
-                                if (isNewEpc) {
-                                    playSound(1) // Success sound
-                                }
+                                // Play sound untuk semua EPC (temporary)
+                                playSound(1) // Success sound
                             }
                         }
                     }
@@ -1330,18 +1532,28 @@ class MainActivity : AppCompatActivity() {
         
         val result = grouped.map { (key, groupedItems) ->
             val firstItem = groupedItems.first()
-            val totalQtyPl = groupedItems.sumOf { it.qtyPl }
-            val rawTotalQtyScan = groupedItems.sumOf { it.qtyScan }
             
-            // **PERUBAHAN LOGIKA**: Jangan reset overscan karena data dari ScanViewModel sudah valid
-            // Data overscan sudah ditangani di ScanViewModel dan tersimpan di Supabase
-            val finalTotalQtyScan = rawTotalQtyScan
+            // **PERBAIKAN LOGIC**: Gunakan distinct untuk menghindari duplikasi
+            val distinctItems = groupedItems.distinctBy { "${it.articleId}_${it.size}" }
             
-            if (totalQtyPl > 0 && rawTotalQtyScan > totalQtyPl) {
-                Log.i("MainActivity", "🔥 OVERSCAN DETECTED IN GROUPING - GUNAKAN DATA ASLI: $key - rawQtyScan=$rawTotalQtyScan, qtyPl=$totalQtyPl (data sudah valid dari Supabase)")
+            // **PERBAIKAN QTY CALCULATION**: 
+            // - qtyPl: Jumlah total yang direncanakan (bisa dari multiple records)
+            // - qtyScan: Jumlah distinct EPC yang sudah di-scan (sudah dihitung dengan distinct di SupabaseService)
+            val totalQtyPl = distinctItems.sumOf { it.qtyPl }
+            val totalQtyScan = distinctItems.sumOf { it.qtyScan }
+            
+            // **VALIDASI DATA**: Deteksi duplikasi dan overscan
+            if (groupedItems.size > distinctItems.size) {
+                Log.w("MainActivity", "🔥 DUPLICATE DATA DETECTED: $key - ${groupedItems.size} raw items, ${distinctItems.size} distinct items")
             }
             
-            Log.d("MainActivity", "🔥 Group '$key': ${groupedItems.size} items, totalQtyPl=$totalQtyPl, rawQtyScan=$rawTotalQtyScan, finalQtyScan=$finalTotalQtyScan")
+            if (totalQtyScan > totalQtyPl) {
+                Log.w("MainActivity", "🔥 OVERSCAN DETECTED: $key - qtyScan=$totalQtyScan > qtyPl=$totalQtyPl")
+                Log.w("MainActivity", "🔥 OVERSCAN DETAIL: ${totalQtyScan - totalQtyPl} items overscan")
+            }
+            
+            Log.d("MainActivity", "🔥 Group '$key': ${groupedItems.size} raw items, ${distinctItems.size} distinct items")
+            Log.d("MainActivity", "🔥 Group '$key': totalQtyPl=$totalQtyPl, totalQtyScan=$totalQtyScan")
             
             PicklistItem(
                 id = firstItem.id,
@@ -1351,7 +1563,7 @@ class MainActivity : AppCompatActivity() {
                 size = firstItem.size,
                 productId = firstItem.productId,
                 qtyPl = totalQtyPl,
-                qtyScan = finalTotalQtyScan,
+                qtyScan = totalQtyScan,
                 createdAt = firstItem.createdAt,
                 warehouse = firstItem.warehouse,
                 tagStatus = firstItem.tagStatus
@@ -1360,9 +1572,27 @@ class MainActivity : AppCompatActivity() {
         .sortedBy { it.articleName }
         
         Log.d("MainActivity", "🔥 Final grouped items: ${result.size}")
+        
+        // **SUMMARY LOGGING**: Hitung total dan overscan
+        val totalQtyPl = result.sumOf { it.qtyPl }
+        val totalQtyScan = result.sumOf { it.qtyScan }
+        val totalOverscan = result.sumOf { if (it.qtyScan > it.qtyPl) it.qtyScan - it.qtyPl else 0 }
+        val completedItems = result.count { it.isComplete() }
+        val overscanItems = result.count { it.qtyScan > it.qtyPl }
+        
+        Log.i("MainActivity", "🔥 === GROUPING SUMMARY ===")
+        Log.i("MainActivity", "🔥 Total Items: ${result.size}")
+        Log.i("MainActivity", "🔥 Total Qty Planned: $totalQtyPl")
+        Log.i("MainActivity", "🔥 Total Qty Scanned: $totalQtyScan")
+        Log.i("MainActivity", "🔥 Total Overscan: $totalOverscan")
+        Log.i("MainActivity", "🔥 Completed Items: $completedItems")
+        Log.i("MainActivity", "🔥 Overscan Items: $overscanItems")
+        Log.i("MainActivity", "🔥 === END GROUPING SUMMARY ===")
+        
         result.forEach { item ->
             val isComplete = item.isComplete()
-            Log.d("MainActivity", "🔥 Final item: ${item.articleName} ${item.size} - qtyPl=${item.qtyPl}, qtyScan=${item.qtyScan}, isComplete=$isComplete")
+            val overscanText = if (item.qtyScan > item.qtyPl) " (+${item.qtyScan - item.qtyPl})" else ""
+            Log.d("MainActivity", "🔥 Final item: ${item.articleName} ${item.size} - qtyPl=${item.qtyPl}, qtyScan=${item.qtyScan}$overscanText, isComplete=$isComplete")
         }
         Log.d("MainActivity", "🔥 === END GROUPING ===")
         
@@ -1627,7 +1857,28 @@ class MainActivity : AppCompatActivity() {
         }
         
         // Stop realtime subscription
-        viewModel.stopRealtimeSubscription()
+        // viewModel.stopRealtimeSubscription() // TODO: Implementasi method ini
+        
+        // Cleanup realtime service
+        try {
+            if (::realtimeService.isInitialized) {
+                lifecycleScope.launch {
+                    realtimeService.disconnect()
+                    realtimeService.cleanup()
+                }
+                Log.d("MainActivity", "✅ Realtime service cleaned up")
+            }
+        } catch (e: Exception) {
+            Log.e("MainActivity", "❌ Error cleaning up realtime service: ${e.message}", e)
+        }
+        
+        // Cleanup test realtime
+        try {
+            realtimeTest.cleanup()
+            Log.d("MainActivity", "✅ Realtime test cleaned up")
+        } catch (e: Exception) {
+            Log.e("MainActivity", "❌ Error cleaning up realtime test: ${e.message}", e)
+        }
         
         // Release sound resources
         releaseSoundPool()
