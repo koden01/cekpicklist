@@ -14,19 +14,28 @@ data class PicklistItem(
     val scan: Boolean = false, // status scan dari Supabase (true/false)
     val createdAt: String? = null, // created_at dari Supabase
     val warehouse: String? = null, // warehouse untuk item NA
-    val tagStatus: String? = null // tag_status untuk item NA
+    val tagStatus: String? = null, // tag_status untuk item NA
+    val lastUpdated: Long = System.currentTimeMillis() // timestamp untuk cache incremental update
 ) {
     fun getQtyStatus(): QtyStatus {
         val status = when {
-            qtyPl == 0 && qtyScan > 0 -> QtyStatus.YELLOW // Barang tidak ada di picklist tapi terbaca - KUNING
-            qtyScan < qtyPl -> QtyStatus.RED // Kurang dari yang direncanakan
-            qtyScan > qtyPl -> QtyStatus.YELLOW // Lebih dari yang direncanakan
-            qtyScan == qtyPl -> QtyStatus.GREEN // Sesuai (akan di-hidden)
+            // qtyPl=0, qtyScan=1 -> KUNING (semua item dengan qtyPl=0)
+            qtyPl == 0 && qtyScan > 0 -> QtyStatus.YELLOW
+            
+            // qtyPl=2, qtyScan=1 -> MERAH (kurang dari rencana)
+            qtyScan < qtyPl -> QtyStatus.RED
+            
+            // qtyPl=2, qtyScan=3 -> KUNING (lebih dari rencana)
+            qtyScan > qtyPl -> QtyStatus.YELLOW
+            
+            // qtyPl=2, qtyScan=2 -> HIJAU (sesuai rencana, akan di-hide)
+            qtyScan == qtyPl -> QtyStatus.GREEN
+            
             else -> QtyStatus.GREEN
         }
         
         // Debug logging
-        android.util.Log.d("PicklistItem", "🔥 getQtyStatus: Article=${articleName}, qtyPl=$qtyPl, qtyScan=$qtyScan, Status=$status")
+        android.util.Log.d("PicklistItem", "🔥 getQtyStatus: Article=${articleName}, qtyPl=$qtyPl, qtyScan=$qtyScan, tagStatus=$tagStatus, Status=$status")
         
         return status
     }
@@ -38,7 +47,13 @@ data class PicklistItem(
     fun getQtyStatusMessage(): String {
         return when (getQtyStatus()) {
             QtyStatus.RED -> "Kurang ${qtyPl - qtyScan} pcs"
-            QtyStatus.YELLOW -> if (qtyPl == 0) "Tidak ada di picklist" else "Lebih ${qtyScan - qtyPl} pcs"
+            QtyStatus.YELLOW -> {
+                when {
+                    qtyPl == 0 -> "Tidak ada di picklist"
+                    qtyScan > qtyPl -> "Lebih ${qtyScan - qtyPl} pcs"
+                    else -> "Overscan"
+                }
+            }
             QtyStatus.GREEN -> "Sesuai"
         }
     }

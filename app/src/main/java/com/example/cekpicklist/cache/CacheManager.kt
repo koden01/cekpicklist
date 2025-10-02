@@ -1,674 +1,875 @@
 package com.example.cekpicklist.cache
 
 import android.content.Context
-import android.content.SharedPreferences
 import android.util.Log
 import com.example.cekpicklist.data.PicklistItem
-import com.example.cekpicklist.data.PicklistScan
+import com.example.cekpicklist.data.PicklistStatus
 import com.google.gson.Gson
 import com.google.gson.reflect.TypeToken
-import java.time.LocalDateTime
-import java.time.format.DateTimeFormatter
-import java.time.temporal.ChronoUnit
+import java.util.concurrent.ConcurrentHashMap
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
+import kotlinx.coroutines.delay
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 
 /**
- * CacheManager untuk mengelola cache dengan stale-time
- * Implementasi konsep cache seperti React Query/Apollo dengan stale-time 15 jam
+ * Cache Manager untuk mengoptimalkan performa fetch data dari SUPABASE (bukan API Nirwana).
+ * - Bersifat in-memory cache dengan TTL (Time To Live) 15 jam
+ * - EXTENDED status dihilangkan - cache langsung expired setelah 15 jam
+ * - Fresh data (< 7.5 jam) tetap diperbarui via background refresh untuk memastikan data up-to-date
+ * - Lapisan pengambil data (repository/DAO Supabase) yang bertugas memanggil method set/update di sini
+ * - Tidak melakukan network call; hanya menyimpan dan menyajikan kembali data yang sudah dipopulasi
  */
-class CacheManager(private val context: Context) {
+class CacheManager(private val context: Context? = null) {
     
     companion object {
-        private const val PREFS_NAME = "cekpicklist_cache"
-        private const val KEY_LAST_FETCH_TIME = "last_fetch_time"
-        private const val KEY_CACHED_PICKLISTS = "cached_picklists"
-        private const val KEY_CACHED_ARTICLES = "cached_articles"
-        private const val KEY_CACHED_SCANS = "cached_scans"
-        private const val STALE_TIME_HOURS = 15L // 15 jam stale time
-        
-        private val TAG = "CacheManager"
-        private val DATE_FORMATTER = DateTimeFormatter.ISO_LOCAL_DATE_TIME
+        private const val CACHE_TTL_MS = 15 * 60 * 60 * 1000L // 15 jam
+        private const val TAG = "CacheManager"
     }
     
-    private val sharedPrefs: SharedPreferences = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+    // SharedPreferences untuk cache persistence sederhana
+    private val sharedPreferences = context?.getSharedPreferences("cache_prefs", Context.MODE_PRIVATE)
     private val gson = Gson()
     
-    /**
-     * Cek apakah cache masih fresh (belum stale)
-     * @return true jika cache masih fresh (< 15 jam), false jika sudah stale
-     */
-    fun isCacheFresh(): Boolean {
-        val lastFetchTime = getLastFetchTime()
-        if (lastFetchTime == null) {
-            Log.d(TAG, "🔥 Cache tidak ada - perlu fetch baru")
-            return false
-        }
-        
-        val now = LocalDateTime.now()
-        val hoursSinceLastFetch = ChronoUnit.HOURS.between(lastFetchTime, now)
-        
-        Log.d(TAG, "🔥 Cek cache freshness:")
-        Log.d(TAG, "   Last fetch: $lastFetchTime")
-        Log.d(TAG, "   Now: $now")
-        Log.d(TAG, "   Hours since last fetch: $hoursSinceLastFetch")
-        Log.d(TAG, "   Stale time: $STALE_TIME_HOURS hours")
-        Log.d(TAG, "   Cache fresh: ${hoursSinceLastFetch < STALE_TIME_HOURS}")
-        
-        return hoursSinceLastFetch < STALE_TIME_HOURS
-    }
+    // Analytics untuk monitoring
+    private val analytics = CacheAnalytics()
+    
+    // Cache untuk processed EPC list
+    private val processedEpcCache = ConcurrentHashMap<String, CacheEntry<List<String>>>()
+    
+    // Cache untuk picklist items
+    private val picklistItemsCache = ConcurrentHashMap<String, CacheEntry<List<PicklistItem>>>()
+    
+    // Cache untuk picklist statuses
+    private val picklistStatusCache = ConcurrentHashMap<String, CacheEntry<PicklistStatus>>()
+    
+    // Cache untuk semua picklist numbers
+    private var allPicklistsCache: CacheEntry<List<String>>? = null
+    
+    // Mutex untuk thread safety
+    private val cacheMutex = Mutex()
     
     /**
-     * Cek apakah cache sudah expired (lebih dari 15 jam)
-     * @return true jika cache sudah expired, false jika masih valid
+     * Load cache dari SharedPreferences saat app start
      */
-    fun isCacheExpired(): Boolean {
-        val lastFetchTime = getLastFetchTime()
-        if (lastFetchTime == null) {
-            Log.d(TAG, "🔥 Cache tidak ada - dianggap expired")
-            return true
-        }
-        
-        val now = LocalDateTime.now()
-        val hoursSinceLastFetch = ChronoUnit.HOURS.between(lastFetchTime, now)
-        
-        Log.d(TAG, "🔥 Cek cache expiration:")
-        Log.d(TAG, "   Last fetch: $lastFetchTime")
-        Log.d(TAG, "   Now: $now")
-        Log.d(TAG, "   Hours since last fetch: $hoursSinceLastFetch")
-        Log.d(TAG, "   Stale time: $STALE_TIME_HOURS hours")
-        Log.d(TAG, "   Cache expired: ${hoursSinceLastFetch >= STALE_TIME_HOURS}")
-        
-        return hoursSinceLastFetch >= STALE_TIME_HOURS
-    }
-    
-    /**
-     * Cleanup cache yang sudah expired (lebih dari 15 jam)
-     * Data dianggap tidak segar dan dihapus dari cache
-     */
-    fun cleanupExpiredCache() {
-        if (isCacheExpired()) {
-            Log.d(TAG, "🔥 Cache sudah expired, melakukan cleanup...")
-            clearAllCache()
-            Log.d(TAG, "🔥 Expired cache berhasil dibersihkan")
-        } else {
-            Log.d(TAG, "🔥 Cache masih valid, tidak perlu cleanup")
-        }
-    }
-    
-    
-    /**
-     * Simpan timestamp fetch terakhir
-     */
-    fun setLastFetchTime(time: LocalDateTime) {
-        val timeString = time.format(DATE_FORMATTER)
-        sharedPrefs.edit()
-            .putString(KEY_LAST_FETCH_TIME, timeString)
-            .apply()
-        
-        Log.d(TAG, "🔥 Last fetch time disimpan: $timeString")
-    }
-    
-    /**
-     * Ambil timestamp fetch terakhir
-     */
-    fun getLastFetchTime(): LocalDateTime? {
-        val timeString = sharedPrefs.getString(KEY_LAST_FETCH_TIME, null)
-        return if (timeString != null) {
-            try {
-                LocalDateTime.parse(timeString, DATE_FORMATTER)
-            } catch (e: Exception) {
-                Log.e(TAG, "🔥 Error parsing last fetch time: $timeString", e)
-                null
+    suspend fun loadCacheFromDatabase() = withContext(Dispatchers.IO) {
+        try {
+            Log.d(TAG, "🔄 Loading cache from SharedPreferences...")
+            
+            // Load picklist items cache
+            val picklistItemsJson = sharedPreferences?.getString("picklist_items_cache", null)
+            if (picklistItemsJson != null) {
+                val type = object : TypeToken<Map<String, CacheEntry<List<PicklistItem>>>>() {}.type
+                val loadedCache = gson.fromJson<Map<String, CacheEntry<List<PicklistItem>>>>(picklistItemsJson, type)
+                if (loadedCache != null) {
+                    picklistItemsCache.putAll(loadedCache)
+                    Log.d(TAG, "✅ Loaded ${loadedCache.size} picklist items from cache")
+                }
             }
+            
+            // Load processed EPC list cache
+            val processedEpcJson = sharedPreferences?.getString("processed_epc_cache", null)
+            if (processedEpcJson != null) {
+                val type = object : TypeToken<Map<String, CacheEntry<List<String>>>>() {}.type
+                val loadedCache = gson.fromJson<Map<String, CacheEntry<List<String>>>>(processedEpcJson, type)
+                if (loadedCache != null) {
+                    processedEpcCache.putAll(loadedCache)
+                    Log.d(TAG, "✅ Loaded ${loadedCache.size} processed EPC lists from cache")
+                }
+            }
+            
+            // Load picklist status cache
+            val picklistStatusJson = sharedPreferences?.getString("picklist_status_cache", null)
+            if (picklistStatusJson != null) {
+                val type = object : TypeToken<Map<String, CacheEntry<PicklistStatus>>>() {}.type
+                val loadedCache = gson.fromJson<Map<String, CacheEntry<PicklistStatus>>>(picklistStatusJson, type)
+                if (loadedCache != null) {
+                    picklistStatusCache.putAll(loadedCache)
+                    Log.d(TAG, "✅ Loaded ${loadedCache.size} picklist statuses from cache")
+                }
+            }
+            
+            // Load all picklists cache
+            val allPicklistsJson = sharedPreferences?.getString("all_picklists_cache", null)
+            if (allPicklistsJson != null) {
+                val type = object : TypeToken<CacheEntry<List<String>>>() {}.type
+                val loadedCache = gson.fromJson<CacheEntry<List<String>>>(allPicklistsJson, type)
+                if (loadedCache != null) {
+                    allPicklistsCache = loadedCache
+                    Log.d(TAG, "✅ Loaded all picklists from cache")
+                }
+            }
+            
+            Log.d(TAG, "🎉 Cache loading completed successfully")
+        } catch (e: Exception) {
+            Log.e(TAG, "❌ Error loading cache from SharedPreferences: ${e.message}", e)
+        }
+    }
+    
+    /**
+     * Save cache ke SharedPreferences
+     */
+    private suspend fun saveCacheToDatabase() = withContext(Dispatchers.IO) {
+        try {
+            Log.d(TAG, "💾 Saving cache to SharedPreferences...")
+            
+            // Save picklist items cache
+            val picklistItemsJson = gson.toJson(picklistItemsCache)
+            sharedPreferences?.edit()?.putString("picklist_items_cache", picklistItemsJson)?.apply()
+            
+            // Save processed EPC list cache
+            val processedEpcJson = gson.toJson(processedEpcCache)
+            sharedPreferences?.edit()?.putString("processed_epc_cache", processedEpcJson)?.apply()
+            
+            // Save picklist status cache
+            val picklistStatusJson = gson.toJson(picklistStatusCache)
+            sharedPreferences?.edit()?.putString("picklist_status_cache", picklistStatusJson)?.apply()
+            
+            // Save all picklists cache
+            val allPicklistsJson = gson.toJson(allPicklistsCache)
+            sharedPreferences?.edit()?.putString("all_picklists_cache", allPicklistsJson)?.apply()
+            
+            Log.d(TAG, "✅ Cache saved to SharedPreferences successfully")
+        } catch (e: Exception) {
+            Log.e(TAG, "❌ Error saving cache to SharedPreferences: ${e.message}", e)
+        }
+    }
+    
+    /**
+     * Cleanup expired data dari SharedPreferences
+     */
+    suspend fun cleanupExpiredData() = withContext(Dispatchers.IO) {
+        try {
+            Log.d(TAG, "🧹 Cleaning up expired cache data...")
+            
+            val currentTime = System.currentTimeMillis()
+            var cleanedCount = 0
+            
+            // Cleanup expired picklist items
+            val expiredPicklistItems = picklistItemsCache.filter { (_, entry) -> 
+                entry.isExpired() 
+            }.keys.toList()
+            expiredPicklistItems.forEach { key ->
+                picklistItemsCache.remove(key)
+                cleanedCount++
+            }
+            
+            // Cleanup expired processed EPC lists
+            val expiredProcessedEpc = processedEpcCache.filter { (_, entry) -> 
+                entry.isExpired() 
+            }.keys.toList()
+            expiredProcessedEpc.forEach { key ->
+                processedEpcCache.remove(key)
+                cleanedCount++
+            }
+            
+            // Cleanup expired picklist statuses
+            val expiredPicklistStatus = picklistStatusCache.filter { (_, entry) -> 
+                entry.isExpired() 
+            }.keys.toList()
+            expiredPicklistStatus.forEach { key ->
+                picklistStatusCache.remove(key)
+                cleanedCount++
+            }
+            
+            // Cleanup expired all picklists
+            if (allPicklistsCache?.isExpired() == true) {
+                allPicklistsCache = null
+                cleanedCount++
+            }
+            
+            // Save updated cache to SharedPreferences
+            if (cleanedCount > 0) {
+                saveCacheToDatabase()
+            }
+            
+            Log.d(TAG, "✅ Cleaned up $cleanedCount expired cache entries")
+        } catch (e: Exception) {
+            Log.e(TAG, "❌ Error cleaning up expired cache data: ${e.message}", e)
+        }
+    }
+    
+    /**
+     * Get analytics report
+     */
+    suspend fun getAnalyticsReport(): CacheAnalytics.CacheAnalyticsReport = withContext(Dispatchers.IO) {
+        analytics.getAnalyticsReport()
+    }
+    
+    /**
+     * Get cache hit rate
+     */
+    fun getCacheHitRate(): Double {
+        return analytics.getCacheHitRate()
+    }
+    
+    /**
+     * Get cache miss rate
+     */
+    fun getCacheMissRate(): Double {
+        return analytics.getCacheMissRate()
+    }
+    
+    /**
+     * Get most popular cache keys
+     */
+    fun getMostPopularKeys(limit: Int = 10): List<Pair<String, Long>> {
+        return analytics.getMostPopularKeys(limit)
+    }
+    
+    /**
+     * Reset analytics data
+     */
+    fun resetAnalytics() {
+        analytics.reset()
+    }
+    
+    /**
+     * Cache entry dengan timestamp dan informasi freshness
+     */
+    private data class CacheEntry<T>(
+        val data: T,
+        val timestamp: Long = System.currentTimeMillis()
+    ) {
+        fun isExpired(): Boolean {
+            return System.currentTimeMillis() - timestamp > CACHE_TTL_MS
+        }
+        
+        // Removed isExpiredWithExtension() - EXTENDED status dihilangkan
+        
+        // Removed canBeExtended() - EXTENDED status dihilangkan
+        
+        fun isFresh(): Boolean {
+            val age = System.currentTimeMillis() - timestamp
+            val freshThreshold = CACHE_TTL_MS / 2 // Fresh jika kurang dari 7.5 jam
+            // Data fresh tetap diperbarui via background refresh untuk memastikan data up-to-date
+            return age < freshThreshold
+        }
+        
+        fun isStale(): Boolean {
+            val age = System.currentTimeMillis() - timestamp
+            val staleThreshold = CACHE_TTL_MS * 3 / 4 // Stale jika lebih dari 11.25 jam
+            return age > staleThreshold
+        }
+        
+        fun getAge(): Long {
+            return System.currentTimeMillis() - timestamp
+        }
+        
+        fun getAgeFormatted(): String {
+            val age = getAge()
+            return when {
+                age < 1000 -> "${age}ms"
+                age < 60000 -> "${age / 1000}s"
+                age < 3600000 -> "${age / 60000}m"
+                else -> "${age / 3600000}h"
+            }
+        }
+        
+        fun getFreshnessStatus(): String {
+            return when {
+                isExpired() -> "EXPIRED"
+                isStale() -> "STALE"
+                isFresh() -> "FRESH"
+                else -> "AGING"
+            }
+        }
+    }
+    
+    /**
+     * Ambil processed EPC list dari cache atau null jika tidak ada/expired
+     */
+    suspend fun getProcessedEpcList(picklistNumber: String): List<String>? = cacheMutex.withLock {
+        val entry = processedEpcCache[picklistNumber]
+        return@withLock if (entry != null && !entry.isExpired()) {
+            val freshness = entry.getFreshnessStatus()
+            val age = entry.getAgeFormatted()
+            Log.d(TAG, "✅ Cache HIT for processed EPC list: $picklistNumber [$freshness, age: $age]")
+            entry.data
         } else {
+            val reason = if (entry == null) "NOT_FOUND" else "EXPIRED"
+            Log.d(TAG, "❌ Cache MISS for processed EPC list: $picklistNumber [$reason]")
             null
         }
     }
     
     /**
-     * Simpan picklist data ke cache
+     * Simpan processed EPC list ke cache
      */
-    fun cachePicklists(picklists: List<String>) {
-        val json = gson.toJson(picklists)
-        sharedPrefs.edit()
-            .putString(KEY_CACHED_PICKLISTS, json)
-            .apply()
+    suspend fun setProcessedEpcList(picklistNumber: String, epcList: List<String>) = cacheMutex.withLock {
+        processedEpcCache[picklistNumber] = CacheEntry(epcList)
+        Log.d(TAG, "💾 Cached processed EPC list for: $picklistNumber (${epcList.size} EPCs)")
         
-        Log.d(TAG, "🔥 Picklists di-cache: ${picklists.size} items")
+        // Save to SharedPreferences
+        withContext(Dispatchers.IO) {
+            saveCacheToDatabase()
+        }
     }
     
     /**
-     * Ambil picklist data dari cache
+     * Update processed EPC list secara incremental
+     * Merge EPC baru dengan yang sudah ada di cache
      */
-    fun getCachedPicklists(): List<String>? {
-        val json = sharedPrefs.getString(KEY_CACHED_PICKLISTS, null)
-        return if (json != null) {
-            try {
-                val type = object : TypeToken<List<String>>() {}.type
-                gson.fromJson<List<String>>(json, type)
-            } catch (e: Exception) {
-                Log.e(TAG, "🔥 Error parsing cached picklists", e)
-                null
-            }
+    suspend fun updateProcessedEpcListIncremental(picklistNumber: String, newEpcList: List<String>) = cacheMutex.withLock {
+        val existingEntry = processedEpcCache[picklistNumber]
+        
+        if (existingEntry != null && !existingEntry.isExpired()) {
+            val existingEpcList = existingEntry.data
+            val mergedEpcList = mergeEpcLists(existingEpcList, newEpcList)
+            
+            processedEpcCache[picklistNumber] = CacheEntry(mergedEpcList)
+            Log.d(TAG, "🔄 Incremental update for processed EPC list: $picklistNumber (${existingEpcList.size} -> ${mergedEpcList.size} EPCs)")
         } else {
+            // Tidak ada data di cache atau expired, simpan sebagai data baru
+            processedEpcCache[picklistNumber] = CacheEntry(newEpcList)
+            Log.d(TAG, "💾 Fresh cache for processed EPC list: $picklistNumber (${newEpcList.size} EPCs)")
+        }
+    }
+    
+    /**
+     * Merge EPC lists: gabungkan yang sudah ada dengan yang baru
+     */
+    private fun mergeEpcLists(existingEpcList: List<String>, newEpcList: List<String>): List<String> {
+        val mergedSet = existingEpcList.toMutableSet()
+        val addedCount = newEpcList.count { mergedSet.add(it) }
+        
+        Log.d(TAG, "🔄 Merged EPC lists: ${existingEpcList.size} existing + $addedCount new = ${mergedSet.size} total")
+        return mergedSet.toList()
+    }
+    
+    /**
+     * Ambil picklist items dari cache atau null jika tidak ada/expired
+     */
+    suspend fun getPicklistItems(picklistNumber: String): List<PicklistItem>? = cacheMutex.withLock {
+        val entry = picklistItemsCache[picklistNumber]
+        return@withLock if (entry != null && !entry.isExpired()) {
+            val freshness = entry.getFreshnessStatus()
+            val age = entry.getAgeFormatted()
+            Log.d(TAG, "✅ Cache HIT for picklist items: $picklistNumber [$freshness, age: $age]")
+            entry.data
+        } else {
+            val reason = if (entry == null) "NOT_FOUND" else "EXPIRED"
+            Log.d(TAG, "❌ Cache MISS for picklist items: $picklistNumber [$reason]")
             null
         }
     }
     
     /**
-     * Clear semua cache data
+     * Simpan picklist items ke cache
      */
-    fun clearAllCache() {
-        Log.d(TAG, "🔥 Clearing all cache data...")
-        sharedPrefs.edit()
-            .remove(KEY_CACHED_PICKLISTS)
-            .remove(KEY_CACHED_ARTICLES)
-            .remove(KEY_LAST_FETCH_TIME)
-            .apply()
-        Log.d(TAG, "🔥 All cache data cleared")
+    suspend fun setPicklistItems(picklistNumber: String, items: List<PicklistItem>) = cacheMutex.withLock {
+        picklistItemsCache[picklistNumber] = CacheEntry(items)
+        Log.d(TAG, "💾 Cached picklist items for: $picklistNumber (${items.size} items)")
+        
+        // Save to SharedPreferences
+        withContext(Dispatchers.IO) {
+            saveCacheToDatabase()
+        }
     }
     
     /**
-     * Clear cache articles saja
+     * Update picklist items secara incremental
+     * Merge data baru dengan data yang sudah ada di cache
      */
-    fun clearArticlesCache() {
-        Log.d(TAG, "🔥 Clearing articles cache...")
-        sharedPrefs.edit()
-            .remove(KEY_CACHED_ARTICLES)
-            .apply()
-        Log.d(TAG, "🔥 Articles cache cleared")
+    suspend fun updatePicklistItemsIncremental(picklistNumber: String, newItems: List<PicklistItem>) = cacheMutex.withLock {
+        val existingEntry = picklistItemsCache[picklistNumber]
+        
+        if (existingEntry != null && !existingEntry.isExpired()) {
+            // Ada data di cache, lakukan merge
+            val existingItems = existingEntry.data
+            val existingFreshness = existingEntry.getFreshnessStatus()
+            val existingAge = existingEntry.getAgeFormatted()
+            val mergedItems = mergePicklistItems(existingItems, newItems)
+            
+            picklistItemsCache[picklistNumber] = CacheEntry(mergedItems)
+            Log.d(TAG, "🔄 Incremental update for picklist items: $picklistNumber (${existingItems.size} -> ${mergedItems.size} items) [was: $existingFreshness, age: $existingAge]")
+        } else {
+            // Tidak ada data di cache atau expired, simpan sebagai data baru
+            picklistItemsCache[picklistNumber] = CacheEntry(newItems)
+            val reason = if (existingEntry == null) "NOT_FOUND" else "EXPIRED"
+            Log.d(TAG, "💾 Fresh cache for picklist items: $picklistNumber (${newItems.size} items) [reason: $reason]")
+        }
     }
     
     /**
-     * Clear cache picklists saja
+     * Merge picklist items: update existing items dan tambahkan yang baru
      */
-    fun clearPicklistsCache() {
-        Log.d(TAG, "🔥 Clearing picklists cache...")
-        sharedPrefs.edit()
-            .remove(KEY_CACHED_PICKLISTS)
-            .apply()
-        Log.d(TAG, "🔥 Picklists cache cleared")
-    }
-    
-    /**
-     * Simpan article data ke cache (overwrite existing)
-     */
-    /**
-     * Cache articles dengan incremental update
-     * Menambah data baru tanpa menghapus data lama
-     */
-    fun cacheArticlesIncremental(newArticles: List<PicklistItem>) {
-        val existingArticles = getCachedArticles()?.toMutableList() ?: mutableListOf()
-        
-        Log.d(TAG, "🔥 Cache incremental update:")
-        Log.d(TAG, "   Existing articles: ${existingArticles.size}")
-        Log.d(TAG, "   New articles: ${newArticles.size}")
-        
-        // Merge data baru dengan data lama
-        val mergedArticles = mergeArticles(existingArticles, newArticles)
-        
-        // Cache data yang sudah di-merge
-        cacheArticles(mergedArticles)
-        
-        Log.d(TAG, "🔥 Cache incremental update selesai:")
-        Log.d(TAG, "   Total articles setelah merge: ${mergedArticles.size}")
-    }
-    
-    /**
-     * Cache picklists dengan incremental update
-     * Menambah data baru tanpa menghapus data lama
-     */
-    fun cachePicklistsIncremental(newPicklists: List<String>) {
-        val existingPicklists = getCachedPicklists()?.toMutableList() ?: mutableListOf()
-        
-        Log.d(TAG, "🔥 Cache incremental update picklists:")
-        Log.d(TAG, "   Existing picklists: ${existingPicklists.size}")
-        Log.d(TAG, "   New picklists: ${newPicklists.size}")
-        
-        // Merge data baru dengan data lama
-        val mergedPicklists = mergePicklists(existingPicklists, newPicklists)
-        
-        // Cache data yang sudah di-merge
-        cachePicklists(mergedPicklists)
-        
-        Log.d(TAG, "🔥 Cache incremental update picklists selesai:")
-        Log.d(TAG, "   Total picklists setelah merge: ${mergedPicklists.size}")
-    }
-    
-    /**
-     * Merge articles dengan menghindari duplikasi
-     * Menggunakan kombinasi articleId + size sebagai unique key
-     */
-    private fun mergeArticles(existing: List<PicklistItem>, new: List<PicklistItem>): List<PicklistItem> {
+    private fun mergePicklistItems(existingItems: List<PicklistItem>, newItems: List<PicklistItem>): List<PicklistItem> {
         val mergedMap = mutableMapOf<String, PicklistItem>()
         
-        // Tambahkan existing articles
-        existing.forEach { article ->
-            val key = "${article.articleId}_${article.size}_${article.noPicklist}"
-            mergedMap[key] = article
+        // Tambahkan semua existing items
+        existingItems.forEach { item ->
+            val key = "${item.articleName}_${item.size}"
+            mergedMap[key] = item
         }
         
-        // Tambahkan/update dengan new articles
-        new.forEach { article ->
-            val key = "${article.articleId}_${article.size}_${article.noPicklist}"
-            mergedMap[key] = article // New articles akan override existing jika ada
+        // Update atau tambahkan new items
+        newItems.forEach { newItem ->
+            val key = "${newItem.articleName}_${newItem.size}"
+            val existingItem = mergedMap[key]
+            
+            if (existingItem != null) {
+                // Update existing item dengan data terbaru
+                val updatedItem = existingItem.copy(
+                    qtyScan = newItem.qtyScan,
+                    // Update field lainnya jika diperlukan
+                    lastUpdated = System.currentTimeMillis()
+                )
+                mergedMap[key] = updatedItem
+                Log.d(TAG, "🔄 Updated item: ${newItem.articleName} ${newItem.size} (qtyScan: ${existingItem.qtyScan} -> ${newItem.qtyScan})")
+            } else {
+                // Tambahkan item baru
+                mergedMap[key] = newItem
+                Log.d(TAG, "➕ Added new item: ${newItem.articleName} ${newItem.size}")
+            }
         }
         
         return mergedMap.values.toList()
     }
     
     /**
-     * Merge picklists dengan menghindari duplikasi
+     * Ambil picklist status dari cache atau null jika tidak ada/expired
      */
-    private fun mergePicklists(existing: List<String>, new: List<String>): List<String> {
-        val mergedSet = existing.toMutableSet()
-        mergedSet.addAll(new)
-        return mergedSet.toList()
-    }
-    
-    /**
-     * Force refresh cache untuk picklist tertentu
-     * Menghapus data lama untuk picklist tertentu dan menambah data baru
-     */
-    fun refreshPicklistCache(picklistNo: String, newArticles: List<PicklistItem>) {
-        val existingArticles = getCachedArticles()?.toMutableList() ?: mutableListOf()
-        
-        Log.d(TAG, "🔥 Force refresh cache untuk picklist: $picklistNo")
-        Log.d(TAG, "   Existing articles: ${existingArticles.size}")
-        Log.d(TAG, "   New articles: ${newArticles.size}")
-        
-        // Hapus data lama untuk picklist ini
-        existingArticles.removeAll { it.noPicklist == picklistNo }
-        
-        // Tambahkan data baru
-        existingArticles.addAll(newArticles)
-        
-        // Cache data yang sudah di-update
-        cacheArticles(existingArticles)
-        
-        Log.d(TAG, "🔥 Force refresh cache selesai:")
-        Log.d(TAG, "   Total articles setelah refresh: ${existingArticles.size}")
-    }
-    
-    /**
-     * Cek apakah ada data untuk picklist tertentu di cache
-     */
-    fun hasPicklistData(picklistNo: String): Boolean {
-        val cachedArticles = getCachedArticles()
-        return cachedArticles?.any { it.noPicklist == picklistNo } == true
-    }
-    
-    /**
-     * Get articles untuk picklist tertentu dari cache
-     */
-    fun getCachedArticlesForPicklist(picklistNo: String): List<PicklistItem> {
-        val cachedArticles = getCachedArticles() ?: return emptyList()
-        return cachedArticles.filter { it.noPicklist == picklistNo }
-    }
-    
-    fun cacheArticles(articles: List<PicklistItem>) {
-        val json = gson.toJson(articles)
-        sharedPrefs.edit()
-            .putString(KEY_CACHED_ARTICLES, json)
-            .apply()
-        
-        Log.d(TAG, "🔥 Articles di-cache: ${articles.size} items")
-    }
-    
-    /**
-     * Ambil article data dari cache
-     */
-    fun getCachedArticles(): List<PicklistItem>? {
-        val json = sharedPrefs.getString(KEY_CACHED_ARTICLES, null)
-        return if (json != null) {
-            try {
-                val type = object : TypeToken<List<PicklistItem>>() {}.type
-                val articles = gson.fromJson<List<PicklistItem>>(json, type)
-                Log.d(TAG, "🔥 getCachedArticles: Found ${articles.size} articles in cache")
-                return articles
-            } catch (e: Exception) {
-                Log.e(TAG, "🔥 Error parsing cached articles", e)
-                null
-            }
+    suspend fun getPicklistStatus(picklistNumber: String): PicklistStatus? = cacheMutex.withLock {
+        val entry = picklistStatusCache[picklistNumber]
+        return@withLock if (entry != null && !entry.isExpired()) {
+            val freshness = entry.getFreshnessStatus()
+            val age = entry.getAgeFormatted()
+            Log.d(TAG, "✅ Cache HIT for picklist status: $picklistNumber [$freshness, age: $age]")
+            entry.data
         } else {
-            Log.d(TAG, "🔥 getCachedArticles: No cached articles found")
+            val reason = if (entry == null) "NOT_FOUND" else "EXPIRED"
+            Log.d(TAG, "❌ Cache MISS for picklist status: $picklistNumber [$reason]")
             null
         }
     }
     
     /**
-     * Clear semua cache
+     * Simpan picklist status ke cache
      */
-    fun clearCache() {
-        sharedPrefs.edit()
-            .remove(KEY_LAST_FETCH_TIME)
-            .remove(KEY_CACHED_PICKLISTS)
-            .remove(KEY_CACHED_ARTICLES)
-            .apply()
+    suspend fun setPicklistStatus(picklistNumber: String, status: PicklistStatus) = cacheMutex.withLock {
+        picklistStatusCache[picklistNumber] = CacheEntry(status)
+        Log.d(TAG, "💾 Cached picklist status for: $picklistNumber")
         
-        Log.d(TAG, "🔥 Cache dibersihkan")
-    }
-    
-    /**
-     * Dapatkan info cache untuk debugging
-     */
-    fun getCacheInfo(): String {
-        val lastFetch = getLastFetchTime()
-        val picklists = getCachedPicklists()
-        val articles = getCachedArticles()
-        val scans = getCachedScans()
-        
-        return buildString {
-            appendLine("📊 Cache Info:")
-            appendLine("   Last fetch: ${lastFetch ?: "Never"}")
-            appendLine("   Cached picklists: ${picklists?.size ?: 0}")
-            appendLine("   Cached articles: ${articles?.size ?: 0}")
-            appendLine("   Cached scans: ${scans?.size ?: 0}")
-            appendLine("   Cache fresh: ${isCacheFresh()}")
-            appendLine("   Stale time: $STALE_TIME_HOURS hours")
+        // Save to SharedPreferences
+        withContext(Dispatchers.IO) {
+            saveCacheToDatabase()
         }
     }
     
-    // ========== SCAN CACHE MANAGEMENT ==========
-    
     /**
-     * Simpan scan data ke cache
+     * Update picklist status secara incremental
+     * Update status jika ada perubahan atau tambahkan yang baru
      */
-    fun cacheScans(scans: List<PicklistScan>) {
-        val json = gson.toJson(scans)
-        sharedPrefs.edit()
-            .putString(KEY_CACHED_SCANS, json)
-            .apply()
+    suspend fun updatePicklistStatusIncremental(picklistNumber: String, newStatus: PicklistStatus) = cacheMutex.withLock {
+        val existingEntry = picklistStatusCache[picklistNumber]
         
-        Log.d(TAG, "🔥 Scans di-cache: ${scans.size} items")
+        if (existingEntry != null && !existingEntry.isExpired()) {
+            val existingStatus = existingEntry.data
+            val existingFreshness = existingEntry.getFreshnessStatus()
+            val existingAge = existingEntry.getAgeFormatted()
+            
+            // Cek apakah ada perubahan
+            if (existingStatus != newStatus) {
+                picklistStatusCache[picklistNumber] = CacheEntry(newStatus)
+                Log.d(TAG, "🔄 Updated picklist status: $picklistNumber (scanned: ${existingStatus.isScanned} -> ${newStatus.isScanned}) [was: $existingFreshness, age: $existingAge]")
+            } else {
+                Log.d(TAG, "✅ Picklist status unchanged: $picklistNumber [$existingFreshness, age: $existingAge]")
+            }
+        } else {
+            // Tidak ada data di cache atau expired, simpan sebagai data baru
+            picklistStatusCache[picklistNumber] = CacheEntry(newStatus)
+            val reason = if (existingEntry == null) "NOT_FOUND" else "EXPIRED"
+            Log.d(TAG, "💾 Fresh cache for picklist status: $picklistNumber [reason: $reason]")
+        }
     }
     
     /**
-     * Ambil scan data dari cache
+     * Ambil semua picklist numbers dari cache atau null jika tidak ada/expired
      */
-    fun getCachedScans(): List<PicklistScan>? {
-        val json = sharedPrefs.getString(KEY_CACHED_SCANS, null)
-        return if (json != null) {
-            try {
-                val type = object : TypeToken<List<PicklistScan>>() {}.type
-                val scans = gson.fromJson<List<PicklistScan>>(json, type)
-                Log.d(TAG, "🔥 getCachedScans: Found ${scans.size} scans in cache")
-                return scans
-            } catch (e: Exception) {
-                Log.e(TAG, "🔥 Error parsing cached scans", e)
-                null
-            }
+    suspend fun getAllPicklists(): List<String>? = cacheMutex.withLock {
+        val entry = allPicklistsCache
+        return@withLock if (entry != null && !entry.isExpired()) {
+            val freshness = entry.getFreshnessStatus()
+            val age = entry.getAgeFormatted()
+            Log.d(TAG, "✅ Cache HIT for all picklists [$freshness, age: $age]")
+            entry.data
         } else {
-            Log.d(TAG, "🔥 getCachedScans: No cached scans found")
+            val reason = if (entry == null) "NOT_FOUND" else "EXPIRED"
+            Log.d(TAG, "❌ Cache MISS for all picklists [$reason]")
             null
         }
     }
     
     /**
-     * Tambah scan baru ke cache (incremental update)
+     * Simpan semua picklist numbers ke cache
      */
-    fun addScanToCache(newScan: PicklistScan) {
-        val existingScans = getCachedScans()?.toMutableList() ?: mutableListOf()
+    suspend fun setAllPicklists(picklists: List<String>) = cacheMutex.withLock {
+        allPicklistsCache = CacheEntry(picklists)
+        Log.d(TAG, "💾 Cached all picklists (${picklists.size} items)")
         
-        Log.d(TAG, "🔥 Adding scan to cache:")
-        Log.d(TAG, "   Existing scans: ${existingScans.size}")
-        Log.d(TAG, "   New scan: ${newScan.epc}")
-        
-        // Tambahkan scan baru
-        existingScans.add(newScan)
-        
-        // Cache data yang sudah di-update
-        cacheScans(existingScans)
-        
-        Log.d(TAG, "🔥 Scan added to cache successfully")
-        Log.d(TAG, "   Total scans after add: ${existingScans.size}")
+        // Save to SharedPreferences
+        withContext(Dispatchers.IO) {
+            saveCacheToDatabase()
+        }
     }
     
     /**
-     * Update scan di cache
+     * Update all picklists secara incremental
+     * Merge picklist numbers baru dengan yang sudah ada
      */
-    fun updateScanInCache(updatedScan: PicklistScan) {
-        val existingScans = getCachedScans()?.toMutableList() ?: mutableListOf()
+    suspend fun updateAllPicklistsIncremental(newPicklists: List<String>) = cacheMutex.withLock {
+        val existingEntry = allPicklistsCache
         
-        Log.d(TAG, "🔥 Updating scan in cache:")
-        Log.d(TAG, "   Existing scans: ${existingScans.size}")
-        Log.d(TAG, "   Updated scan: ${updatedScan.epc}")
-        
-        // Cari dan update scan yang ada berdasarkan kombinasi noPicklist, articleId, dan epc
-        val index = existingScans.indexOfFirst { 
-            it.noPicklist == updatedScan.noPicklist && 
-            it.articleId == updatedScan.articleId && 
-            it.epc == updatedScan.epc
-        }
-        if (index != -1) {
-            existingScans[index] = updatedScan
-            Log.d(TAG, "🔥 Scan updated in cache")
+        if (existingEntry != null && !existingEntry.isExpired()) {
+            val existingPicklists = existingEntry.data
+            val mergedPicklists = mergePicklistNumbers(existingPicklists, newPicklists)
+            
+            allPicklistsCache = CacheEntry(mergedPicklists)
+            Log.d(TAG, "🔄 Incremental update for all picklists (${existingPicklists.size} -> ${mergedPicklists.size} items)")
         } else {
-            // Jika tidak ditemukan, tambahkan sebagai scan baru
-            existingScans.add(updatedScan)
-            Log.d(TAG, "🔥 Scan not found, added as new scan")
-        }
-        
-        // Cache data yang sudah di-update
-        cacheScans(existingScans)
-        
-        Log.d(TAG, "🔥 Scan update in cache completed")
-        Log.d(TAG, "   Total scans after update: ${existingScans.size}")
-    }
-    
-    /**
-     * Hapus scan dari cache
-     */
-    fun removeScanFromCache(scanToRemove: PicklistScan) {
-        val existingScans = getCachedScans()?.toMutableList() ?: mutableListOf()
-        
-        Log.d(TAG, "🔥 Removing scan from cache:")
-        Log.d(TAG, "   Existing scans: ${existingScans.size}")
-        Log.d(TAG, "   Scan to remove: ${scanToRemove.epc}")
-        
-        // Hapus scan yang sesuai berdasarkan kombinasi noPicklist, articleId, dan epc
-        val removed = existingScans.removeAll { 
-            it.noPicklist == scanToRemove.noPicklist && 
-            it.articleId == scanToRemove.articleId && 
-            it.epc == scanToRemove.epc
-        }
-        
-        if (removed) {
-            Log.d(TAG, "🔥 Scan removed from cache")
-        } else {
-            Log.d(TAG, "🔥 Scan not found in cache")
-        }
-        
-        // Cache data yang sudah di-update
-        cacheScans(existingScans)
-        
-        Log.d(TAG, "🔥 Scan removal from cache completed")
-        Log.d(TAG, "   Total scans after removal: ${existingScans.size}")
-    }
-    
-    /**
-     * Get scans untuk picklist tertentu dari cache
-     */
-    fun getCachedScansForPicklist(picklistNo: String): List<PicklistScan> {
-        val cachedScans = getCachedScans() ?: return emptyList()
-        return cachedScans.filter { it.noPicklist == picklistNo }
-    }
-    
-    /**
-     * Clear scan cache saja
-     */
-    fun clearScansCache() {
-        Log.d(TAG, "🔥 Clearing scans cache...")
-        sharedPrefs.edit()
-            .remove(KEY_CACHED_SCANS)
-            .apply()
-        Log.d(TAG, "🔥 Scans cache cleared")
-    }
-    
-    /**
-     * Clear scan cache untuk picklist tertentu
-     */
-    fun clearScansCacheForPicklist(picklistNo: String) {
-        Log.d(TAG, "🔥 Clearing scans cache untuk picklist: $picklistNo")
-        
-        try {
-            val cachedScans = getCachedScans()?.toMutableList() ?: mutableListOf()
-            
-            // Filter out scans untuk picklist ini
-            val filteredScans = cachedScans.filter { it.noPicklist != picklistNo }
-            
-            // Cache data yang sudah di-filter
-            cacheScans(filteredScans)
-            
-            val removedCount = cachedScans.size - filteredScans.size
-            Log.d(TAG, "🔥 Removed $removedCount scans untuk picklist: $picklistNo")
-            Log.d(TAG, "🔥 Remaining scans: ${filteredScans.size}")
-            
-        } catch (e: Exception) {
-            Log.e(TAG, "🔥 Error clearing scans cache untuk picklist: ${e.message}", e)
+            // Tidak ada data di cache atau expired, simpan sebagai data baru
+            allPicklistsCache = CacheEntry(newPicklists)
+            Log.d(TAG, "💾 Fresh cache for all picklists (${newPicklists.size} items)")
         }
     }
     
     /**
-     * Clear hanya overscan dan non-picklist dari cache
-     * Pertahankan scan yang valid untuk picklist tertentu
+     * Invalidate cache untuk picklist tertentu
+     * Digunakan saat ada perubahan data di Supabase
      */
-    fun clearOverscanAndNonPicklistFromCache(picklistNo: String) {
-        Log.d(TAG, "🔥 Clearing overscan dan non-picklist untuk picklist: $picklistNo")
+    suspend fun invalidatePicklist(picklistNumber: String) = cacheMutex.withLock {
+        picklistItemsCache.remove(picklistNumber)
+        picklistStatusCache.remove(picklistNumber)
+        processedEpcCache.remove(picklistNumber)
+        Log.d(TAG, "🗑️ Invalidated cache for picklist: $picklistNumber")
+    }
+    
+    /**
+     * Invalidate semua cache
+     * Digunakan saat ada perubahan besar di sistem
+     */
+    suspend fun invalidateAllCache() = cacheMutex.withLock {
+        picklistItemsCache.clear()
+        picklistStatusCache.clear()
+        processedEpcCache.clear()
+        allPicklistsCache = null
+        Log.d(TAG, "🗑️ Invalidated all cache")
+    }
+    
+    /**
+     * Get cache statistics untuk monitoring
+     */
+    suspend fun getCacheStats(): Map<String, Any> = cacheMutex.withLock {
+        val stats = mutableMapOf<String, Any>()
         
-        try {
-            val cachedScans = getCachedScans()?.toMutableList() ?: mutableListOf()
-            
-            // Filter hanya scan yang valid untuk picklist ini
-            val validScans = cachedScans.filter { scan ->
-                scan.noPicklist == picklistNo
+        stats["picklistItemsCacheSize"] = picklistItemsCache.size
+        stats["picklistStatusCacheSize"] = picklistStatusCache.size
+        stats["processedEpcCacheSize"] = processedEpcCache.size
+        stats["allPicklistsCacheExists"] = allPicklistsCache != null
+        
+        // Hitung expired entries
+        val now = System.currentTimeMillis()
+        val expiredPicklistItems = picklistItemsCache.count { it.value.isExpired() }
+        val expiredPicklistStatus = picklistStatusCache.count { it.value.isExpired() }
+        val expiredProcessedEpc = processedEpcCache.count { it.value.isExpired() }
+        
+        stats["expiredPicklistItems"] = expiredPicklistItems
+        stats["expiredPicklistStatus"] = expiredPicklistStatus
+        stats["expiredProcessedEpc"] = expiredProcessedEpc
+        
+        Log.d(TAG, "📊 Cache stats: $stats")
+        stats
+    }
+    
+    /**
+     * Cleanup expired entries untuk menghemat memory
+     */
+    suspend fun cleanupExpiredEntries() = cacheMutex.withLock {
+        val now = System.currentTimeMillis()
+        var cleanedCount = 0
+        
+        // Cleanup picklist items cache
+        val expiredPicklistItems = picklistItemsCache.filter { it.value.isExpired() }
+        expiredPicklistItems.forEach { picklistItemsCache.remove(it.key) }
+        cleanedCount += expiredPicklistItems.size
+        
+        // Cleanup picklist status cache
+        val expiredPicklistStatus = picklistStatusCache.filter { it.value.isExpired() }
+        expiredPicklistStatus.forEach { picklistStatusCache.remove(it.key) }
+        cleanedCount += expiredPicklistStatus.size
+        
+        // Cleanup processed EPC cache
+        val expiredProcessedEpc = processedEpcCache.filter { it.value.isExpired() }
+        expiredProcessedEpc.forEach { processedEpcCache.remove(it.key) }
+        cleanedCount += expiredProcessedEpc.size
+        
+        // Cleanup all picklists cache
+        if (allPicklistsCache?.isExpired() == true) {
+            allPicklistsCache = null
+            cleanedCount++
+        }
+        
+        Log.d(TAG, "🧹 Cleaned up $cleanedCount expired cache entries")
+    }
+    
+    /**
+     * Merge picklist numbers: gabungkan yang sudah ada dengan yang baru
+     */
+    private fun mergePicklistNumbers(existingPicklists: List<String>, newPicklists: List<String>): List<String> {
+        val mergedSet = existingPicklists.toMutableSet()
+        val addedCount = newPicklists.count { newPicklist ->
+            if (mergedSet.add(newPicklist)) {
+                Log.d(TAG, "➕ Added new picklist: $newPicklist")
+                true
+            } else {
+                Log.d(TAG, "✅ Picklist already exists: $newPicklist")
+                false
             }
-            
-            // Update cache dengan hanya scan yang valid
-            cacheScans(validScans)
-            
-            Log.d(TAG, "🔥 Overscan dan non-picklist cleared untuk picklist: $picklistNo")
-            Log.d(TAG, "   Before: ${cachedScans.size} scans")
-            Log.d(TAG, "   After: ${validScans.size} valid scans")
-            
-        } catch (e: Exception) {
-            Log.e(TAG, "🔥 Error clearing overscan dan non-picklist: ${e.message}", e)
-        }
-    }
-    
-    /**
-     * Update cache timestamp saat ada perubahan realtime
-     */
-    fun updateCacheTimestamp() {
-        setLastFetchTime(LocalDateTime.now())
-        Log.d(TAG, "🔥 Cache timestamp updated for realtime change")
-    }
-    
-    // ========== PICKLIST CACHE MANAGEMENT ==========
-    
-    /**
-     * Tambah picklist item baru ke cache (incremental update)
-     */
-    fun addPicklistItemToCache(newItem: PicklistItem) {
-        val existingItems = getCachedArticles()?.toMutableList() ?: mutableListOf()
-        
-        Log.d(TAG, "🔥 Adding picklist item to cache:")
-        Log.d(TAG, "   Existing items: ${existingItems.size}")
-        Log.d(TAG, "   New item: ${newItem.articleName} ${newItem.size}")
-        
-        // Tambahkan item baru
-        existingItems.add(newItem)
-        
-        // Cache data yang sudah di-update
-        cacheArticles(existingItems)
-        
-        Log.d(TAG, "🔥 Picklist item added to cache successfully")
-        Log.d(TAG, "   Total items after add: ${existingItems.size}")
-    }
-    
-    /**
-     * Update picklist item di cache
-     */
-    fun updatePicklistItemInCache(updatedItem: PicklistItem) {
-        val existingItems = getCachedArticles()?.toMutableList() ?: mutableListOf()
-        
-        Log.d(TAG, "🔥 Updating picklist item in cache:")
-        Log.d(TAG, "   Existing items: ${existingItems.size}")
-        Log.d(TAG, "   Updated item: ${updatedItem.articleName} ${updatedItem.size}")
-        
-        // Cari dan update item yang ada
-        val index = existingItems.indexOfFirst { 
-            it.articleId == updatedItem.articleId && 
-            it.size == updatedItem.size && 
-            it.noPicklist == updatedItem.noPicklist 
         }
         
-        if (index != -1) {
-            existingItems[index] = updatedItem
-            Log.d(TAG, "🔥 Picklist item updated in cache")
+        Log.d(TAG, "🔄 Merge result: ${existingPicklists.size} existing + $addedCount new = ${mergedSet.size} total")
+        return mergedSet.toList().sorted()
+    }
+    
+    /**
+     * Invalidate semua cache
+     */
+    suspend fun invalidateAll() = cacheMutex.withLock {
+        picklistItemsCache.clear()
+        picklistStatusCache.clear()
+        allPicklistsCache = null
+        Log.d(TAG, "🗑️ Invalidated all cache")
+    }
+    
+    /**
+     * Smart update - hanya update data yang berubah (EXTENDED status dihilangkan)
+     */
+    suspend fun smartUpdatePicklistItems(picklistNumber: String, newItems: List<PicklistItem>) = cacheMutex.withLock {
+        val existingEntry = picklistItemsCache[picklistNumber]
+        
+        if (existingEntry != null) {
+            if (!existingEntry.isExpired()) {
+                // Cache masih valid, lakukan incremental update
+                updatePicklistItemsIncremental(picklistNumber, newItems)
+            } else {
+                // Cache expired, simpan fresh data
+                picklistItemsCache[picklistNumber] = CacheEntry(newItems)
+                Log.d(TAG, "💾 Fresh cache (expired): $picklistNumber (${newItems.size} items)")
+            }
         } else {
-            // Jika tidak ditemukan, tambahkan sebagai item baru
-            existingItems.add(updatedItem)
-            Log.d(TAG, "🔥 Picklist item not found, added as new item")
+            // Tidak ada cache, simpan fresh data
+            picklistItemsCache[picklistNumber] = CacheEntry(newItems)
+            Log.d(TAG, "💾 Fresh cache (new): $picklistNumber (${newItems.size} items)")
         }
-        
-        // Cache data yang sudah di-update
-        cacheArticles(existingItems)
-        
-        Log.d(TAG, "🔥 Picklist item update in cache completed")
-        Log.d(TAG, "   Total items after update: ${existingItems.size}")
     }
     
     /**
-     * Hapus picklist item dari cache
+     * Find items yang berubah antara existing dan new data
      */
-    fun removePicklistItemFromCache(itemToRemove: PicklistItem) {
-        val existingItems = getCachedArticles()?.toMutableList() ?: mutableListOf()
+    private fun findChangedItems(existing: List<PicklistItem>, new: List<PicklistItem>): List<PicklistItem> {
+        val existingMap = existing.associateBy { "${it.articleId}_${it.size}" }
+        val changedItems = mutableListOf<PicklistItem>()
         
-        Log.d(TAG, "🔥 Removing picklist item from cache:")
-        Log.d(TAG, "   Existing items: ${existingItems.size}")
-        Log.d(TAG, "   Item to remove: ${itemToRemove.articleName} ${itemToRemove.size}")
-        
-        // Hapus item yang sesuai
-        val removed = existingItems.removeAll { 
-            it.articleId == itemToRemove.articleId && 
-            it.size == itemToRemove.size && 
-            it.noPicklist == itemToRemove.noPicklist 
+        new.forEach { newItem ->
+            val key = "${newItem.articleId}_${newItem.size}"
+            val existingItem = existingMap[key]
+            
+            if (existingItem == null) {
+                // Item baru
+                changedItems.add(newItem)
+            } else if (existingItem.qtyScan != newItem.qtyScan || 
+                      existingItem.qtyPl != newItem.qtyPl ||
+                      existingItem.tagStatus != newItem.tagStatus) {
+                // Item berubah
+                changedItems.add(newItem)
+            }
         }
         
-        if (removed) {
-            Log.d(TAG, "🔥 Picklist item removed from cache")
-        } else {
-            Log.d(TAG, "🔥 Picklist item not found in cache")
-        }
-        
-        // Cache data yang sudah di-update
-        cacheArticles(existingItems)
-        
-        Log.d(TAG, "🔥 Picklist item removal from cache completed")
-        Log.d(TAG, "   Total items after removal: ${existingItems.size}")
+        return changedItems
     }
     
     /**
-     * Tambah picklist baru ke cache (incremental update)
+     * Real-time update detection - cek apakah ada perubahan data di Supabase
      */
-    fun addPicklistToCache(newPicklist: String) {
-        val existingPicklists = getCachedPicklists()?.toMutableList() ?: mutableListOf()
+    suspend fun detectDataChanges(picklistNumber: String, newItems: List<PicklistItem>): ChangeDetectionResult {
+        val existingEntry = picklistItemsCache[picklistNumber]
         
-        Log.d(TAG, "🔥 Adding picklist to cache:")
-        Log.d(TAG, "   Existing picklists: ${existingPicklists.size}")
-        Log.d(TAG, "   New picklist: $newPicklist")
-        
-        // Tambahkan picklist baru jika belum ada
-        if (!existingPicklists.contains(newPicklist)) {
-            existingPicklists.add(newPicklist)
-            
-            // Cache data yang sudah di-update
-            cachePicklists(existingPicklists)
-            
-            Log.d(TAG, "🔥 Picklist added to cache successfully")
-            Log.d(TAG, "   Total picklists after add: ${existingPicklists.size}")
-        } else {
-            Log.d(TAG, "🔥 Picklist already exists in cache")
+        if (existingEntry == null) {
+            return ChangeDetectionResult(
+                hasChanges = true,
+                changeType = "NEW_DATA",
+                changedItems = newItems,
+                totalItems = newItems.size
+            )
         }
+        
+        val existingItems = existingEntry.data
+        val changedItems = findChangedItems(existingItems, newItems)
+        
+        return ChangeDetectionResult(
+            hasChanges = changedItems.isNotEmpty(),
+            changeType = if (changedItems.isEmpty()) "NO_CHANGES" else "UPDATED_DATA",
+            changedItems = changedItems,
+            totalItems = newItems.size,
+            existingItems = existingItems.size
+        )
+    }
+    
+    /**
+     * Data class untuk hasil deteksi perubahan
+     */
+    data class ChangeDetectionResult(
+        val hasChanges: Boolean,
+        val changeType: String, // "NEW_DATA", "UPDATED_DATA", "NO_CHANGES"
+        val changedItems: List<PicklistItem>,
+        val totalItems: Int,
+        val existingItems: Int = 0
+    )
+    
+    /**
+     * Auto-refresh dengan polling untuk mendeteksi perubahan data di Supabase
+     * Dengan TTL 15 jam, polling interval bisa lebih jarang
+     */
+    suspend fun startAutoRefresh(
+        picklistNumber: String,
+        refreshIntervalMs: Long = 5 * 60 * 1000L, // 5 menit (disesuaikan dengan TTL 15 jam)
+        maxRefreshCount: Int = 10, // Maksimal 10 kali refresh
+        onDataChanged: (ChangeDetectionResult) -> Unit
+    ) {
+        var refreshCount = 0
+        
+        while (refreshCount < maxRefreshCount) {
+            try {
+                // Simulasi fetch data dari Supabase (dalam implementasi nyata, ini akan memanggil Repository)
+                // val freshData = repository.getPicklistItems(picklistNumber)
+                
+                // Untuk demo, kita skip implementasi nyata
+                Log.d(TAG, "🔄 Auto-refresh check #${refreshCount + 1} for: $picklistNumber")
+                
+                // Tunggu interval sebelum refresh berikutnya
+                kotlinx.coroutines.delay(refreshIntervalMs)
+                refreshCount++
+                
+            } catch (e: Exception) {
+                Log.e(TAG, "❌ Auto-refresh error: ${e.message}")
+                break
+            }
+        }
+        
+        Log.d(TAG, "⏹️ Auto-refresh completed for: $picklistNumber (${refreshCount} checks)")
+    }
+    
+    /**
+     * Refresh cache secara manual untuk picklist tertentu (EXTENDED status dihilangkan)
+     * Method ini tetap ada untuk kompatibilitas tapi tidak menggunakan extension logic
+     */
+    suspend fun extendCache(picklistNumber: String, extensionMs: Long = 0L) = cacheMutex.withLock {
+        val entry = picklistItemsCache[picklistNumber]
+        if (entry != null && !entry.isExpired()) {
+            // Refresh cache dengan timestamp baru (tidak ada extension)
+            picklistItemsCache[picklistNumber] = CacheEntry(entry.data)
+            Log.d(TAG, "🔄 Cache refreshed for: $picklistNumber (no extension)")
+            return@withLock true
+        }
+        Log.d(TAG, "❌ Cannot refresh cache for: $picklistNumber (not found or expired)")
+        return@withLock false
+    }
+    
+    /**
+     * Force refresh cache untuk picklist tertentu (bypass cache)
+     */
+    suspend fun forceRefreshCache(picklistNumber: String) = cacheMutex.withLock {
+        picklistItemsCache.remove(picklistNumber)
+        Log.d(TAG, "🔄 Cache force refreshed for: $picklistNumber")
+    }
+    
+    /**
+     * Clear expired entries
+     */
+    suspend fun clearExpiredEntries() = cacheMutex.withLock {
+        val now = System.currentTimeMillis()
+        
+        // Clear expired picklist items
+        picklistItemsCache.entries.removeAll { it.value.isExpired() }
+        
+        // Clear expired picklist statuses
+        picklistStatusCache.entries.removeAll { it.value.isExpired() }
+        
+        // Clear expired all picklists
+        if (allPicklistsCache?.isExpired() == true) {
+            allPicklistsCache = null
+        }
+        
+        Log.d(TAG, "🧹 Cleared expired cache entries")
+    }
+    
+    /**
+     * Estimate memory usage (rough calculation)
+     */
+    private fun estimateMemoryUsage(): Long {
+        var totalSize = 0L
+        
+        // Estimate picklist items cache size
+        picklistItemsCache.values.forEach { entry ->
+            totalSize += entry.data.size * 200L // Rough estimate per item
+        }
+        
+        // Estimate picklist status cache size
+        totalSize += picklistStatusCache.size * 100L // Rough estimate per status
+        
+        // Estimate all picklists cache size
+        allPicklistsCache?.let { entry ->
+            totalSize += entry.data.size * 50L // Rough estimate per picklist number
+        }
+        
+        return totalSize
+    }
+    
+    /**
+     * Cache statistics data class
+     */
+    data class CacheStats(
+        val picklistItemsCount: Int,
+        val picklistStatusCount: Int,
+        val hasAllPicklists: Boolean,
+        val totalMemoryUsage: Long,
+        val freshCount: Int = 0,
+        val staleCount: Int = 0,
+        val expiredCount: Int = 0
+    )
+    
+    /**
+     * Get detailed cache statistics
+     */
+    suspend fun getDetailedCacheStats(): CacheStats = cacheMutex.withLock {
+        val picklistItemsCount = picklistItemsCache.size
+        val picklistStatusCount = picklistStatusCache.size
+        val hasAllPicklists = allPicklistsCache != null
+        val totalMemoryUsage = estimateMemoryUsage()
+        
+        // Hitung status cache (EXTENDED dihilangkan)
+        var freshCount = 0
+        var staleCount = 0
+        var expiredCount = 0
+        
+        picklistItemsCache.values.forEach { entry ->
+            when (entry.getFreshnessStatus()) {
+                "FRESH" -> freshCount++
+                "STALE" -> staleCount++
+                "EXPIRED" -> expiredCount++
+            }
+        }
+        
+        CacheStats(
+            picklistItemsCount = picklistItemsCount,
+            picklistStatusCount = picklistStatusCount,
+            hasAllPicklists = hasAllPicklists,
+            totalMemoryUsage = totalMemoryUsage,
+            freshCount = freshCount,
+            staleCount = staleCount,
+            expiredCount = expiredCount
+        )
     }
 }

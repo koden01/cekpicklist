@@ -69,28 +69,19 @@ class PicklistSelectionAdapter(
     inner class PicklistViewHolder(itemView: View) : RecyclerView.ViewHolder(itemView) {
         private val tvPicklistNumber: TextView = itemView.findViewById(R.id.tvPicklistNumber)
         private val tvPicklistInfo: TextView = itemView.findViewById(R.id.tvPicklistInfo)
-        private val ivPicklistIcon: ImageView = itemView.findViewById(R.id.ivPicklistIcon)
-        private val iconBackground: FrameLayout = itemView.findViewById(R.id.flIconBackground)
 
         fun bind(picklistStatus: PicklistStatus, searchQuery: String = "") {
             tvPicklistNumber.text = picklistStatus.picklistNumber
             
-            // Set icon dan warna berdasarkan status scan dengan detail selesai/sisa
+            // Set warna dan keterangan berdasarkan status scan (tanpa icon)
             if (picklistStatus.isScanned) {
-                // Picklist sudah pernah di-scan
-                ivPicklistIcon.setImageResource(R.drawable.ic_check_circle_green)
-                ivPicklistIcon.visibility = View.VISIBLE
-                
-                // Set background icon dengan warna hijau
-                iconBackground.setBackgroundResource(R.drawable.ic_status_background_green)
-                
-                // Set warna teks untuk menunjukkan sudah di-scan
+                // Picklist sudah pernah di-scan - set warna hijau
                 tvPicklistNumber.setTextColor(itemView.context.getColor(android.R.color.holo_green_dark))
                 
                 // Set info detail berdasarkan status completion
                 val statusText = when {
                     picklistStatus.remainingQty == 0 && picklistStatus.overscanQty == 0 -> "✅ Selesai"
-                    picklistStatus.remainingQty == 0 && picklistStatus.overscanQty > 0 -> "⚠️ Overscan (+${picklistStatus.overscanQty})"
+                    picklistStatus.remainingQty == 0 && picklistStatus.overscanQty > 0 -> "⚠️ Overscan"
                     picklistStatus.remainingQty > 0 -> "⚠️ Sisa ${picklistStatus.remainingQty} qty"
                     else -> "✅ Sudah di-scan"
                 }
@@ -99,14 +90,7 @@ class PicklistSelectionAdapter(
                 tvPicklistInfo.setTextColor(itemView.context.getColor(android.R.color.holo_green_dark))
                 
             } else {
-                // Picklist belum pernah di-scan sama sekali
-                ivPicklistIcon.setImageResource(R.drawable.ic_arrow_down)
-                ivPicklistIcon.visibility = View.VISIBLE
-                
-                // Set background icon default
-                iconBackground.setBackgroundResource(R.drawable.ic_status_background)
-                
-                // Set warna teks default
+                // Picklist belum pernah di-scan sama sekali - set warna default
                 tvPicklistNumber.setTextColor(itemView.context.getColor(android.R.color.black))
                 
                 // Set info untuk belum scan sama sekali
@@ -116,7 +100,7 @@ class PicklistSelectionAdapter(
             
             // Set click listener dengan optimasi
             itemView.setOnClickListener {
-                Logger.Adapter.itemClicked(adapterPosition, picklistStatus.picklistNumber)
+                Logger.Adapter.itemClicked(bindingAdapterPosition, picklistStatus.picklistNumber)
                 onPicklistSelected(picklistStatus.picklistNumber)
             }
         }

@@ -5,7 +5,7 @@ import android.util.Log
 import androidx.multidex.MultiDex
 import androidx.multidex.MultiDexApplication
 import com.example.cekpicklist.utils.ToastUtils
-import com.example.cekpicklist.utils.PerformanceOptimizer
+// import com.example.cekpicklist.utils.PerformanceOptimizer
 
 class CekPicklistApplication : MultiDexApplication() {
     
@@ -19,8 +19,7 @@ class CekPicklistApplication : MultiDexApplication() {
         // Initialize MultiDex untuk mengatasi masalah classloader
         MultiDex.install(this)
         
-        // Initialize performance optimizer
-        PerformanceOptimizer.initialize(this)
+        // Performance optimizer di-nonaktifkan (module dihapus)
         
         // Reset toast counter saat aplikasi dimulai
         ToastUtils.resetToastCounter()
@@ -48,7 +47,6 @@ class CekPicklistApplication : MultiDexApplication() {
     
     override fun onTerminate() {
         super.onTerminate()
-        // Cleanup performance optimizer
-        PerformanceOptimizer.cleanup()
+        // Performance optimizer di-nonaktifkan (module dihapus)
     }
 }

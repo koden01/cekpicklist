@@ -18,7 +18,6 @@ class SettingsActivity : AppCompatActivity() {
         private const val PREFS_NAME = "RFIDSettings"
         private const val KEY_POWER_LEVEL = "power_level"
         private const val KEY_RSSI_THRESHOLD = "rssi_threshold"
-        private const val KEY_RSSI_DEBUG_MODE = "rssi_debug_mode"
         private const val DEFAULT_POWER_LEVEL = 20 // Default power level 20
         private const val DEFAULT_RSSI_THRESHOLD = -70 // Default RSSI threshold -70 dBm
         private const val MIN_POWER_LEVEL = 1
@@ -41,8 +40,10 @@ class SettingsActivity : AppCompatActivity() {
         setupToolbar()
         setupPowerSlider()
         setupRSSISlider()
-        // setupRSSIDebugMode() - dihilangkan
         // setupButtons() - dihilangkan
+        
+        // Hapus RSSI Debug Mode dari SharedPreferences jika ada
+        removeRSSIDebugMode()
         
         Log.d("SettingsActivity", "🔥 SettingsActivity onCreate selesai")
     }
@@ -98,7 +99,19 @@ class SettingsActivity : AppCompatActivity() {
         })
     }
     
-    // setupRSSIDebugMode() dihilangkan
+    /**
+     * Hapus RSSI Debug Mode dari SharedPreferences
+     */
+    private fun removeRSSIDebugMode() {
+        try {
+            if (sharedPreferences.contains("rssi_debug_mode")) {
+                sharedPreferences.edit().remove("rssi_debug_mode").apply()
+                Log.d("SettingsActivity", "🔥 RSSI Debug Mode dihapus dari SharedPreferences")
+            }
+        } catch (e: Exception) {
+            Log.e("SettingsActivity", "🔥 Error removing RSSI Debug Mode: ${e.message}")
+        }
+    }
     
     private fun setupRSSISlider() {
         // Load saved RSSI threshold

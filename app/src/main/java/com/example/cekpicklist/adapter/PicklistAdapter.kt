@@ -27,8 +27,16 @@ class PicklistAdapter : RecyclerView.Adapter<PicklistAdapter.ViewHolder>() {
     }
     
     fun updateItems(newItems: List<PicklistItem>) {
+        val oldSize = items.size
         items = newItems
-        notifyDataSetChanged()
+        
+        if (oldSize == 0) {
+            notifyItemRangeInserted(0, newItems.size)
+        } else if (newItems.size == 0) {
+            notifyItemRangeRemoved(0, oldSize)
+        } else {
+            notifyDataSetChanged() // Fallback for complex changes
+        }
     }
     
     override fun onCreateViewHolder(parent: ViewGroup, viewType: Int): ViewHolder {
@@ -62,12 +70,8 @@ class PicklistAdapter : RecyclerView.Adapter<PicklistAdapter.ViewHolder>() {
             tvSize.text = item.size
             tvQtyPl.text = item.qtyPl.toString()
             
-            // **PERBAIKAN**: Tampilkan RFID detect qty dengan informasi overscan
+            // **PERBAIKAN**: Tampilkan RFID detect qty tanpa format overscan (+1)
             val qtyScanText = when {
-                item.qtyScan > item.qtyPl -> {
-                    val overscan = item.qtyScan - item.qtyPl
-                    "${item.qtyScan} (+$overscan)"
-                }
                 item.qtyScan == item.qtyPl && item.qtyPl > 0 -> {
                     "${item.qtyScan} ✓"
                 }
@@ -115,22 +119,25 @@ class PicklistAdapter : RecyclerView.Adapter<PicklistAdapter.ViewHolder>() {
             
             when (status) {
                 QtyStatus.RED -> {
-                    // Reset background ke default
+                    // Show entire row untuk item yang kurang
+                    itemView.visibility = View.VISIBLE
+                    tvQtyScan.visibility = View.VISIBLE
                     tvQtyScan.background = null
                     tvQtyScan.setTextColor(Color.RED)
                     android.util.Log.d("PicklistAdapter", "🔥 Set RED color untuk: ${item.articleName}")
                 }
                 QtyStatus.YELLOW -> {
-                    // Reset background ke default
+                    // Show entire row untuk item yang overscan/non-picklist
+                    itemView.visibility = View.VISIBLE
+                    tvQtyScan.visibility = View.VISIBLE
                     tvQtyScan.background = null
                     tvQtyScan.setTextColor(Color.parseColor("#FFCC00")) // Kuning
                     android.util.Log.d("PicklistAdapter", "🔥 Set YELLOW color untuk: ${item.articleName}")
                 }
                 QtyStatus.GREEN -> {
-                    // Reset background ke default
-                    tvQtyScan.background = null
-                    tvQtyScan.setTextColor(Color.parseColor("#4CAF50")) // Hijau
-                    android.util.Log.d("PicklistAdapter", "🔥 Set GREEN color untuk: ${item.articleName}")
+                    // Hide entire row untuk item yang sudah complete (sesuai)
+                    itemView.visibility = View.GONE
+                    android.util.Log.d("PicklistAdapter", "🔥 Hide entire row untuk: ${item.articleName} (GREEN/Complete)")
                 }
             }
             

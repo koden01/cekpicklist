@@ -1,6 +1,7 @@
 plugins {
     alias(libs.plugins.android.application)
     alias(libs.plugins.kotlin.android)
+    // id("kotlin-kapt") // Disabled sementara untuk Room Database
 }
 
 android {
@@ -22,10 +23,15 @@ android {
 
     buildTypes {
         debug {
-            isMinifyEnabled = false
+            isMinifyEnabled = true
+            isShrinkResources = true
             isDebuggable = true
             applicationIdSuffix = ".debug"
             versionNameSuffix = "-debug"
+            proguardFiles(
+                getDefaultProguardFile("proguard-android-optimize.txt"),
+                "proguard-rules.pro"
+            )
         }
         release {
             isMinifyEnabled = true
@@ -78,11 +84,6 @@ dependencies {
     implementation("androidx.lifecycle:lifecycle-viewmodel-ktx:2.7.0")
     implementation("androidx.lifecycle:lifecycle-livedata-ktx:2.7.0")
     
-    // Networking
-    implementation("com.squareup.retrofit2:retrofit:2.9.0")
-    implementation("com.squareup.retrofit2:converter-gson:2.9.0")
-    implementation("com.squareup.okhttp3:logging-interceptor:4.12.0")
-    
     // Coroutines
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-android:1.7.3")
     implementation("org.jetbrains.kotlinx:kotlinx-coroutines-core:1.7.3")
@@ -91,27 +92,18 @@ dependencies {
     implementation("androidx.recyclerview:recyclerview:1.3.2")
     implementation("androidx.swiperefreshlayout:swiperefreshlayout:1.1.0")
     
+    // JSON Parsing
+    implementation("com.google.code.gson:gson:2.10.1")
+    
+    // Media3 ExoPlayer untuk video splash screen
+    implementation("androidx.media3:media3-exoplayer:1.2.0")
+    implementation("androidx.media3:media3-ui:1.2.0")
+    implementation("androidx.media3:media3-common:1.2.0")
+    
+    // Room Database untuk cache persistence - DISABLED sementara
+    // implementation("androidx.room:room-runtime:2.6.1")
+    // implementation("androidx.room:room-ktx:2.6.1")
+    
     // RFID SDK
     implementation(files("libs/DeviceAPI_ver20250209_release.aar"))
-    
-    // Supabase-KT Dependencies
-    implementation("io.github.jan-tennert.supabase:supabase-kt:2.4.0")
-    implementation("io.github.jan-tennert.supabase:realtime-kt:2.4.0")
-    implementation("io.github.jan-tennert.supabase:postgrest-kt:2.4.0")
-    implementation("io.github.jan-tennert.supabase:gotrue-kt:2.4.0")
-    
-    // Serialization
-    implementation("org.jetbrains.kotlinx:kotlinx-serialization-json:1.6.2")
-    
-    // HTTP Client Engine untuk Supabase-KT (Android)
-    implementation("io.ktor:ktor-client-android:2.3.7")
-    implementation("io.ktor:ktor-client-core:2.3.7")
-    implementation("io.ktor:ktor-client-cio:2.3.7")
-    implementation("io.ktor:ktor-client-logging:2.3.7")
-    implementation("io.ktor:ktor-client-content-negotiation:2.3.7")
-    implementation("io.ktor:ktor-serialization-kotlinx-json:2.3.7")
-    
-    // Networking (untuk implementasi Supabase manual)
-    implementation("com.squareup.okhttp3:okhttp:4.12.0")
-    implementation("com.google.code.gson:gson:2.10.1")
 }
