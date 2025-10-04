@@ -218,19 +218,9 @@ class SettingsActivity : AppCompatActivity() {
     private fun setupUpdateCheck() {
         Log.d("SettingsActivity", "🔥 setupUpdateCheck() called")
         
-        // Check if update check button exists in layout
-        try {
-            val updateButton = findViewById<android.widget.Button>(R.id.btnCheckUpdate)
-            if (updateButton != null) {
-                updateButton.setOnClickListener {
-                    Log.d("SettingsActivity", "🔥 Manual update check triggered")
-                    updateChecker.checkForUpdates(forceCheck = true)
-                    ToastUtils.showToast(this, "🔄 Checking for updates...")
-                }
-            }
-        } catch (e: Exception) {
-            Log.d("SettingsActivity", "Update check button not found in layout: ${e.message}")
-        }
+        // Update check functionality is available but no UI button in current layout
+        // This can be extended in the future if needed
+        Log.d("SettingsActivity", "Update checker initialized - manual check available via code")
     }
     
     override fun onBackPressed() {

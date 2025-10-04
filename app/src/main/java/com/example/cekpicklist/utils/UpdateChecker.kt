@@ -108,7 +108,7 @@ class UpdateChecker(private val context: Context) {
     private fun getCurrentVersion(): String {
         return try {
             val packageInfo = context.packageManager.getPackageInfo(context.packageName, 0)
-            packageInfo.versionName
+            packageInfo.versionName ?: "1.0.0"
         } catch (e: PackageManager.NameNotFoundException) {
             Log.e(TAG, "Package not found: ${e.message}", e)
             "1.0.0"
