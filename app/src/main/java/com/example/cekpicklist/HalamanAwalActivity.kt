@@ -46,6 +46,7 @@ class HalamanAwalActivity : AppCompatActivity() {
         setupErrorObserver()
         setupCardClicks()
         setupRelocationCard()
+        setupVersionDisplay()
         
         // Load picklists dengan optimasi
         viewModel.loadPicklistsOptimized()
@@ -157,6 +158,19 @@ class HalamanAwalActivity : AppCompatActivity() {
         Logger.PicklistInput.d("Navigating to RelocationActivity")
         val intent = Intent(this, RelocationActivity::class.java)
         startActivity(intent)
+    }
+    
+    private fun setupVersionDisplay() {
+        Logger.PicklistInput.d("setupVersionDisplay() called")
+        
+        try {
+            val versionName = packageManager.getPackageInfo(packageName, 0).versionName
+            binding.tvVersion.text = "Version $versionName"
+            Logger.PicklistInput.d("Version displayed: $versionName")
+        } catch (e: Exception) {
+            Logger.PicklistInput.e("Error getting version: ${e.message}")
+            binding.tvVersion.text = "Version Unknown"
+        }
     }
     
     /**

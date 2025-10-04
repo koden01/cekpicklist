@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="utf-8"?>
+<shape xmlns:android="http://schemas.android.com/apk/res/android"
+    android:shape="oval">
+    
+    <!-- Gradient untuk glow effect -->
+    <gradient
+        android:type="radial"
+        android:gradientRadius="110dp"
+        android:centerX="0.5"
+        android:centerY="0.5"
+        android:startColor="#66FFFFFF"
+        android:centerColor="#33FFFFFF"
+        android:endColor="#00FFFFFF" />
+    
+    <!-- Stroke untuk border glow -->
+    <stroke
+        android:width="2dp"
+        android:color="#66FFFFFF" />
+        
+</shape>

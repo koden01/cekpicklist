@@ -1,0 +1,64 @@
+<?xml version="1.0" encoding="utf-8"?>
+<vector xmlns:android="http://schemas.android.com/apk/res/android"
+    android:width="200dp"
+    android:height="200dp"
+    android:viewportWidth="200"
+    android:viewportHeight="200">
+
+    <!-- Background Circle dengan Gradient -->
+    <path
+        android:fillColor="@color/success_color"
+        android:pathData="M100,100 m-90,0 a90,90 0,1 1,180 0 a90,90 0,1 1,-180 0" />
+
+    <!-- Inner Circle untuk 3D Effect -->
+    <path
+        android:fillColor="#66FFFFFF"
+        android:pathData="M100,100 m-80,0 a80,80 0,1 1,160 0 a80,80 0,1 1,-160 0" />
+
+    <!-- Face Circle -->
+    <path
+        android:fillColor="#FFFFFF"
+        android:pathData="M100,100 m-70,0 a70,70 0,1 1,140 0 a70,70 0,1 1,-140 0" />
+
+    <!-- Left Eye -->
+    <path
+        android:fillColor="#000000"
+        android:pathData="M75,75 m-8,0 a8,8 0,1 1,16 0 a8,8 0,1 1,-16 0" />
+
+    <!-- Right Eye -->
+    <path
+        android:fillColor="#000000"
+        android:pathData="M125,75 m-8,0 a8,8 0,1 1,16 0 a8,8 0,1 1,-16 0" />
+
+    <!-- Eye Highlights -->
+    <path
+        android:fillColor="#FFFFFF"
+        android:pathData="M78,72 m-2,0 a2,2 0,1 1,4 0 a2,2 0,1 1,-4 0" />
+    <path
+        android:fillColor="#FFFFFF"
+        android:pathData="M128,72 m-2,0 a2,2 0,1 1,4 0 a2,2 0,1 1,-4 0" />
+
+    <!-- Smile Mouth -->
+    <path
+        android:fillColor="#000000"
+        android:strokeColor="#000000"
+        android:strokeWidth="4"
+        android:strokeLineCap="round"
+        android:pathData="M85,110 Q100,130 115,110" />
+
+    <!-- Left Cheek -->
+    <path
+        android:fillColor="#FFB3BA"
+        android:pathData="M60,100 m-5,0 a5,5 0,1 1,10 0 a5,5 0,1 1,-10 0" />
+
+    <!-- Right Cheek -->
+    <path
+        android:fillColor="#FFB3BA"
+        android:pathData="M140,100 m-5,0 a5,5 0,1 1,10 0 a5,5 0,1 1,-10 0" />
+
+    <!-- Glow Effect -->
+    <path
+        android:fillColor="#33FFFFFF"
+        android:pathData="M100,100 m-90,0 a90,90 0,1 1,180 0 a90,90 0,1 1,-180 0" />
+
+</vector>
