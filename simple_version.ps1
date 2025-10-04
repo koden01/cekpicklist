@@ -61,8 +61,8 @@ try {
     
     Write-Host "✅ Updated build.gradle.kts" -ForegroundColor Green
     
-    # Write new version to file for batch script
-    Set-Content "version.txt" $newVersionName -Encoding UTF8
+    # Write new version to file for batch script (without BOM)
+    [System.IO.File]::WriteAllText("version.txt", $newVersionName)
     
     Write-Host "✅ Versioning completed successfully" -ForegroundColor Green
     
