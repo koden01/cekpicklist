@@ -20,11 +20,13 @@ import com.example.cekpicklist.utils.ToastUtils
 import com.example.cekpicklist.viewmodel.ScanViewModel
 import com.example.cekpicklist.viewmodel.ScanViewModelFactory
 import com.example.cekpicklist.utils.LoadingAnimationHelper
+import com.example.cekpicklist.utils.UpdateChecker
 
 class HalamanAwalActivity : AppCompatActivity() {
     
     private lateinit var binding: ActivityHalamanAwalBinding
     private lateinit var viewModel: ScanViewModel
+    private lateinit var updateChecker: UpdateChecker
     
     // Dialog references for proper cleanup
     private var activeDialog: androidx.appcompat.app.AlertDialog? = null
@@ -40,6 +42,9 @@ class HalamanAwalActivity : AppCompatActivity() {
         // Initialize ViewModel
         viewModel = ViewModelProvider(this, ScanViewModelFactory(application))[ScanViewModel::class.java]
         
+        // Initialize Update Checker
+        updateChecker = UpdateChecker(this)
+        
         // Setup UI
         setupSwipeRefresh()
         setupPicklistObserver()
@@ -50,6 +55,9 @@ class HalamanAwalActivity : AppCompatActivity() {
         
         // Load picklists dengan optimasi
         viewModel.loadPicklistsOptimized()
+        
+        // Check for updates (non-blocking)
+        checkForUpdates()
     }
     
     private fun setupSwipeRefresh() {
@@ -170,6 +178,19 @@ class HalamanAwalActivity : AppCompatActivity() {
         } catch (e: Exception) {
             Logger.PicklistInput.e("Error getting version: ${e.message}")
             binding.tvVersion.text = "Version Unknown"
+        }
+    }
+    
+    /**
+     * Check for app updates
+     */
+    private fun checkForUpdates() {
+        Logger.PicklistInput.d("checkForUpdates() called")
+        
+        if (!updateChecker.isUpdateCheckDisabled()) {
+            updateChecker.checkForUpdates()
+        } else {
+            Logger.PicklistInput.d("Update check is disabled by user")
         }
     }
     

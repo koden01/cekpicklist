@@ -8,11 +8,13 @@ import android.widget.TextView
 import androidx.appcompat.app.AppCompatActivity
 import com.example.cekpicklist.databinding.ActivitySettingsBinding
 import com.example.cekpicklist.utils.ToastUtils
+import com.example.cekpicklist.utils.UpdateChecker
 
 class SettingsActivity : AppCompatActivity() {
     
     private lateinit var binding: ActivitySettingsBinding
     private lateinit var sharedPreferences: SharedPreferences
+    private lateinit var updateChecker: UpdateChecker
     
     companion object {
         private const val PREFS_NAME = "RFIDSettings"
@@ -37,9 +39,13 @@ class SettingsActivity : AppCompatActivity() {
         // Initialize SharedPreferences
         sharedPreferences = getSharedPreferences(PREFS_NAME, MODE_PRIVATE)
         
+        // Initialize Update Checker
+        updateChecker = UpdateChecker(this)
+        
         setupToolbar()
         setupPowerSlider()
         setupRSSISlider()
+        setupUpdateCheck()
         // setupButtons() - dihilangkan
         
         // Hapus RSSI Debug Mode dari SharedPreferences jika ada
@@ -208,6 +214,24 @@ class SettingsActivity : AppCompatActivity() {
     }
     
     // resetToDefault() dan applySettings() dihilangkan - menggunakan auto-apply
+    
+    private fun setupUpdateCheck() {
+        Log.d("SettingsActivity", "🔥 setupUpdateCheck() called")
+        
+        // Check if update check button exists in layout
+        try {
+            val updateButton = findViewById<android.widget.Button>(R.id.btnCheckUpdate)
+            if (updateButton != null) {
+                updateButton.setOnClickListener {
+                    Log.d("SettingsActivity", "🔥 Manual update check triggered")
+                    updateChecker.checkForUpdates(forceCheck = true)
+                    ToastUtils.showToast(this, "🔄 Checking for updates...")
+                }
+            }
+        } catch (e: Exception) {
+            Log.d("SettingsActivity", "Update check button not found in layout: ${e.message}")
+        }
+    }
     
     override fun onBackPressed() {
         Log.d("SettingsActivity", "🔥 Back pressed")
