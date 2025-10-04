@@ -1,0 +1,57 @@
+name: PowerShell Release Workflow
+
+on:
+  workflow_dispatch:
+    inputs:
+      version_type:
+        description: 'Jenis update versi'
+        required: true
+        default: 'patch'
+        type: choice
+        options:
+        - patch
+        - minor
+        - major
+      release_notes:
+        description: 'Release notes (opsional)'
+        required: false
+        type: string
+
+jobs:
+  powershell-release:
+    runs-on: windows-latest
+    
+    steps:
+    - name: Checkout code
+      uses: actions/checkout@v4
+      with:
+        token: ${{ secrets.GITHUB_TOKEN }}
+        fetch-depth: 0
+    
+    - name: Setup Java
+      uses: actions/setup-java@v4
+      with:
+        java-version: '17'
+        distribution: 'temurin'
+    
+    - name: Setup Android SDK
+      uses: android-actions/setup-android@v3
+    
+    - name: Run PowerShell Release Script
+      shell: pwsh
+      run: |
+        $versionType = "${{ github.event.inputs.version_type }}"
+        $releaseNotes = "${{ github.event.inputs.release_notes }}"
+        
+        if ([string]::IsNullOrEmpty($releaseNotes)) {
+          .\release_working.bat -VersionType $versionType
+        } else {
+          .\release_working.bat -VersionType $versionType -ReleaseNotes $releaseNotes
+        }
+    
+    - name: Upload APK Artifact
+      uses: actions/upload-artifact@v4
+      with:
+        name: cekpicklist-apk
+        path: CekPicklist-v*-release.apk
+        retention-days: 30
