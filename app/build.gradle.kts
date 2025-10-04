@@ -23,7 +23,7 @@ android {
         minSdk = 30
         targetSdk = 35
         versionCode = 4
-        versionName = "3.0.0"
+        versionName = "4.0.0"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         
@@ -115,6 +115,7 @@ dependencies {
     // RFID SDK
     implementation(files("libs/DeviceAPI_ver20250209_release.aar"))
 }
+
 
 
 
