@@ -1618,17 +1618,17 @@ class ScanViewModel(application: Application) : AndroidViewModel(application) {
                 globalBackgroundReloadJob?.cancel()
                 globalBackgroundReloadJob = null
                 
-                // **PERBAIKAN KRITIS**: Simpan data yang valid ke Supabase menggunakan TRUE BACKGROUND processing
+                // **PERBAIKAN KRITIS**: Simpan HANYA data yang valid ke Supabase menggunakan TRUE BACKGROUND processing
                 // Gunakan GlobalScope untuk mencegah interference dengan activity lifecycle
-                Log.d("ScanViewModel", "🔥 Starting TRUE BACKGROUND save to Supabase...")
-                Log.d("ScanViewModel", "🔥 This will NOT interfere with ongoing scanning")
+                Log.d("ScanViewModel", "🔥 Starting TRUE BACKGROUND save to Supabase (VALID DATA ONLY)...")
+                Log.d("ScanViewModel", "🔥 Overscan dan Non-picklist data akan DIBUANG, tidak disimpan")
                 
                 // **PERBAIKAN KRITIS**: Gunakan GlobalScope agar proses save tidak ikut di-cancel
                 // saat user keluar dari activity
                 GlobalScope.launch(Dispatchers.IO) {
                     try {
                         saveValidDataToSupabaseBatch()
-                        Log.d("ScanViewModel", "✅ Background save completed successfully")
+                        Log.d("ScanViewModel", "✅ Background save completed successfully - only valid data saved")
                         
                         // **PERBAIKAN KRITIS**: Clear data SETELAH save selesai
                         withContext(Dispatchers.Main) {
@@ -2179,7 +2179,7 @@ class ScanViewModel(application: Application) : AndroidViewModel(application) {
             Log.d("ScanViewModel", "🔍 DEBUG: processedData.size=${processedData.size}, currentPicklistNumber=$currentPicklistNumber")
             
             if (processedData.isNotEmpty() && currentPicklistNumber != null) {
-                Log.d("ScanViewModel", "🚀 BATCH Saving valid items to Supabase...")
+                Log.d("ScanViewModel", "🚀 BATCH Saving valid items to Supabase (OVERCAN & NON-PICKLIST WILL BE DISCARDED)...")
                 
                 // Prepare batch data
                 val batchScans = mutableListOf<Sextuple<String, String, String, String, String, String>>()
@@ -2189,10 +2189,20 @@ class ScanViewModel(application: Application) : AndroidViewModel(application) {
                 processedData.forEach { data ->
                     val picklistItem = currentItems.find { it.articleId == data.articleId }
                     
+                    // **PERBAIKAN KRITIS**: Cek overscan secara eksplisit berdasarkan qtyScan vs qtyPl
+                    val isOverscan = picklistItem?.let { item ->
+                        item.qtyScan > item.qtyPl
+                    } ?: false
+                    
                     when (data.tagStatus) {
                         "VALID" -> {
-                            // Item valid - tambahkan ke batch dengan semua data
-                            if (picklistItem != null) {
+                            // **PERBAIKAN KRITIS**: Cek overscan secara eksplisit sebelum menyimpan
+                            if (isOverscan) {
+                                // Item overscan - TIDAK DISIMPAN, DIBUANG
+                                skippedOverscanCount++
+                                Log.d("ScanViewModel", "🚫 OVERSCAN DISCARDED: ${data.articleName} (qtyScan=${picklistItem?.qtyScan} > qtyPl=${picklistItem?.qtyPl}) - DATA DIBUANG")
+                            } else if (picklistItem != null) {
+                                // Item valid dan tidak overscan - tambahkan ke batch
                                 batchScans.add(Sextuple(
                                     currentPicklistNumber!!, 
                                     data.articleId, 
@@ -2205,13 +2215,14 @@ class ScanViewModel(application: Application) : AndroidViewModel(application) {
                             }
                         }
                         "OVERCAN" -> {
-                            // Item overscan - tidak disimpan (logika ketat)
+                            // Item overscan - TIDAK DISIMPAN, DIBUANG
                             skippedOverscanCount++
-                            Log.d("ScanViewModel", "⚠️ Skipped overscan item: ${data.articleName}")
+                            Log.d("ScanViewModel", "🚫 OVERSCAN DISCARDED: ${data.articleName} - DATA DIBUANG")
                         }
                         "NON_PICKLIST" -> {
+                            // Item non-picklist - TIDAK DISIMPAN, DIBUANG
                             skippedNonPicklistCount++
-                            Log.d("ScanViewModel", "⚠️ Skipped non-picklist item: ${data.articleName}")
+                            Log.d("ScanViewModel", "🚫 NON-PICKLIST DISCARDED: ${data.articleName} - DATA DIBUANG")
                         }
                     }
                 }
@@ -2271,7 +2282,7 @@ class ScanViewModel(application: Application) : AndroidViewModel(application) {
                     Log.d("ScanViewModel", "⚠️ No valid items to save in batch")
                 }
                 
-                Log.d("ScanViewModel", "📊 Batch save summary: ${batchScans.size} processed, $skippedOverscanCount overscan skipped, $skippedNonPicklistCount non-picklist skipped")
+                Log.d("ScanViewModel", "📊 Batch save summary: ${batchScans.size} valid items saved, $skippedOverscanCount overscan DISCARDED, $skippedNonPicklistCount non-picklist DISCARDED")
             } else {
                 Log.d("ScanViewModel", "⚠️ No processed data to save: processedData.size=${processedData.size}, currentPicklistNumber=$currentPicklistNumber")
             }
@@ -2298,29 +2309,44 @@ class ScanViewModel(application: Application) : AndroidViewModel(application) {
                 var skippedNonPicklistCount = 0
                 
                 processedData.forEach { data ->
+                    val picklistItem = currentItems.find { it.articleId == data.articleId }
+                    
+                    // **PERBAIKAN KRITIS**: Cek overscan secara eksplisit berdasarkan qtyScan vs qtyPl
+                    val isOverscan = picklistItem?.let { item ->
+                        item.qtyScan > item.qtyPl
+                    } ?: false
+                    
                     when (data.tagStatus) {
                         "VALID" -> {
-                            // Item valid - tambahkan ke batch
-                            batchScans.add(
-                                Sextuple(
-                                    currentPicklistNumber!!,
-                                    data.articleId,
-                                    data.epc,
-                                    data.productId,
-                                    data.articleName,
-                                    data.size
+                            // **PERBAIKAN KRITIS**: Cek overscan secara eksplisit sebelum menyimpan
+                            if (isOverscan) {
+                                // Item overscan - tidak disimpan meskipun status "VALID"
+                                skippedOverscanCount++
+                                Log.d("ScanViewModel", "⚠️ OVERSCAN DETECTED: Skipped overscan item: ${data.articleName} (qtyScan=${picklistItem?.qtyScan} > qtyPl=${picklistItem?.qtyPl})")
+                            } else {
+                                // Item valid dan tidak overscan - tambahkan ke batch
+                                batchScans.add(
+                                    Sextuple(
+                                        currentPicklistNumber!!,
+                                        data.articleId,
+                                        data.epc,
+                                        data.productId,
+                                        data.articleName,
+                                        data.size
+                                    )
                                 )
-                            )
-                            Log.d("ScanViewModel", "✅ Added to batch: ${data.articleName}")
+                                Log.d("ScanViewModel", "✅ Added to batch: ${data.articleName}")
+                            }
                         }
                         "OVERCAN" -> {
-                            // Item overscan - tidak disimpan (logika ketat)
+                            // Item overscan - TIDAK DISIMPAN, DIBUANG
                             skippedOverscanCount++
-                            Log.d("ScanViewModel", "⚠️ Skipped overscan item: ${data.articleName}")
+                            Log.d("ScanViewModel", "🚫 OVERSCAN DISCARDED: ${data.articleName} - DATA DIBUANG")
                         }
                         "NON_PICKLIST" -> {
+                            // Item non-picklist - TIDAK DISIMPAN, DIBUANG
                             skippedNonPicklistCount++
-                            Log.d("ScanViewModel", "⚠️ Skipped non-picklist item: ${data.articleName}")
+                            Log.d("ScanViewModel", "🚫 NON-PICKLIST DISCARDED: ${data.articleName} - DATA DIBUANG")
                         }
                     }
                 }
@@ -2380,7 +2406,7 @@ class ScanViewModel(application: Application) : AndroidViewModel(application) {
                     Log.d("ScanViewModel", "⚠️ No valid items to save in batch")
                 }
                 
-                Log.d("ScanViewModel", "📊 Batch save summary: ${batchScans.size} processed, $skippedOverscanCount overscan skipped, $skippedNonPicklistCount non-picklist skipped")
+                Log.d("ScanViewModel", "📊 Batch save summary: ${batchScans.size} valid items saved, $skippedOverscanCount overscan DISCARDED, $skippedNonPicklistCount non-picklist DISCARDED")
                 
                 // **POIN 1, 2, 4, 5: Update semua qty display data setelah save**
                 updateQtySummary()

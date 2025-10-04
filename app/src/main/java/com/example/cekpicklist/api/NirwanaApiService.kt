@@ -1298,7 +1298,7 @@ class NirwanaApiService {
                 return@withContext emptyList()
             }
             
-            val warehousesUrl = "$baseUrl/master/warehouses"
+            val warehousesUrl = "$baseUrl/master/warehouses?limit=1000&page=1"
             
             val url = URL(warehousesUrl)
             val connection = url.openConnection() as HttpURLConnection
@@ -1325,6 +1325,7 @@ class NirwanaApiService {
                 // **ALWAYS LOG**: Log response body untuk warehouses (penting untuk debugging)
                 Log.i(TAG, "🔥 ===== WAREHOUSES API RESPONSE START =====")
                 Log.i(TAG, "🔥 Response Code: $responseCode")
+                Log.i(TAG, "🔥 Response Body Length: ${responseBody.length}")
                 Log.i(TAG, "🔥 Response Body:")
                 Log.i(TAG, responseBody)
                 Log.i(TAG, "🔥 ===== WAREHOUSES API RESPONSE END =====")
@@ -1382,7 +1383,7 @@ class NirwanaApiService {
                         isActive = warehouseObj.optBoolean("is_active", true)
                     )
                     
-                    Log.d(TAG, "🔍 Created warehouse: ID=${warehouse.warehouseId}, Name=${warehouse.warehouseName}")
+                    Log.d(TAG, "🔍 Created warehouse: ID=${warehouse.warehouseId}, Name=${warehouse.warehouseName}, Active=${warehouse.isActive}")
                     warehouses.add(warehouse)
                 }
             } else {

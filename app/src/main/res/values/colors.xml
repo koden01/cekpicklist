@@ -34,4 +34,13 @@
     <!-- Version Display Colors -->
     <color name="version_text">#9E9E9E</color>
     <color name="version_text_accent">#FFD700</color>
+    
+    <!-- Missing Colors for Layouts -->
+    <color name="primary_color">#FFD700</color>
+    <color name="success_color">#4CAF50</color>
+    <color name="error_color">#F44336</color>
+    <color name="splash_background">#FFD700</color>
+    <color name="splash_text_primary">#000000</color>
+    <color name="splash_accent">#B8860B</color>
+    <color name="splash_text_secondary">#757575</color>
 </resources>

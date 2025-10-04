@@ -1,5 +1,120 @@
 # 📱 CEK PICKLIST - RFID Scanning Application
 
+## Dokumentasi Terpadu (Aplikasi + Signing)
+
+### Keystore (Release)
+- Key alias: `cekpicklist`
+- Keystore file: `cekpicklist-release-key.keystore` (root repo)
+- Keystore password: `CekPicklist#2025`
+- Key password: `CekPicklist#2025`
+
+### Build Release (Signed)
+1) Build unsigned:
+```
+./gradlew assembleRelease -x test --no-daemon
+```
+2) Zipalign dan Sign:
+```
+"%ANDROID_HOME%/build-tools/35.0.1/zipalign" -p -f 4 app/build/outputs/apk/release/app-release-unsigned.apk app/build/outputs/apk/release/app-release-aligned.apk
+"%ANDROID_HOME%/build-tools/35.0.1/apksigner" sign --ks cekpicklist-release-key.keystore --ks-key-alias cekpicklist --ks-pass pass:CekPicklist#2025 --key-pass pass:CekPicklist#2025 --out app/build/outputs/apk/release/CekPicklist-v1.0-signed.apk app/build/outputs/apk/release/app-release-aligned.apk
+```
+3) Verifikasi:
+```
+"%ANDROID_HOME%/build-tools/35.0.1/apksigner" verify --print-certs app/build/outputs/apk/release/CekPicklist-v1.0-signed.apk
+```
+
+### Signing Otomatis di Gradle
+Konfigurasi sudah diaktifkan di `app/build.gradle.kts`:
+```
+android {
+    signingConfigs {
+        create("release") {
+            storeFile = file("../cekpicklist-release-key.keystore")
+            storePassword = "CekPicklist#2025"
+            keyAlias = "cekpicklist"
+            keyPassword = "CekPicklist#2025"
+        }
+    }
+    buildTypes {
+        release {
+            signingConfig = signingConfigs.getByName("release")
+        }
+    }
+}
+```
+
+## Relocation Layout & Flow (Terbaru)
+
+Struktur layar Relocation:
+
+```
+LinearLayout (vertical)
+├── Toolbar (static)
+├── Status Card (static)
+└── NestedScrollView (scrollable content)
+    └── LinearLayout
+        ├── Current Location Card
+        ├── Target Location Card
+        ├── Buttons
+        └── RecyclerView (height=560dp, nested scroll)
+```
+
+Komponen kunci:
+- `activity_relocation.xml` menempatkan Status Card di luar area scroll agar selalu terlihat.
+- `RecyclerView`: `layout_height=560dp`, `nestedScrollingEnabled=true`.
+- `RelocationActivity.kt` menginisialisasi `LinearLayoutManager` dan `RelocationAdapter`, serta mengobservasi `relocationItems` dari `RelocationViewModel`.
+
+## Signing APK (Release)
+
+APK release disiapkan dengan keystore lokal berikut untuk mempermudah build berikutnya.
+
+- Key alias: `cekpicklist`
+- Keystore file: `cekpicklist-release-key.keystore` (root repository)
+- Keystore password: `CekPicklist#2025`
+- Key password: `CekPicklist#2025`
+
+### Build Cepat (Signed)
+
+1) Build unsigned release:
+```
+./gradlew assembleRelease -x test --no-daemon
+```
+
+2) Zipalign lalu sign:
+```
+"%ANDROID_HOME%/build-tools/35.0.1/zipalign" -p -f 4 app/build/outputs/apk/release/app-release-unsigned.apk app/build/outputs/apk/release/app-release-aligned.apk
+"%ANDROID_HOME%/build-tools/35.0.1/apksigner" sign --ks cekpicklist-release-key.keystore --ks-key-alias cekpicklist --ks-pass pass:CekPicklist#2025 --key-pass pass:CekPicklist#2025 --out app/build/outputs/apk/release/CekPicklist-v1.0-signed.apk app/build/outputs/apk/release/app-release-aligned.apk
+```
+
+3) Verifikasi signature:
+```
+"%ANDROID_HOME%/build-tools/35.0.1/apksigner" verify --print-certs app/build/outputs/apk/release/CekPicklist-v1.0-signed.apk
+```
+
+Output signed APK: `app/build/outputs/apk/release/CekPicklist-v1.0-signed.apk`
+
+## Enable Signing Otomatis (Opsional)
+
+Aktifkan konfigurasi berikut di `app/build.gradle.kts` untuk sign otomatis saat `assembleRelease`:
+
+```
+android {
+    signingConfigs {
+        create("release") {
+            storeFile = file("../cekpicklist-release-key.keystore")
+            storePassword = "CekPicklist#2025"
+            keyAlias = "cekpicklist"
+            keyPassword = "CekPicklist#2025"
+        }
+    }
+    buildTypes {
+        release {
+            signingConfig = signingConfigs.getByName("release")
+        }
+    }
+}
+```
+
 ## 📋 **OVERVIEW APLIKASI**
 
 **Cek Picklist** adalah aplikasi Android untuk scanning RFID dalam proses picklist dengan integrasi Supabase dan Nirwana API. Aplikasi ini dirancang untuk memudahkan proses inventory management dengan teknologi RFID scanning yang real-time.
@@ -160,6 +275,7 @@ CREATE TABLE picklist_scan (
 - **Real-time Validation**: Cache memvalidasi overscan sebelum data disimpan
 - **Prevention First**: Mencegah overscan di level cache, bukan hanya menghitungnya
 - **Data Integrity**: Cache hanya menyimpan data yang valid
+- **Back Button Behavior**: Saat tombol back ditekan, data overscan dan non-picklist akan DIBUANG, tidak disimpan ke Supabase
 
 ### **5. Real-time Data Synchronization**
 - **Auto-save**: EPC tersimpan otomatis ke Supabase setiap detik
@@ -178,6 +294,18 @@ CREATE TABLE picklist_scan (
 - **Consistent Settings**: Settings yang sama antara MainActivity dan PicklistInputActivity
 - **RFID Configuration**: Power Level dan RSSI Threshold settings
 - **Navigation**: Settings icon mengarah ke SettingsActivity yang sama
+
+### **8. Back Button Behavior System**
+- **Data Filtering**: Saat tombol back ditekan, sistem akan memfilter data sebelum menyimpan ke Supabase
+- **Overscan Handling**: Data dengan qty scan > qty PL akan DIBUANG, tidak disimpan
+- **Non-picklist Handling**: Data yang tidak ada di picklist akan DIBUANG, tidak disimpan
+- **Valid Data Only**: Hanya data yang valid (qty scan ≤ qty PL) yang akan disimpan ke Supabase
+- **User Confirmation**: Dialog konfirmasi ditampilkan sebelum keluar dari scanning
+
+#### **Contoh Skenario Back Button:**
+- **Article A**: qty PL = 5, qty scan = 7 → **7 RFID DIBUANG** (overscan)
+- **Article B**: qty PL = 5, qty scan = 4 → **4 RFID DISIMPAN** (valid)
+- **Article C**: qty PL = 0, qty scan = 3 → **3 RFID DIBUANG** (non-picklist)
 
 ---
 

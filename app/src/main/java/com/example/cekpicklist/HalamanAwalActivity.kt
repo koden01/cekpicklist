@@ -12,7 +12,7 @@ import androidx.lifecycle.lifecycleScope
 import androidx.recyclerview.widget.LinearLayoutManager
 import kotlinx.coroutines.launch
 import com.example.cekpicklist.adapter.PicklistSelectionAdapter
-import com.example.cekpicklist.databinding.ActivityPicklistInputBinding
+import com.example.cekpicklist.databinding.ActivityHalamanAwalBinding
 import com.example.cekpicklist.databinding.DialogPicklistSelectionBinding
 import com.example.cekpicklist.data.PicklistStatus
 import com.example.cekpicklist.utils.Logger
@@ -23,7 +23,7 @@ import com.example.cekpicklist.utils.LoadingAnimationHelper
 
 class HalamanAwalActivity : AppCompatActivity() {
     
-    private lateinit var binding: ActivityPicklistInputBinding
+    private lateinit var binding: ActivityHalamanAwalBinding
     private lateinit var viewModel: ScanViewModel
     
     // Dialog references for proper cleanup
@@ -32,7 +32,7 @@ class HalamanAwalActivity : AppCompatActivity() {
     
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
-        binding = ActivityPicklistInputBinding.inflate(layoutInflater)
+        binding = ActivityHalamanAwalBinding.inflate(layoutInflater)
         setContentView(binding.root)
         
         Logger.PicklistInput.d("onCreate() called")
@@ -132,7 +132,7 @@ class HalamanAwalActivity : AppCompatActivity() {
         Logger.PicklistInput.d("setupCardClicks() called")
         
         // Card Picklist click
-        binding.cardPicklist.setOnClickListener {
+        binding.    cardPicklist.setOnClickListener {
             Logger.PicklistInput.d("Picklist card clicked")
             showPicklistSelectionModal()
         }

@@ -772,6 +772,13 @@ class CekPicklistActivity : BaseRfidActivity() {
             try {
                 rfidScanManager.clearAllData()
                 Log.d("MainActivity", "🔥 RFID buffer cleared in RfidScanManager")
+                
+                // **PERBAIKAN BARU**: Re-seed dengan data dari database setelah clear
+                val currentPicklist = viewModel.getCurrentPicklistNumber()
+                if (currentPicklist != null) {
+                    Log.d("MainActivity", "🔥 Re-seeding RfidScanManager after clear for picklist: $currentPicklist")
+                    seedRfidScanManagerWithDatabaseData(currentPicklist)
+                }
             } catch (e: Exception) {
                 Log.e("MainActivity", "❌ Error clearing RFID buffer: ${e.message}", e)
             }
@@ -921,22 +928,10 @@ class CekPicklistActivity : BaseRfidActivity() {
      */
     private fun applySettingsFromSharedPreferences() {
         try {
-            val sharedPreferences = getSharedPreferences("RFIDSettings", MODE_PRIVATE)
-            val powerLevel = sharedPreferences.getInt("power_level", 20)
-            val rssiThreshold = sharedPreferences.getInt("rssi_threshold", -70)
-
-            val gracePeriod = sharedPreferences.getLong("grace_period", 0L) // **PERBAIKAN**: Set ke 0 untuk response instant
-            
-            val newSettings = RfidScanSettings(
-                powerLevel = powerLevel,
-                duplicateRemovalEnabled = true, // Always enabled
-                gracePeriodMs = gracePeriod,
-                rssiThreshold = rssiThreshold
-            )
-            
-            updateRfidScanSettings(newSettings)
+            // Use the new method from RfidScanManager that reads from SharedPreferences
+            rfidScanManager.refreshSettingsFromSharedPreferences()
             ToastUtils.showHighToastWithCooldown(this, "RFID settings applied successfully")
-            Log.d(TAG, "🔥 RFID settings applied: $newSettings")
+            Log.d(TAG, "🔥 RFID settings refreshed from SharedPreferences in CekPicklistActivity")
             
         } catch (e: Exception) {
             Log.e(TAG, "🔥 Error applying settings: ${e.message}", e)
@@ -1110,7 +1105,7 @@ class CekPicklistActivity : BaseRfidActivity() {
             // Summary cards kini dikelola oleh observer qtySummary di ViewModel
         }
         
-        // **PERBAIKAN**: Observe ALL picklist items untuk completion check (bukan filtered items)
+        // **PERBAIKAN**: Observe ALL picklist items untuk seeding RfidScanManager
         viewModel.picklistItems.observe(this) { allItems ->
             Log.d(TAG, "🔥 All picklist items updated: ${allItems.size} items")
             
@@ -1121,9 +1116,14 @@ class CekPicklistActivity : BaseRfidActivity() {
                 Log.d(TAG, "🔥 Data loaded, seeding RfidScanManager for picklist: $currentPicklist")
                 seedRfidScanManagerWithDatabaseData(currentPicklist)
             }
+        }
+        
+        // **PERBAIKAN KRITIS**: Observe filtered items untuk completion check (termasuk non-picklist items)
+        viewModel.filteredItems.observe(this) { filteredItems ->
+            Log.d(TAG, "🔥 Filtered items updated for completion check: ${filteredItems.size} items")
             
-            // Check for completion dengan SEMUA items (termasuk yang sudah complete)
-            checkCompletionStatus(allItems)
+            // Check for completion dengan filtered items (termasuk non-picklist dan overscan)
+            checkCompletionStatus(filteredItems)
         }
         
         // Observe RFID detection count
@@ -1180,23 +1180,18 @@ class CekPicklistActivity : BaseRfidActivity() {
     /**
      * Check completion status and show animation if all items are complete
      */
-    private fun checkCompletionStatus(items: List<PicklistItem>) {
-        Log.d(TAG, "🔥 checkCompletionStatus called with ${items.size} items")
+    private fun checkCompletionStatus(filteredItems: List<PicklistItem>) {
+        Log.d(TAG, "🔥 checkCompletionStatus called with ${filteredItems.size} filtered items")
         
         if (hasShownCompletionAnimation) {
             Log.d(TAG, "🔥 Completion animation already shown, skipping")
             return
         }
         
-        if (items.isEmpty()) {
-            Log.d(TAG, "🔥 No items to check completion status")
-            return
-        }
-        
         // **PERBAIKAN KRITIS**: Cek completion dengan syarat TIDAK ada non-picklist atau overscan
-        val picklistItems = items.filter { it.qtyPl > 0 }
-        val nonPicklistItems = items.filter { it.qtyPl == 0 }
-        val overscanItems = items.filter { it.qtyPl > 0 && it.qtyScan > it.qtyPl }
+        val picklistItems = filteredItems.filter { it.qtyPl > 0 }
+        val nonPicklistItems = filteredItems.filter { it.qtyPl == 0 }
+        val overscanItems = filteredItems.filter { it.qtyPl > 0 && it.qtyScan > it.qtyPl }
         
         Log.d(TAG, "🔥 Filtered items: ${picklistItems.size} picklist items, ${nonPicklistItems.size} non-picklist items, ${overscanItems.size} overscan items")
         
@@ -1217,24 +1212,22 @@ class CekPicklistActivity : BaseRfidActivity() {
             Log.d(TAG, "🔥 Overscan Item: ${item.articleName} ${item.size} - qtyPl=${item.qtyPl}, qtyScan=${item.qtyScan} (BLOCKS completion)")
         }
         
-        // **PERBAIKAN**: Cek completion dengan syarat TIDAK ada non-picklist atau overscan
-        val allPicklistItemsComplete = picklistItems.all { it.isComplete() }
+        // **PERBAIKAN KRITIS**: Cek completion dengan syarat TIDAK ada non-picklist atau overscan
         val hasNonPicklistItems = nonPicklistItems.isNotEmpty()
         val hasOverscanItems = overscanItems.isNotEmpty()
-        val completedCount = picklistItems.count { it.isComplete() }
-        val totalPicklistCount = picklistItems.size
+        val hasIncompletePicklistItems = picklistItems.isNotEmpty()
         
-        Log.d(TAG, "🔥 Completion check: $completedCount/$totalPicklistCount picklist items complete, allComplete=$allPicklistItemsComplete")
-        Log.d(TAG, "🔥 Blocking conditions: hasNonPicklist=$hasNonPicklistItems, hasOverscan=$hasOverscanItems")
+        Log.d(TAG, "🔥 Completion check: ${picklistItems.size} picklist items remaining, hasIncomplete=$hasIncompletePicklistItems")
+        Log.d(TAG, "🔥 Blocking conditions: hasNonPicklist=$hasNonPicklistItems, hasOverscan=$hasOverscanItems, hasIncomplete=$hasIncompletePicklistItems")
         
-        // **PERBAIKAN**: Hanya trigger animasi jika SEMUA picklist items complete DAN TIDAK ada non-picklist atau overscan
-        if (allPicklistItemsComplete && picklistItems.isNotEmpty() && !hasNonPicklistItems && !hasOverscanItems) {
+        // **PERBAIKAN KRITIS**: Hanya trigger animasi jika TIDAK ada picklist items yang belum complete DAN TIDAK ada non-picklist atau overscan
+        if (!hasIncompletePicklistItems && !hasNonPicklistItems && !hasOverscanItems) {
             Log.d(TAG, "🎉 All picklist items completed with no non-picklist or overscan items! Showing completion animation")
             hasShownCompletionAnimation = true
             showCompletionAnimation()
         } else {
             val blockingReasons = mutableListOf<String>()
-            if (!allPicklistItemsComplete) blockingReasons.add("not all picklist items complete")
+            if (hasIncompletePicklistItems) blockingReasons.add("has incomplete picklist items")
             if (hasNonPicklistItems) blockingReasons.add("has non-picklist items")
             if (hasOverscanItems) blockingReasons.add("has overscan items")
             
@@ -1248,8 +1241,10 @@ class CekPicklistActivity : BaseRfidActivity() {
         if (!isScanning) {
             Log.d(TAG, "🔥 Memulai scanning RFID...")
             
-            // Apply settings before starting scan
+            // **PERBAIKAN KRITIS**: Apply settings before starting scan
+            Log.d(TAG, "🔥 Applying settings from SharedPreferences before scan...")
             applySettingsFromSharedPreferences()
+            Log.d(TAG, "🔥 Settings applied, starting RFID scan...")
             
             // Use BaseRfidActivity method
             startRfidScanning()

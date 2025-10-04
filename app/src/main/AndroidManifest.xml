@@ -24,9 +24,9 @@
         android:theme="@style/Theme.CekPicklist"
         android:usesCleartextTraffic="true"
         tools:targetApi="31">
-        <!-- Video Splash Screen Activity -->
+        <!-- Splash Screen Activity -->
         <activity
-            android:name=".VideoSplashActivity"
+            android:name=".SplashActivity"
             android:exported="true"
             android:screenOrientation="portrait"
             android:theme="@style/Theme.AppCompat.Light.NoActionBar">

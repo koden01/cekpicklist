@@ -8,6 +8,16 @@ android {
     namespace = "com.example.cekpicklist"
     compileSdk = 35
 
+    signingConfigs {
+        create("release") {
+            // Aktifkan signing release
+            storeFile = file("../cekpicklist-release-key.keystore")
+            storePassword = "CekPicklist#2025"
+            keyAlias = "cekpicklist"
+            keyPassword = "CekPicklist#2025"
+        }
+    }
+
     defaultConfig {
         applicationId = "com.example.cekpicklist"
         minSdk = 30
@@ -23,19 +33,17 @@ android {
 
     buildTypes {
         debug {
-            isMinifyEnabled = true
-            isShrinkResources = true
+            isMinifyEnabled = false
+            isShrinkResources = false
             isDebuggable = true
             applicationIdSuffix = ".debug"
             versionNameSuffix = "-debug"
-            proguardFiles(
-                getDefaultProguardFile("proguard-android-optimize.txt"),
-                "proguard-rules.pro"
-            )
         }
         release {
             isMinifyEnabled = true
             isShrinkResources = true
+            // Gunakan signing config release
+            signingConfig = signingConfigs.getByName("release")
             proguardFiles(
                 getDefaultProguardFile("proguard-android-optimize.txt"),
                 "proguard-rules.pro"

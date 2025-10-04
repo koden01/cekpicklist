@@ -72,6 +72,11 @@
 
 # Keep RFID SDK classes
 -keep class com.rfid.** { *; }
+-keep class com.rscja.** { *; }
+
+# Keep SystemProperties untuk RFID SDK
+-keep class android.os.SystemProperties { *; }
+-dontwarn android.os.SystemProperties
 
 # Keep Supabase classes
 -keep class io.github.jan.tennert.supabase.** { *; }

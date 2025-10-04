@@ -12,66 +12,43 @@
     <LinearLayout
         android:layout_width="match_parent"
         android:layout_height="wrap_content"
-        android:orientation="horizontal"
-        android:padding="12dp"
-        android:gravity="center_vertical"
+        android:orientation="vertical"
+        android:padding="16dp"
+        android:gravity="center"
         android:background="@android:color/white">
 
-        <!-- Icon Status dengan background -->
-        <FrameLayout
-            android:id="@+id/flIconBackground"
-            android:layout_width="40dp"
-            android:layout_height="40dp"
-            android:layout_marginEnd="16dp"
-            android:background="@drawable/ic_status_background"
-            android:gravity="center">
-            
-            <ImageView
-                android:id="@+id/ivPicklistIcon"
-                android:layout_width="24dp"
-                android:layout_height="24dp"
-                android:src="@drawable/ic_arrow_down"
-                android:visibility="visible" />
-                
-        </FrameLayout>
-
-        <!-- Content -->
-        <LinearLayout
-            android:layout_width="0dp"
+        <!-- Nomor Picklist - Rata Tengah dengan Auto Fit -->
+        <TextView
+            android:id="@+id/tvPicklistNumber"
+            android:layout_width="match_parent"
             android:layout_height="wrap_content"
-            android:layout_weight="1"
-            android:orientation="vertical">
+            android:text="PL-2024-001"
+            android:textSize="16sp"
+            android:textStyle="bold"
+            android:textColor="@color/text_primary"
+            android:fontFamily="sans-serif-medium"
+            android:gravity="center"
+            android:maxLines="2"
+            android:ellipsize="end"
+            android:autoSizeTextType="uniform"
+            android:autoSizeMinTextSize="12sp"
+            android:autoSizeMaxTextSize="16sp"
+            android:autoSizeStepGranularity="1sp"
+            android:layout_marginBottom="4dp" />
 
-            <!-- Nomor Picklist -->
-            <TextView
-                android:id="@+id/tvPicklistNumber"
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:text="PL-2024-001"
-                android:textSize="16sp"
-                android:textStyle="bold"
-                android:textColor="@android:color/black"
-                android:layout_marginBottom="4dp" />
-
-            <!-- Info tambahan -->
-            <TextView
-                android:id="@+id/tvPicklistInfo"
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:text="Hari ini"
-                android:textSize="13sp"
-                android:textColor="@android:color/darker_gray"
-                android:lineSpacingExtra="2dp" />
-
-        </LinearLayout>
-
-        <!-- Arrow indicator -->
-        <ImageView
-            android:layout_width="20dp"
-            android:layout_height="20dp"
-            android:src="@drawable/ic_more_modern"
-            android:tint="@android:color/darker_gray"
-            android:alpha="0.7" />
+        <!-- Info tambahan - Rata Tengah -->
+        <TextView
+            android:id="@+id/tvPicklistInfo"
+            android:layout_width="match_parent"
+            android:layout_height="wrap_content"
+            android:text="Hari ini"
+            android:textSize="13sp"
+            android:textColor="@color/text_secondary"
+            android:fontFamily="sans-serif"
+            android:gravity="center"
+            android:maxLines="1"
+            android:ellipsize="end"
+            android:lineSpacingExtra="2dp" />
 
     </LinearLayout>
 
