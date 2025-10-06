@@ -1,8 +1,8 @@
 @echo off
-REM Simple Release Script untuk Cek Picklist
-REM Script ini akan: Build APK dan Git operations tanpa versioning
+REM Quick Release Working Script untuk Cek Picklist
+REM Script ini akan: Build APK, versioning, dan Git operations tanpa authentication check
 
-echo 🚀 Cek Picklist - Simple Release Script
+echo 🚀 Cek Picklist - Quick Release Working Script
 echo =======================================
 
 echo.
@@ -10,93 +10,35 @@ echo 📝 Enter release notes (optional, press Enter to skip):
 set /p release_notes="Release notes: "
 
 echo.
-echo 🔐 GIT AUTHENTICATION CHECK
-echo ========================================
-echo.
-echo ⚠️  IMPORTANT: Git authentication is required for release process
-echo.
-echo 🌐 Git Login Options:
-echo    • .\git_simple_setup.bat   - Step-by-step setup (Recommended)
-echo    • .\git_fix_login.bat      - Fix authentication issues
-echo    • .\git_debug_login.bat    - Debug authentication problems
-echo    • .\git_auto_login.bat     - Auto-detect platform and open browser
-echo    • .\git_browser_login.bat  - Manual platform selection
-echo.
-echo 🔧 Quick setup commands:
-echo    git config --global user.name "Your Name"
-echo    git config --global user.email "your.email@example.com"
-echo    git config --global credential.helper wincred
-echo.
-echo 📝 Test your authentication with:
-echo    git push --dry-run origin main
-echo.
-echo 🌐 Press 'S' for simple setup, 'F' for fix login, 'D' for debug, or any other key to continue...
-set /p login_choice="Choice (S/F/D for login help, Enter to continue): "
-if /i "%login_choice%"=="S" (
-    echo 🔧 Opening simple setup...
-    .\git_simple_setup.bat
-    if %errorlevel% neq 0 (
-        echo ❌ Simple setup failed!
-        pause
-        exit /b 1
-    )
-) else if /i "%login_choice%"=="F" (
-    echo 🔧 Opening fix login...
-    .\git_fix_login.bat
-    if %errorlevel% neq 0 (
-        echo ❌ Fix login failed!
-        pause
-        exit /b 1
-    )
-) else if /i "%login_choice%"=="D" (
-    echo 🔍 Opening debug login...
-    .\git_debug_login.bat
-    if %errorlevel% neq 0 (
-        echo ❌ Debug login failed!
-        pause
-        exit /b 1
-    )
-) else (
-    echo ⏸️  Continuing with current authentication...
-)
+echo 🚀 Starting quick release working process...
 echo.
 
-REM Check Git authentication before proceeding
-echo 🔐 Verifying Git authentication...
-git remote -v >nul 2>&1
+REM Step 1: Auto Versioning
+echo 📈 Step 1: Auto Versioning...
+powershell.exe -ExecutionPolicy Bypass -NoProfile -Command ".\simple_version.ps1"
+
 if %errorlevel% neq 0 (
-    echo ❌ Git remote not configured!
-    echo 🔍 Please configure Git remote first:
-    echo    git remote add origin <repository-url>
+    echo ❌ Versioning failed!
     pause
     exit /b 1
 )
 
-REM Test Git authentication
-echo 🔐 Testing Git authentication...
-git ls-remote origin >nul 2>&1
+echo ✅ Versioning completed
+
+REM Step 2: Update README
+echo 📝 Step 2: Updating README...
+powershell.exe -ExecutionPolicy Bypass -NoProfile -Command ".\update_readme.ps1"
+
 if %errorlevel% neq 0 (
-    echo ❌ Git authentication failed!
-    echo.
-    echo 🔧 Please setup Git authentication:
-    echo    • Run: .\setup_git_auth.bat
-    echo    • Or configure manually with Personal Access Token/SSH
-    echo.
-    echo 📝 Test authentication with:
-    echo    git push --dry-run origin main
-    echo.
-    echo ⏸️  Press any key to exit and setup Git authentication...
+    echo ❌ README update failed!
     pause
     exit /b 1
 )
 
-echo ✅ Git authentication verified successfully!
-echo.
-echo 🚀 Starting simple release process...
-echo.
+echo ✅ README updated
 
-REM Step 1: Build APK
-echo 🔨 Step 1: Building APK...
+REM Step 3: Build APK
+echo 🔨 Step 3: Building APK...
 
 REM Check if gradlew exists
 if not exist "gradlew.bat" (
@@ -135,8 +77,8 @@ if %errorlevel% neq 0 (
 
 echo ✅ APK build completed
 
-REM Step 2: Copy APK
-echo 📱 Step 2: Packaging APK...
+REM Step 4: Copy APK
+echo 📱 Step 4: Packaging APK...
 
 REM Check if APK exists
 if not exist "app\build\outputs\apk\release\app-release.apk" (
@@ -180,8 +122,8 @@ if %errorlevel% neq 0 (
 
 echo ✅ APK packaged: CekPicklist-v%current_version%-release.apk
 
-REM Step 3: Git Operations
-echo 📝 Step 3: Git Operations...
+REM Step 5: Git Operations
+echo 📝 Step 5: Git Operations...
 git add .
 
 if %errorlevel% neq 0 (
@@ -208,8 +150,8 @@ if %errorlevel% neq 0 (
 
 echo ✅ Git operations completed
 
-REM Step 4: Push to remote
-echo 📤 Step 4: Pushing to remote...
+REM Step 6: Push to remote
+echo 📤 Step 6: Pushing to remote...
 
 REM Check current branch
 for /f "tokens=*" %%i in ('git branch --show-current 2^>nul') do set current_branch=%%i
@@ -248,7 +190,7 @@ if %errorlevel% neq 0 (
 
 echo ✅ Push completed
 
-REM Step 5: Summary
+REM Step 7: Summary
 echo.
 echo 🎉 Release Summary:
 echo =======================================
@@ -262,7 +204,7 @@ echo    • Commit: 🚀 Release v%current_version%
 echo    • Tag: v%current_version%
 echo    • Push: Pushed to origin/%current_branch% and tags
 echo.
-echo ✅ Simple release workflow finished successfully!
+echo ✅ Quick release working workflow finished successfully!
 echo =======================================
 
 pause

@@ -1,4 +1,4 @@
-param(
+﻿param(
     [Parameter(Mandatory=$true)]
     [string]$Version
 )
@@ -7,8 +7,20 @@ param(
 $readmePath = "README.md"
 
 try {
+    # Check if file exists
+    if (-not (Test-Path $readmePath)) {
+        Write-Error "README.md file not found at: $readmePath"
+        Write-Host "Current directory: $(Get-Location)" -ForegroundColor Yellow
+        exit 1
+    }
+    
     # Read README content
     $readmeContent = Get-Content $readmePath -Raw
+    
+    if (-not $readmeContent) {
+        Write-Error "Could not read content from README.md"
+        exit 1
+    }
     
     # Get current date
     $currentDate = Get-Date -Format "yyyy-MM-dd"
@@ -18,17 +30,17 @@ try {
     $readmeContent = $readmeContent -replace '\*\*Last Updated\*\*: [0-9]{4}-[0-9]{2}-[0-9]{2}', "**Last Updated**: $currentDate"
     
     # Debug: Show what was replaced
-    Write-Host "🔍 Debug: Looking for version pattern..." -ForegroundColor Yellow
+    Write-Host "Debug: Looking for version pattern..." -ForegroundColor Yellow
     if ($readmeContent -match '\*\*Version\*\*: [0-9]+\.[0-9]+\.[0-9]+ \(Auto-updating\)') {
-        Write-Host "✅ Found version pattern to replace" -ForegroundColor Green
+        Write-Host "Found version pattern to replace" -ForegroundColor Green
     } else {
-        Write-Host "❌ Version pattern not found" -ForegroundColor Red
+        Write-Host "Version pattern not found" -ForegroundColor Red
     }
     
     # Write back to file
     Set-Content $readmePath $readmeContent -Encoding UTF8
     
-    Write-Host "✅ Updated README.md" -ForegroundColor Green
+    Write-Host "Updated README.md" -ForegroundColor Green
     Write-Host "   Version: $Version" -ForegroundColor Cyan
     Write-Host "   Date: $currentDate" -ForegroundColor Cyan
     

@@ -1,8 +1,8 @@
 @echo off
-REM Simple Release Script untuk Cek Picklist
-REM Script ini akan: Build APK dan Git operations tanpa versioning
+REM Quick Release Script untuk Cek Picklist
+REM Script ini akan: Build APK dan Git operations tanpa authentication check
 
-echo 🚀 Cek Picklist - Simple Release Script
+echo 🚀 Cek Picklist - Quick Release Script
 echo =======================================
 
 echo.
@@ -10,89 +10,7 @@ echo 📝 Enter release notes (optional, press Enter to skip):
 set /p release_notes="Release notes: "
 
 echo.
-echo 🔐 GIT AUTHENTICATION CHECK
-echo ========================================
-echo.
-echo ⚠️  IMPORTANT: Git authentication is required for release process
-echo.
-echo 🌐 Git Login Options:
-echo    • .\git_simple_setup.bat   - Step-by-step setup (Recommended)
-echo    • .\git_fix_login.bat      - Fix authentication issues
-echo    • .\git_debug_login.bat    - Debug authentication problems
-echo    • .\git_auto_login.bat     - Auto-detect platform and open browser
-echo    • .\git_browser_login.bat  - Manual platform selection
-echo.
-echo 🔧 Quick setup commands:
-echo    git config --global user.name "Your Name"
-echo    git config --global user.email "your.email@example.com"
-echo    git config --global credential.helper wincred
-echo.
-echo 📝 Test your authentication with:
-echo    git push --dry-run origin main
-echo.
-echo 🌐 Press 'S' for simple setup, 'F' for fix login, 'D' for debug, or any other key to continue...
-set /p login_choice="Choice (S/F/D for login help, Enter to continue): "
-if /i "%login_choice%"=="S" (
-    echo 🔧 Opening simple setup...
-    .\git_simple_setup.bat
-    if %errorlevel% neq 0 (
-        echo ❌ Simple setup failed!
-        pause
-        exit /b 1
-    )
-) else if /i "%login_choice%"=="F" (
-    echo 🔧 Opening fix login...
-    .\git_fix_login.bat
-    if %errorlevel% neq 0 (
-        echo ❌ Fix login failed!
-        pause
-        exit /b 1
-    )
-) else if /i "%login_choice%"=="D" (
-    echo 🔍 Opening debug login...
-    .\git_debug_login.bat
-    if %errorlevel% neq 0 (
-        echo ❌ Debug login failed!
-        pause
-        exit /b 1
-    )
-) else (
-    echo ⏸️  Continuing with current authentication...
-)
-echo.
-
-REM Check Git authentication before proceeding
-echo 🔐 Verifying Git authentication...
-git remote -v >nul 2>&1
-if %errorlevel% neq 0 (
-    echo ❌ Git remote not configured!
-    echo 🔍 Please configure Git remote first:
-    echo    git remote add origin <repository-url>
-    pause
-    exit /b 1
-)
-
-REM Test Git authentication
-echo 🔐 Testing Git authentication...
-git ls-remote origin >nul 2>&1
-if %errorlevel% neq 0 (
-    echo ❌ Git authentication failed!
-    echo.
-    echo 🔧 Please setup Git authentication:
-    echo    • Run: .\setup_git_auth.bat
-    echo    • Or configure manually with Personal Access Token/SSH
-    echo.
-    echo 📝 Test authentication with:
-    echo    git push --dry-run origin main
-    echo.
-    echo ⏸️  Press any key to exit and setup Git authentication...
-    pause
-    exit /b 1
-)
-
-echo ✅ Git authentication verified successfully!
-echo.
-echo 🚀 Starting simple release process...
+echo 🚀 Starting quick release process...
 echo.
 
 REM Step 1: Build APK
@@ -262,7 +180,7 @@ echo    • Commit: 🚀 Release v%current_version%
 echo    • Tag: v%current_version%
 echo    • Push: Pushed to origin/%current_branch% and tags
 echo.
-echo ✅ Simple release workflow finished successfully!
+echo ✅ Quick release workflow finished successfully!
 echo =======================================
 
 pause

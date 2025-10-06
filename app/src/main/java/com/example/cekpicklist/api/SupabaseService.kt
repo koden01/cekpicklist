@@ -34,43 +34,70 @@ class SupabaseService {
             val todayDate = getTodayDate()
             Log.d("SupabaseService", "📅 Filtering data from today: $todayDate")
             
-            val queryUrl = "$supabaseUrl/rest/v1/picklist?select=no_picklist&created_at=gte.$todayDate&order=created_at.desc"
+            // **PERBAIKAN**: Gunakan pagination untuk mengatasi limit 1000 Supabase
+            val allPicklists = mutableSetOf<String>()
+            var offset = 0
+            val limit = 1000 // Supabase limit maksimal
+            var hasMoreData = true
             
-            val url = URL(queryUrl)
-            val connection = url.openConnection() as HttpURLConnection
-            
-            connection.requestMethod = "GET"
-            connection.setRequestProperty("apikey", supabaseKey)
-            connection.setRequestProperty("Authorization", "Bearer $supabaseKey")
-            connection.setRequestProperty("Content-Type", "application/json")
-            
-            val responseCode = connection.responseCode
-            
-            if (responseCode == HttpURLConnection.HTTP_OK) {
-                val reader = BufferedReader(InputStreamReader(connection.inputStream))
-                val response = StringBuilder()
-                var line: String?
+            while (hasMoreData) {
+                val queryUrl = "$supabaseUrl/rest/v1/picklist?select=no_picklist&created_at=gte.$todayDate&order=created_at.desc&limit=$limit&offset=$offset"
                 
-                while (reader.readLine().also { line = it } != null) {
-                    response.append(line)
+                Log.d("SupabaseService", "🔥 Picklist Pagination Query URL (offset=$offset, limit=$limit): $queryUrl")
+                
+                val url = URL(queryUrl)
+                val connection = url.openConnection() as HttpURLConnection
+                
+                connection.requestMethod = "GET"
+                connection.setRequestProperty("apikey", supabaseKey)
+                connection.setRequestProperty("Authorization", "Bearer $supabaseKey")
+                connection.setRequestProperty("Content-Type", "application/json")
+                
+                val responseCode = connection.responseCode
+                Log.d("SupabaseService", "📦 Picklist Pagination Query response code: $responseCode")
+                
+                if (responseCode == HttpURLConnection.HTTP_OK) {
+                    val reader = BufferedReader(InputStreamReader(connection.inputStream))
+                    val response = StringBuilder()
+                    var line: String?
+                    
+                    while (reader.readLine().also { line = it } != null) {
+                        response.append(line)
+                    }
+                    reader.close()
+                    
+                    val responseBody = response.toString()
+                    Log.d("SupabaseService", "📦 Picklist Pagination Query response body length: ${responseBody.length}")
+                    
+                    if (responseBody != "[]") {
+                        val jsonArray = JSONArray(responseBody)
+                        Log.d("SupabaseService", "📦 Picklist Pagination Batch Records: ${jsonArray.length()} picklists (offset=$offset)")
+                        
+                        for (i in 0 until jsonArray.length()) {
+                            val jsonObject = jsonArray.getJSONObject(i)
+                            val picklistNo = jsonObject.getString("no_picklist")
+                            allPicklists.add(picklistNo)
+                        }
+                        
+                        Log.d("SupabaseService", "📦 Added ${jsonArray.length()} picklists to collection. Total unique: ${allPicklists.size}")
+                        
+                        // Cek apakah masih ada data lagi
+                        hasMoreData = jsonArray.length() == limit
+                        offset += limit
+                        
+                    } else {
+                        // Tidak ada data lagi
+                        hasMoreData = false
+                        Log.d("SupabaseService", "📦 No more picklist data found at offset $offset")
+                    }
+                } else {
+                    Log.e("SupabaseService", "❌ Picklist Pagination Query failed with code: $responseCode")
+                    hasMoreData = false
                 }
-                reader.close()
-                
-                val jsonArray = JSONArray(response.toString())
-                val allPicklists = mutableSetOf<String>()
-                
-                for (i in 0 until jsonArray.length()) {
-                    val jsonObject = jsonArray.getJSONObject(i)
-                    val picklistNo = jsonObject.getString("no_picklist")
-                    allPicklists.add(picklistNo)
-                }
-                
-                Log.d("SupabaseService", "✅ Found ${allPicklists.size} unique picklist numbers")
-                allPicklists.toList()
-            } else {
-                Log.e("SupabaseService", "❌ Query failed with code: $responseCode")
-                emptyList()
             }
+            
+            Log.d("SupabaseService", "✅ Found ${allPicklists.size} unique picklist numbers after pagination")
+            allPicklists.toList()
             
         } catch (e: Exception) {
             Log.e("SupabaseService", "❌ Error fetching picklists: ${e.message}", e)

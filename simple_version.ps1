@@ -7,8 +7,20 @@ param(
 $buildGradlePath = "app/build.gradle.kts"
 
 try {
+    # Check if file exists
+    if (-not (Test-Path $buildGradlePath)) {
+        Write-Error "Build.gradle.kts file not found at: $buildGradlePath"
+        Write-Host "Current directory: $(Get-Location)" -ForegroundColor Yellow
+        exit 1
+    }
+    
     # Read current version
     $content = Get-Content $buildGradlePath -Raw
+    
+    if (-not $content) {
+        Write-Error "Could not read content from build.gradle.kts"
+        exit 1
+    }
     
     # Extract current version
     $versionCodeMatch = [regex]::Match($content, 'versionCode\s*=\s*(\d+)')
@@ -16,6 +28,8 @@ try {
     
     if (-not $versionCodeMatch.Success -or -not $versionNameMatch.Success) {
         Write-Error "Could not find version information in build.gradle.kts"
+        Write-Host "Content preview:" -ForegroundColor Yellow
+        Write-Host $content.Substring(0, [Math]::Min(500, $content.Length)) -ForegroundColor Gray
         exit 1
     }
     
