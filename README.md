@@ -689,7 +689,7 @@ Aplikasi **Cek Picklist** siap untuk production dengan:
 - ✅ **Hide Completed Items**: Clean UI dengan completion detection
 - ✅ **Settings Integration**: Consistent configuration
 - ✅ **Automation**: Version management yang robust
-- ✅ **Auto-Update System**: Update notification dan download otomatis
+- ✅ **Auto-Update System**: Download dan install APK otomatis dari GitHub releases
 
 **🎉 Aplikasi siap untuk deployment dengan sistem yang robust!**
 
@@ -936,21 +936,49 @@ dir app\build.gradle.kts
 dir gradlew.bat
 ```
 
+### **🔄 Auto-Update System**
+
+#### **📱 Fitur Auto-Update**
+- **✅ Direct APK Download**: Download APK langsung dari GitHub releases
+- **✅ DownloadManager Integration**: Menggunakan Android DownloadManager untuk download yang reliable
+- **✅ Notification Support**: Notifikasi progress download dan completion
+- **✅ Auto-Install**: User bisa install APK langsung dari notifikasi
+- **✅ Fallback Support**: Jika download gagal, fallback ke browser GitHub
+
+#### **🔧 Cara Kerja Auto-Update**
+1. **Check Version**: Aplikasi cek versi terbaru dari GitHub API
+2. **Show Dialog**: Jika ada update, tampilkan dialog dengan opsi download
+3. **Download APK**: Download APK langsung ke folder Downloads
+4. **Notification**: User mendapat notifikasi saat download selesai
+5. **Install**: User bisa install APK dari notifikasi atau folder Downloads
+
+#### **📋 Permissions Required**
+```xml
+<!-- Auto-Update Permissions -->
+<uses-permission android:name="android.permission.INTERNET" />
+<uses-permission android:name="android.permission.WRITE_EXTERNAL_STORAGE" />
+<uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE" />
+<uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />
+<uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+```
+
 ### **📊 Release History**
 
 | Version | Date | Changes |
 |---------|------|---------|
+| v4.4.5 | 2025-10-07 | Fix auto-update system - direct APK download & install |
 | v4.4.0 | 2025-01-09 | Optimasi kecepatan update data modal picklist |
 | v4.3.4 | 2025-01-08 | Fix readme dan version management |
 | v1.0.3 | 2025-01-07 | Initial release |
 
 ---
 
-**Version**: 4.4.5 (Auto-updating)  
+**Version**: 4.5.0 (Auto-updating)  
 **Last Updated**: 2025-10-07  
 **Platform**: Android 11+ (API 30+)  
 **Auto Versioning**: ✅ Enabled dengan PowerShell Scripts  
 **Status**: ✅ Production Ready
+
 
 
 

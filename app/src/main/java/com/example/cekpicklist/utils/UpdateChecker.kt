@@ -1,12 +1,18 @@
 package com.example.cekpicklist.utils
 
+import android.app.DownloadManager
 import android.content.Context
+import android.content.Intent
 import android.content.pm.PackageManager
+import android.net.Uri
+import android.os.Environment
 import android.util.Log
 import androidx.appcompat.app.AlertDialog
+import androidx.core.content.FileProvider
 import com.example.cekpicklist.R
 import kotlinx.coroutines.*
 import org.json.JSONObject
+import java.io.File
 import java.net.HttpURLConnection
 import java.net.URL
 
@@ -197,8 +203,8 @@ class UpdateChecker(private val context: Context) {
                 
                 Apakah Anda ingin mengunduh update?
             """.trimIndent())
-            .setPositiveButton("📥 Download") { _, _ ->
-                openDownloadPage()
+            .setPositiveButton("📥 Download & Install") { _, _ ->
+                downloadAndInstallAPK()
             }
             .setNegativeButton("⏰ Nanti") { dialog, _ ->
                 dialog.dismiss()
@@ -213,12 +219,151 @@ class UpdateChecker(private val context: Context) {
     }
     
     /**
-     * Buka halaman download
+     * Download APK langsung dari GitHub releases
+     */
+    private fun downloadAndInstallAPK() {
+        try {
+            Log.d(TAG, "Starting APK download...")
+            
+            // Get latest release info to get download URL
+            CoroutineScope(Dispatchers.IO).launch {
+                try {
+                    val latestVersion = getLatestVersionFromGitHub()
+                    val downloadUrl = getAPKDownloadUrl(latestVersion)
+                    
+                    if (downloadUrl.isNotEmpty()) {
+                        withContext(Dispatchers.Main) {
+                            startAPKDownload(downloadUrl, latestVersion)
+                        }
+                    } else {
+                        withContext(Dispatchers.Main) {
+                            // Fallback ke browser jika tidak bisa dapat download URL
+                            openDownloadPage()
+                        }
+                    }
+                } catch (e: Exception) {
+                    Log.e(TAG, "Error getting download URL: ${e.message}", e)
+                    withContext(Dispatchers.Main) {
+                        openDownloadPage()
+                    }
+                }
+            }
+        } catch (e: Exception) {
+            Log.e(TAG, "Error starting download: ${e.message}", e)
+            openDownloadPage()
+        }
+    }
+    
+    /**
+     * Get APK download URL dari GitHub API
+     */
+    private suspend fun getAPKDownloadUrl(version: String): String {
+        return try {
+            val url = URL("https://api.github.com/repos/koden01/cekpicklist/releases/latest")
+            val connection = url.openConnection() as HttpURLConnection
+            connection.requestMethod = "GET"
+            connection.setRequestProperty("Accept", "application/vnd.github.v3+json")
+            
+            val responseCode = connection.responseCode
+            if (responseCode == HttpURLConnection.HTTP_OK) {
+                val response = connection.inputStream.bufferedReader().use { it.readText() }
+                val json = JSONObject(response)
+                val assets = json.getJSONArray("assets")
+                
+                for (i in 0 until assets.length()) {
+                    val asset = assets.getJSONObject(i)
+                    val name = asset.getString("name")
+                    if (name.endsWith(".apk")) {
+                        val downloadUrl = asset.getString("browser_download_url")
+                        Log.d(TAG, "Found APK download URL: $downloadUrl")
+                        return downloadUrl
+                    }
+                }
+            }
+            ""
+        } catch (e: Exception) {
+            Log.e(TAG, "Error getting APK download URL: ${e.message}", e)
+            ""
+        }
+    }
+    
+    /**
+     * Start APK download menggunakan DownloadManager
+     */
+    private fun startAPKDownload(downloadUrl: String, version: String) {
+        try {
+            val downloadManager = context.getSystemService(Context.DOWNLOAD_SERVICE) as DownloadManager
+            
+            val request = DownloadManager.Request(Uri.parse(downloadUrl))
+            request.setTitle("Cek Picklist Update v$version")
+            request.setDescription("Downloading APK update...")
+            request.setNotificationVisibility(DownloadManager.Request.VISIBILITY_VISIBLE_NOTIFY_COMPLETED)
+            request.setDestinationInExternalPublicDir(Environment.DIRECTORY_DOWNLOADS, "CekPicklist-v$version-release.apk")
+            
+            val downloadId = downloadManager.enqueue(request)
+            Log.d(TAG, "APK download started with ID: $downloadId")
+            
+            // Show success message with install option
+            showDownloadSuccessDialog(downloadId, version)
+            
+        } catch (e: Exception) {
+            Log.e(TAG, "Error starting download: ${e.message}", e)
+            openDownloadPage()
+        }
+    }
+    
+    /**
+     * Show dialog setelah download selesai
+     */
+    private fun showDownloadSuccessDialog(downloadId: Long, version: String) {
+        AlertDialog.Builder(context)
+            .setTitle("📥 Download Started")
+            .setMessage("""
+                APK update v$version sedang diunduh...
+                
+                Setelah download selesai, Anda akan mendapat notifikasi.
+                Klik notifikasi untuk menginstall APK.
+                
+                Atau buka folder Downloads untuk install manual.
+            """.trimIndent())
+            .setPositiveButton("✅ OK") { dialog, _ ->
+                dialog.dismiss()
+            }
+            .setNegativeButton("📁 Buka Downloads") { dialog, _ ->
+                openDownloadsFolder()
+                dialog.dismiss()
+            }
+            .create()
+            .show()
+    }
+    
+    /**
+     * Buka folder Downloads
+     */
+    private fun openDownloadsFolder() {
+        try {
+            val intent = Intent(DownloadManager.ACTION_VIEW_DOWNLOADS)
+            context.startActivity(intent)
+        } catch (e: Exception) {
+            Log.e(TAG, "Error opening downloads folder: ${e.message}", e)
+            // Fallback ke file manager
+            try {
+                val intent = Intent(Intent.ACTION_VIEW)
+                intent.setDataAndType(Uri.parse(Environment.getExternalStoragePublicDirectory(Environment.DIRECTORY_DOWNLOADS).toString()), "resource/folder")
+                context.startActivity(intent)
+            } catch (e2: Exception) {
+                Log.e(TAG, "Error opening file manager: ${e2.message}", e2)
+            }
+        }
+    }
+    
+    /**
+     * Buka halaman download (fallback)
      */
     private fun openDownloadPage() {
         try {
-            val intent = android.content.Intent(android.content.Intent.ACTION_VIEW)
-            intent.data = android.net.Uri.parse("https://github.com/koden01/cekpicklist/releases/latest")
+            val intent = Intent(Intent.ACTION_VIEW)
+            intent.data = Uri.parse("https://github.com/koden01/cekpicklist/releases/latest")
             context.startActivity(intent)
         } catch (e: Exception) {
             Log.e(TAG, "Error opening download page: ${e.message}", e)
