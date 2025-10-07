@@ -695,11 +695,265 @@ Aplikasi **Cek Picklist** siap untuk production dengan:
 
 ---
 
-**Version**: 4.4.0 (Auto-updating)  
-**Last Updated**: 2025-01-09  
+## 🚀 **RELEASE SCRIPT GUIDE**
+
+### **📋 Cara Menggunakan Release Script**
+
+#### **0. Syarat Terminal dan Environment**
+
+##### **🔧 Terminal Requirements**
+- **✅ Windows Command Prompt (cmd)** - Default terminal
+- **✅ PowerShell** - Untuk script versioning dan README update
+- **✅ Git Bash** - Alternative terminal (opsional)
+- **✅ Windows Terminal** - Modern terminal (recommended)
+
+##### **📋 Environment Requirements**
+```bash
+# Pastikan environment variables sudah dikonfigurasi
+echo %ANDROID_HOME%          # Android SDK path
+echo %JAVA_HOME%             # Java JDK path
+echo %PATH%                  # System PATH
+
+# Pastikan tools tersedia
+git --version                # Git version
+java -version               # Java version
+.\gradlew --version         # Gradle wrapper version
+```
+
+##### **⚙️ PowerShell Configuration**
+```bash
+# Set execution policy untuk PowerShell scripts
+powershell -Command "Set-ExecutionPolicy -ExecutionPolicy RemoteSigned -Scope CurrentUser"
+
+# Test PowerShell execution
+powershell -Command "Get-ExecutionPolicy"
+```
+
+##### **🔍 Terminal Compatibility**
+| Terminal | Status | Notes |
+|----------|--------|-------|
+| **Windows CMD** | ✅ Supported | Default, semua fitur tersedia |
+| **PowerShell** | ✅ Supported | Recommended, better error handling |
+| **Git Bash** | ⚠️ Limited | Beberapa fitur mungkin tidak kompatibel |
+| **Windows Terminal** | ✅ Supported | Modern, recommended untuk development |
+
+#### **1. Persiapan Sebelum Release**
+```bash
+# Pastikan Anda berada di direktori project root
+cd C:\Users\ASUS\AndroidStudioProjects\cekpicklist
+
+# Pastikan git authentication sudah dikonfigurasi
+git config --global user.name "Your Name"
+git config --global user.email "your.email@example.com"
+git config --global credential.helper manager
+```
+
+#### **2. Menjalankan Release Script**
+```bash
+# Jalankan script release (normal process)
+.\release_working.bat
+
+# Atau dengan opsi khusus:
+.\release_working.bat --update-script  # Update script saja
+.\release_working.bat --help          # Tampilkan bantuan
+.\release_working.bat --version       # Tampilkan versi script
+```
+
+#### **3. Pilihan Version Type**
+- **1. Patch** (4.0.0 → 4.0.1) - Bug fixes
+- **2. Minor** (4.0.0 → 4.1.0) - New features
+- **3. Major** (4.0.0 → 5.0.0) - Breaking changes
+- **4. Update Script Only** - Update script tanpa release
+
+#### **4. Proses Release Otomatis**
+Script akan melakukan:
+1. ✅ **Pre-flight Checks** - Validasi environment
+2. ✅ **Git Authentication** - Cek koneksi ke GitHub
+3. ✅ **Auto Versioning** - Update version di build.gradle.kts
+4. ✅ **Update README** - Update versi di README.md
+5. ✅ **Build APK** - Compile release APK
+6. ✅ **Package APK** - Copy ke root directory
+7. ✅ **Git Operations** - Commit, tag, dan push ke GitHub
+8. ✅ **Script Auto-Update** - Update script jika diperlukan
+
+### **🚀 Fitur Script Terintegrasi**
+
+#### **📋 Opsi Command Line**
+```bash
+# Normal release process
+.\release_working.bat
+
+# Update script saja (tanpa release)
+.\release_working.bat --update-script
+
+# Tampilkan bantuan
+.\release_working.bat --help
+
+# Tampilkan versi script
+.\release_working.bat --version
+```
+
+#### **🔄 Auto-Update Script**
+- **✅ Backup Otomatis**: Script lama di-backup dengan timestamp
+- **✅ Update Seamless**: Update script tanpa mengganggu proses release
+- **✅ Rollback Support**: Bisa kembali ke versi sebelumnya jika diperlukan
+- **✅ Version Control**: Script memiliki versi sendiri (v2.0.0)
+
+#### **📊 Script Version Info**
+- **Version**: 2.0.0 (Integrated)
+- **Last Updated**: 2025-10-07
+- **Features**: Auto versioning, README update, APK build, Git operations, Script auto-update, Error handling, Pager issues fixed
+
+#### **🔍 Environment Check Script**
+```bash
+# Cek semua requirements sekaligus
+.\check_environment.bat
+```
+Script ini akan mengecek:
+- ✅ **Terminal Type**: Jenis terminal yang digunakan
+- ✅ **Environment Variables**: ANDROID_HOME, JAVA_HOME, PATH
+- ✅ **Tools Availability**: Git, Java, Gradle Wrapper
+- ✅ **PowerShell Configuration**: Execution policy dan script execution
+- ✅ **Project Structure**: File-file yang diperlukan
+- ✅ **Git Configuration**: User name, email, dan remote access
+
+### **🔧 Troubleshooting**
+
+#### **❌ Git Authentication Failed**
+```bash
+# Fix authentication
+git config --global credential.helper manager
+git config --global user.name "Your Name"
+git config --global user.email "your.email@example.com"
+
+# Test connection
+git push --dry-run origin master
+```
+
+#### **❌ Build Failed**
+```bash
+# Check Android SDK
+echo %ANDROID_HOME%
+
+# Clean and rebuild
+.\gradlew clean
+.\gradlew assembleRelease
+```
+
+#### **❌ PowerShell Execution Policy**
+```bash
+# Fix execution policy
+powershell -Command "Set-ExecutionPolicy -ExecutionPolicy RemoteSigned -Scope CurrentUser"
+
+# Test PowerShell execution
+powershell -Command "Get-ExecutionPolicy"
+```
+
+#### **❌ Terminal Compatibility Issues**
+```bash
+# Jika menggunakan Git Bash, gunakan cmd.exe
+cmd.exe /c ".\release_working.bat"
+
+# Jika menggunakan PowerShell, pastikan execution policy
+powershell -ExecutionPolicy Bypass -File "release_working.bat"
+
+# Test terminal compatibility
+echo "Testing terminal: %COMSPEC%"
+```
+
+#### **❌ Environment Variables Missing**
+```bash
+# Check Android SDK
+echo %ANDROID_HOME%
+if "%ANDROID_HOME%"=="" (
+    echo ❌ ANDROID_HOME not set!
+    echo Set it to your Android SDK path
+)
+
+# Check Java
+java -version
+if %errorlevel% neq 0 (
+    echo ❌ Java not found in PATH!
+    echo Add Java to your system PATH
+)
+
+# Check Git
+git --version
+if %errorlevel% neq 0 (
+    echo ❌ Git not found in PATH!
+    echo Install Git and add to PATH
+)
+```
+
+### **📱 Output Release**
+
+Setelah berhasil, Anda akan mendapatkan:
+- **✅ APK File**: `CekPicklist-v4.4.0-release.apk`
+- **✅ Git Tag**: `v4.4.0` di GitHub
+- **✅ Commit**: Release commit dengan pesan yang sesuai
+- **✅ README**: Ter-update dengan versi terbaru
+
+### **🎯 Best Practices**
+
+#### **📋 General Best Practices**
+1. **Selalu test build** sebelum release
+2. **Commit semua perubahan** sebelum menjalankan script
+3. **Backup project** sebelum major release
+4. **Test APK** setelah build selesai
+5. **Verifikasi di GitHub** setelah push
+
+#### **🖥️ Terminal Best Practices**
+1. **Gunakan Windows Terminal** untuk pengalaman terbaik
+2. **Run as Administrator** jika diperlukan untuk PowerShell execution policy
+3. **Check environment variables** sebelum menjalankan script
+4. **Test PowerShell execution** dengan command sederhana
+5. **Gunakan cmd.exe** jika ada masalah dengan PowerShell
+6. **Close dan buka ulang terminal** jika ada masalah environment
+
+#### **🔧 Pre-Release Checklist**
+```bash
+# Quick check dengan script otomatis
+.\check_environment.bat
+
+# Atau manual check:
+# 1. Check terminal compatibility
+echo "Terminal: %COMSPEC%"
+
+# 2. Check environment variables
+echo "Android SDK: %ANDROID_HOME%"
+echo "Java: %JAVA_HOME%"
+
+# 3. Check tools availability
+git --version
+java -version
+.\gradlew --version
+
+# 4. Check PowerShell execution
+powershell -Command "Get-ExecutionPolicy"
+
+# 5. Check project directory
+dir app\build.gradle.kts
+dir gradlew.bat
+```
+
+### **📊 Release History**
+
+| Version | Date | Changes |
+|---------|------|---------|
+| v4.4.0 | 2025-01-09 | Optimasi kecepatan update data modal picklist |
+| v4.3.4 | 2025-01-08 | Fix readme dan version management |
+| v1.0.3 | 2025-01-07 | Initial release |
+
+---
+
+**Version**: 4.4.3 (Auto-updating)  
+**Last Updated**: 2025-10-07  
 **Platform**: Android 11+ (API 30+)  
 **Auto Versioning**: ✅ Enabled dengan PowerShell Scripts  
 **Status**: ✅ Production Ready
+
+
+
 
 
 

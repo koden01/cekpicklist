@@ -1,119 +1,15 @@
 @echo off
-REM Integrated Release Script untuk Cek Picklist
+REM Fixed Release Script untuk Cek Picklist
 REM Script ini akan: Auto versioning, Update README, Build APK, dan Git operations
-REM Plus: Auto-update script functionality
 REM Perbaikan: Menghindari pager issues, credential manager problems, dan error handling yang lebih baik
 
-echo 🚀 Cek Picklist - Integrated Release Script
-echo ============================================
+echo 🚀 Cek Picklist - Fixed Release Script
+echo =======================================
 
 REM Set environment variables to avoid pager issues
 set GIT_PAGER=
 set PAGER=
 set GIT_CONFIG_GLOBAL=~/.gitconfig
-
-REM Check if this is a script update request
-if "%1"=="--update-script" goto :update_script
-if "%1"=="--help" goto :show_help
-if "%1"=="--version" goto :show_version
-
-REM Main release process
-goto :main_release
-
-:update_script
-echo 🔄 Updating Release Script
-echo ===========================
-
-echo.
-echo 📋 Step 1: Backup current script
-echo --------------------------------
-if exist "release_working.bat" (
-    copy "release_working.bat" "release_working_backup_%date:~-4,4%%date:~-10,2%%date:~-7,2%.bat"
-    echo ✅ Current script backed up with timestamp
-) else (
-    echo ⚠️ Current script not found, creating new one
-)
-
-echo.
-echo 📋 Step 2: Check for fixed script
-echo ----------------------------------
-if exist "release_working_fixed.bat" (
-    echo ✅ Fixed script found, updating...
-    copy "release_working_fixed.bat" "release_working.bat"
-    echo ✅ Release script updated successfully
-) else (
-    echo ❌ Fixed script not found!
-    echo Please ensure release_working_fixed.bat exists
-    pause
-    exit /b 1
-)
-
-echo.
-echo 📋 Step 3: Verify update
-echo -------------------------
-if exist "release_working.bat" (
-    echo ✅ New release_working.bat exists
-    echo 📊 File size: 
-    for %%A in ("release_working.bat") do echo %%~zA bytes
-) else (
-    echo ❌ New script not found
-    pause
-    exit /b 1
-)
-
-echo.
-echo 🎉 Script Update Complete!
-echo ===========================
-echo ✅ Old script backed up with timestamp
-echo ✅ New script installed
-echo ✅ Ready to use
-echo.
-echo 💡 Usage: .\release_working.bat
-echo ===========================
-pause
-exit /b 0
-
-:show_help
-echo 📖 Release Script Help
-echo ======================
-echo.
-echo Usage: .\release_working.bat [options]
-echo.
-echo Options:
-echo   --update-script    Update the release script to latest version
-echo   --help            Show this help message
-echo   --version         Show script version
-echo   (no options)      Run normal release process
-echo.
-echo Examples:
-echo   .\release_working.bat              # Run release process
-echo   .\release_working.bat --update-script  # Update script
-echo   .\release_working.bat --help       # Show help
-echo.
-pause
-exit /b 0
-
-:show_version
-echo 📊 Release Script Version
-echo =========================
-echo Script Version: 2.0.0 (Integrated)
-echo Last Updated: 2025-01-09
-echo Features:
-echo   ✅ Auto versioning
-echo   ✅ README update
-echo   ✅ APK build
-echo   ✅ Git operations
-echo   ✅ Script auto-update
-echo   ✅ Error handling
-echo   ✅ Pager issues fixed
-echo.
-pause
-exit /b 0
-
-:main_release
-echo.
-echo 🚀 Starting Release Process
-echo ============================
 
 REM Get version type from user
 echo.
@@ -121,14 +17,12 @@ echo Select version type:
 echo 1. Patch (4.0.0 → 4.0.1)
 echo 2. Minor (4.0.0 → 4.1.0)
 echo 3. Major (4.0.0 → 5.0.0)
-echo 4. Update Script Only
 echo.
-set /p choice="Enter choice (1-4): "
+set /p choice="Enter choice (1-3): "
 
 if "%choice%"=="1" set version_type=patch
 if "%choice%"=="2" set version_type=minor
 if "%choice%"=="3" set version_type=major
-if "%choice%"=="4" goto :update_script
 if "%choice%"=="" set version_type=patch
 
 echo.

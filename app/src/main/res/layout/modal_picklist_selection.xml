@@ -33,6 +33,18 @@
             android:textColor="@android:color/black" />
 
         <ImageView
+            android:id="@+id/btnRefreshModal"
+            android:layout_width="24dp"
+            android:layout_height="24dp"
+            android:src="@drawable/ic_settings"
+            android:contentDescription="Refresh"
+            android:clickable="true"
+            android:focusable="true"
+            android:foreground="?android:attr/selectableItemBackground"
+            android:padding="4dp"
+            android:layout_marginEnd="8dp" />
+
+        <ImageView
             android:id="@+id/btnCloseModal"
             android:layout_width="24dp"
             android:layout_height="24dp"
