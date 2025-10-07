@@ -250,12 +250,15 @@ echo 🔨 Step 5: Build APK
 echo ========================================
 
 echo 🧹 Cleaning project...
-.\gradlew clean >nul 2>&1
+.\gradlew clean
 
 if %errorlevel% neq 0 (
     echo ⚠️ Clean failed, continuing with build...
+) else (
+    echo ✅ Clean completed successfully
 )
 
+echo.
 echo 🔨 Building release APK...
 .\gradlew assembleRelease -x test --no-daemon
 
