@@ -11,6 +11,7 @@ import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.lifecycleScope
 import androidx.recyclerview.widget.LinearLayoutManager
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.delay
 import com.example.cekpicklist.adapter.PicklistSelectionAdapter
 import com.example.cekpicklist.databinding.ActivityHalamanAwalBinding
 import com.example.cekpicklist.databinding.DialogPicklistSelectionBinding
@@ -31,6 +32,12 @@ class HalamanAwalActivity : AppCompatActivity() {
     // Dialog references for proper cleanup
     private var activeDialog: androidx.appcompat.app.AlertDialog? = null
     private var loadingDialog: androidx.appcompat.app.AlertDialog? = null
+    
+    // For double click detection
+    private var lastClickTime: Long = 0
+    
+    // Auto-refresh timer untuk modal
+    private var modalRefreshTimer: kotlinx.coroutines.Job? = null
     
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -175,6 +182,23 @@ class HalamanAwalActivity : AppCompatActivity() {
             val versionName = packageManager.getPackageInfo(packageName, 0).versionName
             binding.tvVersion.text = "Version $versionName"
             Logger.PicklistInput.d("Version displayed: $versionName")
+            
+            // Long click untuk testing update checker
+            binding.tvVersion.setOnLongClickListener {
+                Logger.PicklistInput.d("Version text long clicked - testing update checker")
+                testUpdateChecker()
+                true
+            }
+            
+            // Double click untuk menampilkan debug info
+            binding.tvVersion.setOnClickListener {
+                // Check if this is a double click
+                if (System.currentTimeMillis() - lastClickTime < 500) {
+                    Logger.PicklistInput.d("Version text double clicked - showing debug info")
+                    showUpdateCheckerDebugInfo()
+                }
+                lastClickTime = System.currentTimeMillis()
+            }
         } catch (e: Exception) {
             Logger.PicklistInput.e("Error getting version: ${e.message}")
             binding.tvVersion.text = "Version Unknown"
@@ -187,11 +211,50 @@ class HalamanAwalActivity : AppCompatActivity() {
     private fun checkForUpdates() {
         Logger.PicklistInput.d("checkForUpdates() called")
         
+        // Log debug info
+        Logger.PicklistInput.d(updateChecker.getDebugInfo())
+        
         if (!updateChecker.isUpdateCheckDisabled()) {
             updateChecker.checkForUpdates()
         } else {
             Logger.PicklistInput.d("Update check is disabled by user")
         }
+    }
+    
+    /**
+     * Test update checker (untuk debugging)
+     */
+    private fun testUpdateChecker() {
+        Logger.PicklistInput.d("Testing update checker...")
+        Logger.PicklistInput.d(updateChecker.getDebugInfo())
+        
+        // Tampilkan debug info di dialog
+        val debugInfo = updateChecker.getDebugInfo()
+        androidx.appcompat.app.AlertDialog.Builder(this)
+            .setTitle("Update Checker Debug Info")
+            .setMessage(debugInfo)
+            .setPositiveButton("Force Check") { _, _ ->
+                // Reset last check time untuk testing
+                updateChecker.resetLastCheckTime()
+                // Force check update
+                updateChecker.forceCheckUpdate()
+            }
+            .setNegativeButton("Close") { dialog, _ ->
+                dialog.dismiss()
+            }
+            .show()
+    }
+    
+    /**
+     * Show update checker debug info (untuk debugging)
+     */
+    private fun showUpdateCheckerDebugInfo() {
+        val debugInfo = updateChecker.getDebugInfo()
+        Logger.PicklistInput.d("Update Checker Debug Info:")
+        Logger.PicklistInput.d(debugInfo)
+        
+        // Tampilkan di toast juga
+        ToastUtils.showHighToastWithCooldown(this, "Debug info logged to logcat")
     }
     
     /**
@@ -212,6 +275,12 @@ class HalamanAwalActivity : AppCompatActivity() {
             ToastUtils.showHighToastWithCooldown(this, "Tidak ada picklist tersedia")
             return
         }
+
+        // Trigger prefetch status agar modal langsung mendapatkan status terbaru (seed dari cache lalu jaringan)
+        viewModel.prefetchPicklistStatuses()
+        
+        // **OPTIMASI BARU**: Force refresh data untuk memastikan data terbaru
+        viewModel.forceRefreshPicklistStatuses()
         
         // Create simple modal dialog
         val dialogView = layoutInflater.inflate(R.layout.modal_picklist_selection, null)
@@ -257,8 +326,26 @@ class HalamanAwalActivity : AppCompatActivity() {
         recyclerView.adapter = adapter
         adapter.updatePicklists(finalStatuses)
         
+        // Observe status yang mungkin datang terlambat (mis. masih loading dari Supabase)
+        // Hanya menampilkan status untuk hari ini (data yang sudah dipaginate dan difilter hari ini di layer data)
+        viewModel.picklistStatuses.observe(this) { latestStatuses ->
+            if (activeDialog != null && latestStatuses != null && latestStatuses.isNotEmpty()) {
+                Logger.PicklistInput.d("Modal status updated: ${latestStatuses.size} items - refreshing adapter")
+                adapter.updatePicklists(latestStatuses)
+            }
+        }
+        
+        // **OPTIMASI BARU**: Tambahkan refresh button di modal
+        val btnRefresh = dialogView.findViewById<android.view.View>(R.id.btnRefreshModal)
+        btnRefresh?.setOnClickListener {
+            Logger.PicklistInput.d("Refresh button clicked in modal")
+            ToastUtils.showHighToastWithCooldown(this, "Memperbarui data...")
+            viewModel.forceRefreshPicklistStatuses()
+        }
+        
         // Setup close button
         btnClose.setOnClickListener {
+            stopModalAutoRefresh()
             activeDialog?.dismiss()
         }
         
@@ -284,6 +371,33 @@ class HalamanAwalActivity : AppCompatActivity() {
             .create()
         
         activeDialog?.show()
+        
+        // **OPTIMASI BARU**: Start auto-refresh untuk modal
+        startModalAutoRefresh()
+    }
+    
+    /**
+     * Start auto-refresh untuk modal picklist (setiap 30 detik)
+     */
+    private fun startModalAutoRefresh() {
+        modalRefreshTimer?.cancel()
+        modalRefreshTimer = lifecycleScope.launch {
+            while (activeDialog?.isShowing == true) {
+                delay(30_000) // 30 detik
+                if (activeDialog?.isShowing == true) {
+                    Logger.PicklistInput.d("Auto-refreshing modal data...")
+                    viewModel.forceRefreshPicklistStatuses()
+                }
+            }
+        }
+    }
+    
+    /**
+     * Stop auto-refresh untuk modal
+     */
+    private fun stopModalAutoRefresh() {
+        modalRefreshTimer?.cancel()
+        modalRefreshTimer = null
     }
     
     // Legacy dialog methods removed - using RecyclerView instead
@@ -349,6 +463,9 @@ class HalamanAwalActivity : AppCompatActivity() {
     }
 
     override fun onDestroy() {
+        // Stop auto-refresh timer
+        stopModalAutoRefresh()
+        
         // Dismiss dialog untuk mencegah WindowLeaked
         try { activeDialog?.dismiss() } catch (_: Throwable) {}
         activeDialog = null

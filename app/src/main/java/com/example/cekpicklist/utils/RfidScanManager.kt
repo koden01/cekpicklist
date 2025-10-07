@@ -515,9 +515,11 @@ fun playBeepSound() {
     fun performBatchLookup(epcList: List<String>) {
         if (epcList.isEmpty()) return
         
-        // Filter EPC yang belum ada di cache dan tidak sedang dalam proses
+        // Filter EPC yang perlu di-lookup: belum ada di cache ATAU sebelumnya NOT_FOUND, dan tidak sedang in-flight
         val epcsToLookup = epcList.filter { epc ->
-            !epcToProduct.containsKey(epc) && !inFlightEpcs.contains(epc)
+            val cached = epcToProduct[epc]
+            val shouldRetryNotFound = cached != null && (cached.productName == "NOT_FOUND" || cached.articleName == "NOT_FOUND")
+            (!epcToProduct.containsKey(epc) || shouldRetryNotFound) && !inFlightEpcs.contains(epc)
         }
         
         if (epcsToLookup.isEmpty()) {

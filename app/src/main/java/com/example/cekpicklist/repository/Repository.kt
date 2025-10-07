@@ -268,12 +268,28 @@ class Repository(private val context: android.content.Context? = null) {
             val batchResults = getPicklistItemsBatch(picklistNumbers)
             
             val statuses = mutableListOf<PicklistStatus>()
-            
+
+            // Ambil scanned count HARI INI untuk setiap picklist secara paralel agar status akurat meski items masih loading
+            val scannedCountsToday = picklistNumbers.associateWith { pickNo ->
+                async {
+                    try {
+                        supabaseService.getPicklistScans(pickNo).size
+                    } catch (e: Exception) {
+                        Log.e(TAG, "❌ Error fetching scans for $pickNo: ${e.message}")
+                        0
+                    }
+                }
+            }.mapValues { it.value.await() }
+
             batchResults.forEach { (picklistNumber, items) ->
                 try {
+                    val scannedToday = scannedCountsToday[picklistNumber] ?: 0
+
                     if (items.isNotEmpty()) {
                         val totalQty = items.sumOf { it.qtyPl }
-                        val scannedQty = items.sumOf { it.qtyScan }
+                        // Gunakan hasil terbesar antara qtyScan dari items dan jumlah scan hari ini dari tabel scan
+                        val scannedQtyFromItems = items.sumOf { it.qtyScan }
+                        val scannedQty = maxOf(scannedQtyFromItems, scannedToday)
                         val remainingQty = if (scannedQty >= totalQty) 0 else totalQty - scannedQty
                         val isScanned = scannedQty > 0
                         
@@ -294,19 +310,32 @@ class Repository(private val context: android.content.Context? = null) {
                         
                         Log.d(TAG, "🔥 Picklist $picklistNumber: total=$totalQty, scanned=$scannedQty, remaining=$remainingQty, isScanned=$isScanned")
                     } else {
-                        val status = PicklistStatus(
-                            picklistNumber = picklistNumber,
-                            isScanned = false,
-                            remainingQty = 0,
-                            totalQty = 0,
-                            scannedQty = 0,
-                            lastScanTime = null,
-                            overscanQty = 0
-                        )
+                        // Jika items belum tersedia tapi ada scan hari ini, tandai sebagai sudah discan
+                        val status = if (scannedToday > 0) {
+                            PicklistStatus(
+                                picklistNumber = picklistNumber,
+                                isScanned = true,
+                                remainingQty = 0,
+                                totalQty = 0,
+                                scannedQty = scannedToday,
+                                lastScanTime = null,
+                                overscanQty = 0
+                            )
+                        } else {
+                            PicklistStatus(
+                                picklistNumber = picklistNumber,
+                                isScanned = false,
+                                remainingQty = 0,
+                                totalQty = 0,
+                                scannedQty = 0,
+                                lastScanTime = null,
+                                overscanQty = 0
+                            )
+                        }
                         
                         statuses.add(status)
                         cacheManager.setPicklistStatus(picklistNumber, status)
-                        Log.d(TAG, "⚠️ Picklist $picklistNumber: No items found")
+                        Log.d(TAG, "⚠️ Picklist $picklistNumber: items not found, scansToday=$scannedToday, isScanned=${status.isScanned}")
                     }
                 } catch (e: Exception) {
                     Log.e(TAG, "❌ Error calculating status for $picklistNumber: ${e.message}")
@@ -440,6 +469,111 @@ class Repository(private val context: android.content.Context? = null) {
         }
     }
     
+    /**
+     * Force refresh picklist completion statuses: bypass cache dan langsung fetch dari jaringan
+     * Digunakan untuk memastikan data terbaru saat modal dibuka
+     */
+    suspend fun forceRefreshPicklistCompletionStatuses(picklistNumbers: List<String>): List<PicklistStatus> = withContext(Dispatchers.IO) {
+        try {
+            Log.d(TAG, "🔥 FORCE REFRESH: Calculating completion statuses for ${picklistNumbers.size} picklists (bypass cache)")
+            
+            // **OPTIMASI**: Langsung fetch dari Supabase tanpa cache
+            val batchResults = getPicklistItemsBatchForceRefresh(picklistNumbers)
+            
+            val statuses = mutableListOf<PicklistStatus>()
+
+            // Ambil scanned count HARI INI untuk setiap picklist secara paralel
+            val scannedCountsToday = picklistNumbers.associateWith { pickNo ->
+                async {
+                    try {
+                        supabaseService.getPicklistScans(pickNo).size
+                    } catch (e: Exception) {
+                        Log.e(TAG, "❌ Error fetching scans for $pickNo: ${e.message}")
+                        0
+                    }
+                }
+            }.mapValues { it.value.await() }
+
+            batchResults.forEach { (picklistNumber, items) ->
+                try {
+                    val scannedToday = scannedCountsToday[picklistNumber] ?: 0
+
+                    if (items.isNotEmpty()) {
+                        val totalQty = items.sumOf { it.qtyPl }
+                        val scannedQty = items.sumOf { it.qtyScan }
+                        val remainingQty = totalQty - scannedQty
+                        val isScanned = scannedQty > 0
+                        
+                        val status = PicklistStatus(
+                            picklistNumber = picklistNumber,
+                            isScanned = isScanned,
+                            remainingQty = remainingQty,
+                            totalQty = totalQty,
+                            scannedQty = scannedQty,
+                            lastScanTime = null,
+                            overscanQty = kotlin.math.max(0, scannedQty - totalQty)
+                        )
+                        
+                        statuses.add(status)
+                        Log.d(TAG, "🔥 FORCE REFRESH Status: $picklistNumber - scanned=$isScanned, total=$totalQty, scanned=$scannedQty, remaining=$remainingQty")
+                    } else {
+                        // Picklist belum pernah di-scan atau tidak ada data
+                        val status = PicklistStatus(
+                            picklistNumber = picklistNumber,
+                            isScanned = false,
+                            remainingQty = 0,
+                            totalQty = 0,
+                            scannedQty = 0,
+                            lastScanTime = null,
+                            overscanQty = 0
+                        )
+                        statuses.add(status)
+                    }
+                } catch (e: Exception) {
+                    Log.e(TAG, "❌ Error processing status for $picklistNumber: ${e.message}")
+                }
+            }
+            
+            Log.d(TAG, "✅ FORCE REFRESH: Calculated ${statuses.size} completion statuses")
+            statuses
+            
+        } catch (e: Exception) {
+            Log.e(TAG, "❌ Error in force refresh completion statuses: ${e.message}", e)
+            emptyList()
+        }
+    }
+    
+    /**
+     * Force refresh picklist items batch: bypass cache dan langsung fetch dari Supabase
+     */
+    private suspend fun getPicklistItemsBatchForceRefresh(picklistNumbers: List<String>): Map<String, List<PicklistItem>> = withContext(Dispatchers.IO) {
+        try {
+            Log.d(TAG, "🔥 FORCE REFRESH: Batch fetching items for ${picklistNumbers.size} picklists (bypass cache)")
+            
+            val deferredResults = picklistNumbers.map { picklistNo ->
+                async {
+                    try {
+                        // **OPTIMASI**: Langsung fetch dari Supabase tanpa cache
+                        val items = supabaseService.getPicklistItems(picklistNo)
+                        picklistNo to items
+                    } catch (e: Exception) {
+                        Log.e(TAG, "❌ Error force fetching items for $picklistNo: ${e.message}")
+                        picklistNo to emptyList<PicklistItem>()
+                    }
+                }
+            }
+            
+            val results = deferredResults.awaitAll().associate { it.first to it.second }
+            
+            Log.d(TAG, "✅ FORCE REFRESH: Batch items fetch completed")
+            results
+            
+        } catch (e: Exception) {
+            Log.e(TAG, "❌ Error in force refresh batch items fetch: ${e.message}", e)
+            emptyMap()
+        }
+    }
+
     /**
      * OPTIMASI: Batch save multiple picklist scans untuk mengurangi API calls
      */

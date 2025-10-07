@@ -25,6 +25,9 @@ class CacheManager(private val context: Context? = null) {
     
     companion object {
         private const val CACHE_TTL_MS = 15 * 60 * 60 * 1000L // 15 jam
+        // TTL khusus untuk data yang sering berubah
+        private const val PICKLIST_STATUS_TTL_MS = 2 * 60 * 1000L // 2 menit untuk status
+        private const val PICKLIST_ITEMS_TTL_MS = 30 * 60 * 1000L // 30 menit untuk items
         private const val TAG = "CacheManager"
     }
     
@@ -230,10 +233,12 @@ class CacheManager(private val context: Context? = null) {
      */
     private data class CacheEntry<T>(
         val data: T,
-        val timestamp: Long = System.currentTimeMillis()
+        val timestamp: Long = System.currentTimeMillis(),
+        val customTtl: Long? = null
     ) {
         fun isExpired(): Boolean {
-            return System.currentTimeMillis() - timestamp > CACHE_TTL_MS
+            val ttl = customTtl ?: CACHE_TTL_MS
+            return System.currentTimeMillis() - timestamp > ttl
         }
         
         // Removed isExpiredWithExtension() - EXTENDED status dihilangkan
@@ -446,11 +451,11 @@ class CacheManager(private val context: Context? = null) {
     }
     
     /**
-     * Simpan picklist status ke cache
+     * Simpan picklist status ke cache dengan TTL khusus (2 menit)
      */
     suspend fun setPicklistStatus(picklistNumber: String, status: PicklistStatus) = cacheMutex.withLock {
-        picklistStatusCache[picklistNumber] = CacheEntry(status)
-        Log.d(TAG, "💾 Cached picklist status for: $picklistNumber")
+        picklistStatusCache[picklistNumber] = CacheEntry(status, customTtl = PICKLIST_STATUS_TTL_MS)
+        Log.d(TAG, "💾 Cached picklist status for: $picklistNumber (TTL: 2 minutes)")
         
         // Save to SharedPreferences
         withContext(Dispatchers.IO) {
@@ -472,16 +477,16 @@ class CacheManager(private val context: Context? = null) {
             
             // Cek apakah ada perubahan
             if (existingStatus != newStatus) {
-                picklistStatusCache[picklistNumber] = CacheEntry(newStatus)
-                Log.d(TAG, "🔄 Updated picklist status: $picklistNumber (scanned: ${existingStatus.isScanned} -> ${newStatus.isScanned}) [was: $existingFreshness, age: $existingAge]")
+                picklistStatusCache[picklistNumber] = CacheEntry(newStatus, customTtl = PICKLIST_STATUS_TTL_MS)
+                Log.d(TAG, "🔄 Updated picklist status: $picklistNumber (scanned: ${existingStatus.isScanned} -> ${newStatus.isScanned}) [was: $existingFreshness, age: $existingAge] (TTL: 2 minutes)")
             } else {
                 Log.d(TAG, "✅ Picklist status unchanged: $picklistNumber [$existingFreshness, age: $existingAge]")
             }
         } else {
             // Tidak ada data di cache atau expired, simpan sebagai data baru
-            picklistStatusCache[picklistNumber] = CacheEntry(newStatus)
+            picklistStatusCache[picklistNumber] = CacheEntry(newStatus, customTtl = PICKLIST_STATUS_TTL_MS)
             val reason = if (existingEntry == null) "NOT_FOUND" else "EXPIRED"
-            Log.d(TAG, "💾 Fresh cache for picklist status: $picklistNumber [reason: $reason]")
+            Log.d(TAG, "💾 Fresh cache for picklist status: $picklistNumber [reason: $reason] (TTL: 2 minutes)")
         }
     }
     

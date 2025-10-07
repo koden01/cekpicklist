@@ -253,6 +253,68 @@ class ScanViewModel(application: Application) : AndroidViewModel(application) {
             }
         }
     }
+
+    /**
+     * Prefetch picklist statuses: seed dari cache bila ada agar UI cepat,
+     * lalu lengkapi dengan fetch jaringan (status hari ini) dan update kembali.
+     */
+    fun prefetchPicklistStatuses() {
+        val currentPicklists = _picklists.value ?: emptyList()
+        if (currentPicklists.isEmpty()) return
+
+        // Seed cepat dari cache (tanpa suspend) via repository.getBatchPicklistData yang akan gunakan cache bila ada
+        viewModelScope.launch(Dispatchers.IO) {
+            try {
+                // Ambil data dari cache jika tersedia
+                val cachedData = repository.getBatchPicklistData(currentPicklists)
+                if (cachedData.isNotEmpty()) {
+                    val cachedStatuses = cachedData.values.map { it.status }
+                    withContext(Dispatchers.Main) {
+                        if (cachedStatuses.isNotEmpty()) {
+                            _picklistStatuses.value = cachedStatuses
+                            Log.d("ScanViewModel", "✅ Seeded picklist statuses from cache: ${cachedStatuses.size} items")
+                        }
+                    }
+                }
+
+                // Prefetch lengkap dari jaringan (menghitung scan hari ini) dan update UI kembali
+                loadPicklistStatuses(currentPicklists)
+            } catch (t: Throwable) {
+                Log.e("ScanViewModel", "❌ Prefetch picklist statuses failed: ${t.message}")
+            }
+        }
+    }
+    
+    /**
+     * Force refresh picklist statuses: bypass cache dan langsung fetch dari jaringan
+     * Digunakan untuk memastikan data terbaru saat modal dibuka
+     */
+    fun forceRefreshPicklistStatuses() {
+        val currentPicklists = _picklists.value ?: emptyList()
+        if (currentPicklists.isEmpty()) return
+
+        Log.d("ScanViewModel", "🔥 Force refreshing picklist statuses (bypass cache)")
+        
+        viewModelScope.launch(Dispatchers.IO) {
+            try {
+                // **OPTIMASI**: Langsung fetch dari jaringan tanpa cache menggunakan method baru
+                val statuses = repository.forceRefreshPicklistCompletionStatuses(currentPicklists)
+                
+                withContext(Dispatchers.Main) {
+                    _picklistStatuses.value = statuses
+                    Log.d("ScanViewModel", "✅ Force refreshed ${statuses.size} picklist statuses from network (bypass cache)")
+                    
+                    // Log each status for debugging
+                    statuses.forEach { status ->
+                        Log.d("ScanViewModel", "📊 FORCE REFRESH ${status.picklistNumber}: scanned=${status.isScanned}, total=${status.totalQty}, scanned=${status.scannedQty}, remaining=${status.remainingQty}")
+                    }
+                }
+                
+            } catch (e: Exception) {
+                Log.e("ScanViewModel", "❌ Error force refreshing picklist statuses: ${e.message}")
+            }
+        }
+    }
     
     
     /**

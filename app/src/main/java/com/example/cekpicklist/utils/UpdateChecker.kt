@@ -18,8 +18,10 @@ class UpdateChecker(private val context: Context) {
     
     companion object {
         private const val TAG = "UpdateChecker"
+        // Pastikan repo sudah benar (koden01/cekpicklist)
         private const val GITHUB_API_URL = "https://api.github.com/repos/koden01/cekpicklist/releases/latest"
-        private const val MIN_UPDATE_INTERVAL_DAYS = 1 // Minimal 1 hari antar cek
+        // Interval per jam
+        private const val MIN_UPDATE_INTERVAL_MS = 60L * 60L * 1000L
     }
     
     private val prefs = context.getSharedPreferences("UpdateChecker", Context.MODE_PRIVATE)
@@ -42,12 +44,23 @@ class UpdateChecker(private val context: Context) {
                 
                 Log.d(TAG, "Current version: $currentVersion, Latest version: $latestVersion")
                 
-                if (isNewVersionAvailable(currentVersion, latestVersion)) {
+                // Guard: jika latest kosong atau versi sama, jangan tampilkan notifikasi
+                if (latestVersion.isBlank() || latestVersion.trim() == currentVersion.trim()) {
+                    Log.d(TAG, "Skip update dialog: empty latest version or same version (current: $currentVersion, latest: $latestVersion)")
+                    updateLastCheckTime()
+                    return@launch
+                }
+
+                val isNewVersion = isNewVersionAvailable(currentVersion, latestVersion)
+                Log.d(TAG, "Version comparison result: isNewVersion=$isNewVersion")
+                
+                if (isNewVersion) {
+                    Log.d(TAG, "Showing update dialog for version $latestVersion")
                     withContext(Dispatchers.Main) {
                         showUpdateDialog(latestVersion)
                     }
                 } else {
-                    Log.d(TAG, "App is up to date")
+                    Log.d(TAG, "App is up to date - no update needed")
                 }
                 
                 // Update last check time
@@ -65,9 +78,8 @@ class UpdateChecker(private val context: Context) {
     private fun shouldCheckForUpdate(): Boolean {
         val lastCheck = prefs.getLong("last_update_check", 0)
         val currentTime = System.currentTimeMillis()
-        val daysSinceLastCheck = (currentTime - lastCheck) / (1000 * 60 * 60 * 24)
-        
-        return daysSinceLastCheck >= MIN_UPDATE_INTERVAL_DAYS
+        val elapsed = currentTime - lastCheck
+        return elapsed >= MIN_UPDATE_INTERVAL_MS
     }
     
     /**
@@ -77,21 +89,20 @@ class UpdateChecker(private val context: Context) {
         return withContext(Dispatchers.IO) {
             val url = URL(GITHUB_API_URL)
             val connection = url.openConnection() as HttpURLConnection
-            
             try {
                 connection.requestMethod = "GET"
                 connection.setRequestProperty("Accept", "application/vnd.github.v3+json")
                 connection.connectTimeout = 10000
                 connection.readTimeout = 10000
-                
+
                 val responseCode = connection.responseCode
                 if (responseCode == HttpURLConnection.HTTP_OK) {
                     val response = connection.inputStream.bufferedReader().use { it.readText() }
                     val json = JSONObject(response)
                     val tagName = json.getString("tag_name")
-                    
-                    // Remove 'v' prefix if exists
-                    tagName.removePrefix("v")
+                    val latest = tagName.removePrefix("v")
+                    Log.d(TAG, "Latest tag: $tagName -> parsed: $latest")
+                    latest
                 } else {
                     Log.e(TAG, "GitHub API error: $responseCode")
                     throw Exception("GitHub API error: $responseCode")
@@ -117,19 +128,37 @@ class UpdateChecker(private val context: Context) {
     
     /**
      * Bandingkan versi untuk menentukan apakah ada update
+     * Hanya mengembalikan true jika versi lebih baru (bukan sama)
      */
     private fun isNewVersionAvailable(currentVersion: String, latestVersion: String): Boolean {
         return try {
             val current = parseVersion(currentVersion)
             val latest = parseVersion(latestVersion)
             
-            // Bandingkan major, minor, patch
-            when {
-                latest.major > current.major -> true
-                latest.major == current.major && latest.minor > current.minor -> true
-                latest.major == current.major && latest.minor == current.minor && latest.patch > current.patch -> true
-                else -> false
+            Log.d(TAG, "Comparing versions: current=$current, latest=$latest")
+            
+            // Bandingkan major, minor, patch - hanya versi yang lebih baru
+            val result = when {
+                latest.major > current.major -> {
+                    Log.d(TAG, "Major version is newer: ${latest.major} > ${current.major}")
+                    true
+                }
+                latest.major == current.major && latest.minor > current.minor -> {
+                    Log.d(TAG, "Minor version is newer: ${latest.minor} > ${current.minor}")
+                    true
+                }
+                latest.major == current.major && latest.minor == current.minor && latest.patch > current.patch -> {
+                    Log.d(TAG, "Patch version is newer: ${latest.patch} > ${current.patch}")
+                    true
+                }
+                else -> {
+                    Log.d(TAG, "No newer version available")
+                    false
+                }
             }
+            
+            Log.d(TAG, "Version comparison result: $result")
+            result
         } catch (e: Exception) {
             Log.e(TAG, "Error comparing versions: ${e.message}", e)
             false
@@ -141,21 +170,26 @@ class UpdateChecker(private val context: Context) {
      */
     private fun parseVersion(version: String): Version {
         val parts = version.split(".")
-        return Version(
+        val parsed = Version(
             major = parts.getOrNull(0)?.toIntOrNull() ?: 0,
             minor = parts.getOrNull(1)?.toIntOrNull() ?: 0,
             patch = parts.getOrNull(2)?.toIntOrNull() ?: 0
         )
+        Log.d(TAG, "Parsed version '$version' -> $parsed")
+        return parsed
     }
     
     /**
      * Tampilkan dialog update
      */
     private fun showUpdateDialog(latestVersion: String) {
+        val currentVersion = getCurrentVersion()
+        
         val dialog = AlertDialog.Builder(context, R.style.RoundDialogTheme)
             .setTitle("🔄 Update Tersedia")
             .setMessage("""
                 Versi terbaru $latestVersion tersedia!
+                (Versi saat ini: $currentVersion)
                 
                 📱 Fitur baru dan perbaikan bug
                 🔧 Performa yang lebih baik
@@ -219,6 +253,44 @@ class UpdateChecker(private val context: Context) {
     fun enableUpdateCheck() {
         prefs.edit().putBoolean("update_check_disabled", false).apply()
         Log.d(TAG, "Update check enabled")
+    }
+    
+    /**
+     * Force check update (untuk testing)
+     */
+    fun forceCheckUpdate() {
+        Log.d(TAG, "Force checking for updates...")
+        checkForUpdates(forceCheck = true)
+    }
+    
+    /**
+     * Reset last check time (untuk testing)
+     */
+    fun resetLastCheckTime() {
+        prefs.edit().remove("last_update_check").apply()
+        Log.d(TAG, "Last check time reset")
+    }
+    
+    /**
+     * Get debug info (untuk testing)
+     */
+    fun getDebugInfo(): String {
+        val currentVersion = getCurrentVersion()
+        val lastCheck = prefs.getLong("last_update_check", 0)
+        val isDisabled = prefs.getBoolean("update_check_disabled", false)
+        val currentTime = System.currentTimeMillis()
+        val elapsed = currentTime - lastCheck
+        val shouldCheck = elapsed >= MIN_UPDATE_INTERVAL_MS
+        
+        return """
+            UpdateChecker Debug Info:
+            - Current Version: $currentVersion
+            - Last Check: ${if (lastCheck == 0L) "Never" else java.text.SimpleDateFormat("yyyy-MM-dd HH:mm:ss", java.util.Locale.getDefault()).format(java.util.Date(lastCheck))}
+            - Elapsed: ${elapsed / 1000 / 60} minutes
+            - Should Check: $shouldCheck
+            - Update Check Disabled: $isDisabled
+            - Min Interval: ${MIN_UPDATE_INTERVAL_MS / 1000 / 60} minutes
+        """.trimIndent()
     }
     
     /**

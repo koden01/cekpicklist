@@ -45,6 +45,7 @@ class CekPicklistActivity : BaseRfidActivity() {
     // RFID handled by BaseRfidActivity/RfidScanManager
     private var hasShownCompletionAnimation = false
     private var completionCheckJob: Job? = null
+    private var shouldResumeScanningAfterClear = false
     
     // **PERBAIKAN**: Tambahkan cooldown untuk tombol scan
     private var lastScanButtonClickTime = 0L
@@ -630,6 +631,8 @@ class CekPicklistActivity : BaseRfidActivity() {
                 .setPositiveButton("Clear") { _, _ ->
                     Logger.Dialog.dialogConfirmed("Clear All")
                     Logger.MainActivity.clearAllConfirmed()
+                    // Ingat status scanning saat ini untuk auto-resume setelah clear
+                    shouldResumeScanningAfterClear = isScanning
                     performClearRfidOnly()
                 }
                 .setNegativeButton("Batal") { dialog, _ ->
@@ -795,6 +798,13 @@ class CekPicklistActivity : BaseRfidActivity() {
             binding.tvRfidDetected.text = "0"
             
             Log.d("MainActivity", "✅ Clear RFID berhasil (tanpa save)")
+            
+            // 6. Lanjutkan scanning kembali bila sebelumnya aktif
+            if (shouldResumeScanningAfterClear) {
+                Log.d(TAG, "🔥 Auto-resume scanning setelah clear")
+                shouldResumeScanningAfterClear = false
+                startRfidScanning()
+            }
             
         } catch (e: Exception) {
             Log.e("MainActivity", "❌ Error clearing RFID: ${e.message}", e)
