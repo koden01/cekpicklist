@@ -7,6 +7,7 @@ import com.example.cekpicklist.api.SupabaseService
 import com.example.cekpicklist.api.NirwanaApiService
 import com.example.cekpicklist.api.BatchSupabaseService
 import com.example.cekpicklist.cache.CacheManager
+import com.example.cekpicklist.MyApplication
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.async
@@ -16,14 +17,21 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.withTimeout
+import kotlinx.coroutines.TimeoutCancellationException
+import kotlinx.coroutines.CancellationException
 import com.example.cekpicklist.viewmodel.Quadruple
 import com.example.cekpicklist.viewmodel.Sextuple
+import com.example.cekpicklist.api.SupabaseService.SimplePicklist
 
 class Repository(private val context: android.content.Context? = null) {
     private val supabaseService = SupabaseService()
     private val nirwanaApiService = NirwanaApiService()
     private val batchSupabaseService = BatchSupabaseService()
-    private val cacheManager = CacheManager(context)
+    // Use shared CacheManager from MyApplication when available to avoid multiple instances
+    private val cacheManager: CacheManager =
+        ((context?.applicationContext) as? MyApplication)?.getCacheManager()
+            ?: CacheManager(context)
     
     // Coroutine scope untuk background operations
     private val repositoryScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
@@ -35,6 +43,70 @@ class Repository(private val context: android.content.Context? = null) {
     companion object {
         private const val TAG = "Repository"
         private const val DUPLICATE_QUERY_THRESHOLD_MS = 1000L // 1 detik
+    }
+    
+    /**
+     * METODE BARU: Ambil picklist unik hari ini dengan status scan
+     * Sederhana dan efisien - hanya untuk modal selection
+     */
+    suspend fun getUniquePicklistsWithScanStatus(): List<SimplePicklist> = withContext(Dispatchers.IO) {
+        try {
+            // Track query call
+            trackQueryCall("getUniquePicklistsWithScanStatus")
+
+            Log.d(TAG, "🔥 === REPOSITORY GET UNIQUE PICKLISTS WITH SCAN STATUS START ===")
+            Log.d(TAG, "🔍 DEBUG: getUniquePicklistsWithScanStatus() called at ${System.currentTimeMillis()}")
+
+            // Langsung ambil dari Supabase (tidak perlu cache untuk data sederhana ini)
+            Log.d(TAG, "🔍 DEBUG: Calling supabaseService.getUniquePicklistsWithScanStatus()...")
+            val simplePicklists = supabaseService.getUniquePicklistsWithScanStatus()
+            Log.d(TAG, "🔍 DEBUG: Supabase returned ${simplePicklists.size} unique picklists")
+
+            if (simplePicklists.isNotEmpty()) {
+                Log.d(TAG, "🔍 DEBUG: First 3 picklists: ${simplePicklists.take(3).map { "${it.noPicklist} scanned=${it.scannedCount}/${it.totalCount} unscanned=${it.unscannedCount}" }}")
+            } else {
+                Log.w(TAG, "⚠️ DEBUG: Supabase returned empty picklist list!")
+            }
+
+            Log.d(TAG, "✅ Retrieved ${simplePicklists.size} unique picklists with scan status")
+            simplePicklists
+        } catch (e: Exception) {
+            Log.e(TAG, "❌ Error getting unique picklists with scan status: ${e.message}", e)
+            Log.e(TAG, "🔍 DEBUG: Exception details", e)
+            emptyList()
+        }
+    }
+    
+    /**
+     * LAZY LOADING: Ambil data detail picklist saat dipilih
+     */
+    suspend fun getPicklistDetails(picklistNumber: String): List<PicklistItem> = withContext(Dispatchers.IO) {
+        try {
+            // Track query call
+            trackQueryCall("getPicklistDetails", picklistNumber)
+
+            Log.d(TAG, "🔥 === REPOSITORY GET PICKLIST DETAILS START ===")
+            Log.d(TAG, "🔍 DEBUG: getPicklistDetails() called for picklist: $picklistNumber")
+            Log.d(TAG, "🔍 DEBUG: getPicklistDetails() called at ${System.currentTimeMillis()}")
+
+            // Langsung ambil dari Supabase (lazy loading)
+            Log.d(TAG, "🔍 DEBUG: Calling supabaseService.getPicklistDetails($picklistNumber)...")
+            val picklistItems = supabaseService.getPicklistDetails(picklistNumber)
+            Log.d(TAG, "🔍 DEBUG: Supabase returned ${picklistItems.size} items for picklist $picklistNumber")
+
+            if (picklistItems.isNotEmpty()) {
+                Log.d(TAG, "🔍 DEBUG: First 3 items: ${picklistItems.take(3).map { "${it.articleName}(${it.qtyPl})" }}")
+            } else {
+                Log.w(TAG, "⚠️ DEBUG: Supabase returned empty items list for picklist $picklistNumber!")
+            }
+
+            Log.d(TAG, "✅ Retrieved ${picklistItems.size} items for picklist $picklistNumber")
+            picklistItems
+        } catch (e: Exception) {
+            Log.e(TAG, "❌ Error getting picklist details for $picklistNumber: ${e.message}", e)
+            Log.e(TAG, "🔍 DEBUG: Exception details", e)
+            emptyList()
+        }
     }
     
     /**
@@ -69,17 +141,62 @@ class Repository(private val context: android.content.Context? = null) {
             // Track query call
             trackQueryCall("getPicklists")
             
-            // Cek cache dulu
-            val cachedPicklists = cacheManager.getAllPicklists()
-            if (cachedPicklists != null) {
+            Log.d(TAG, "🔥 === REPOSITORY GETPICKLISTS START ===")
+            Log.d(TAG, "🔍 DEBUG: Starting getPicklists() - checking cache first...")
+            Log.d(TAG, "🔍 DEBUG: getPicklists() called at ${System.currentTimeMillis()}")
+            
+                // Cek cache dulu (treat empty list as MISS agar tidak menahan keadaan kosong)
+                Log.d(TAG, "🔍 DEBUG: Calling cacheManager.getAllPicklists()...")
+                val cachedPicklists = try {
+                    withTimeout(4000) { // relax timeout to reduce false timeouts
+                        cacheManager.getAllPicklists()
+                    }
+                } catch (e: TimeoutCancellationException) {
+                    Log.e(TAG, "❌ Cache check timeout after 2 seconds: ${e.message}")
+                    // **PERBAIKAN**: Try to get cached data directly without timeout
+                    try {
+                        Log.d(TAG, "🔄 FALLBACK: Trying to get cached data directly...")
+                        val fallbackData = cacheManager.getAllPicklists()
+                        if (fallbackData != null) {
+                            Log.d(TAG, "✅ FALLBACK: Got cached data directly: ${fallbackData.size} items")
+                            return@withContext fallbackData
+                        }
+                    } catch (fallbackError: Exception) {
+                        Log.e(TAG, "❌ Fallback cache access failed: ${fallbackError.message}", fallbackError)
+                    }
+                    null
+                } catch (e: Exception) {
+                    Log.e(TAG, "❌ Cache check error: ${e.message}", e)
+                    // **PERBAIKAN**: Try to get cached data directly even on error
+                    try {
+                        Log.d(TAG, "🔄 FALLBACK: Trying to get cached data despite error...")
+                        val fallbackData = cacheManager.getAllPicklists()
+                        if (fallbackData != null) {
+                            Log.d(TAG, "✅ FALLBACK: Got cached data despite error: ${fallbackData.size} items")
+                            return@withContext fallbackData
+                        }
+                    } catch (fallbackError: Exception) {
+                        Log.e(TAG, "❌ Fallback cache access failed: ${fallbackError.message}", fallbackError)
+                    }
+                    null
+                }
+                Log.d(TAG, "🔍 DEBUG: Cache check result - cachedPicklists: ${cachedPicklists?.size ?: "null"} items")
+            
+            if (cachedPicklists != null && cachedPicklists.isNotEmpty()) {
                 Log.d(TAG, "✅ Using cached picklists: ${cachedPicklists.size} items")
+                Log.d(TAG, "🔍 DEBUG: Cached picklists: ${cachedPicklists.take(3).joinToString(", ")}${if (cachedPicklists.size > 3) "..." else ""}")
                 
-                // Lakukan background refresh untuk update incremental
+                // **PERBAIKAN**: Lakukan background refresh untuk update incremental dengan persistence
                 repositoryScope.launch {
                     try {
                         Log.d(TAG, "🔄 Background refresh for incremental update: all picklists")
                         val freshPicklists = supabaseService.getPicklists()
+                        Log.d(TAG, "🔍 DEBUG: Background refresh got ${freshPicklists.size} fresh picklists")
                         cacheManager.updateAllPicklistsIncremental(freshPicklists)
+                        
+                        // **PERBAIKAN BARU**: Force save cache untuk memastikan persistence
+                        cacheManager.forceSaveCache()
+                        
                         Log.d(TAG, "✅ Background incremental update completed for all picklists")
                     } catch (e: Exception) {
                         Log.e(TAG, "❌ Background incremental update failed for all picklists: ${e.message}")
@@ -89,12 +206,87 @@ class Repository(private val context: android.content.Context? = null) {
                 return@withContext cachedPicklists
             }
             
-            // Jika tidak ada di cache, fetch dari Supabase
-            Log.d(TAG, "🔥 Fetching picklists from Supabase...")
-            val picklists = supabaseService.getPicklists()
+            // Jika tidak ada di cache ATAU cache kosong, fetch dari Supabase (force refresh)
+            Log.d(TAG, "🔥 Fetching picklists from Supabase (cache miss or empty)...")
+            Log.d(TAG, "🔍 DEBUG: Cache was ${if (cachedPicklists == null) "null" else "empty"}, fetching from Supabase...")
             
-            // Simpan ke cache dengan incremental update
-            cacheManager.updateAllPicklistsIncremental(picklists)
+            // **PERBAIKAN**: Test koneksi dulu sebelum fetch
+            Log.d(TAG, "🔍 DEBUG: Testing Supabase connection...")
+            val isConnected = supabaseService.testConnection()
+            Log.d(TAG, "🔍 DEBUG: Supabase connection test result: $isConnected")
+            
+            if (!isConnected) {
+                Log.e(TAG, "❌ No internet connection to Supabase, returning empty list")
+                return@withContext emptyList()
+            }
+            
+            Log.d(TAG, "🔍 DEBUG: Calling supabaseService.getPicklists()...")
+            val picklists = supabaseService.getPicklists()
+            Log.d(TAG, "🔍 DEBUG: Supabase returned ${picklists.size} picklists")
+            
+            if (picklists.isNotEmpty()) {
+                Log.d(TAG, "🔍 DEBUG: First 3 picklists: ${picklists.take(3).joinToString(", ")}")
+            } else {
+                Log.w(TAG, "⚠️ DEBUG: Supabase returned empty picklist list!")
+            }
+            
+                // Simpan ke cache dengan incremental update
+                Log.d(TAG, "🔍 DEBUG: Saving to cache...")
+                try {
+                    withTimeout(4000) { // relax timeout to reduce false timeouts
+                        cacheManager.updateAllPicklistsIncremental(picklists)
+                    }
+                    Log.d(TAG, "✅ Cache update completed")
+                } catch (e: TimeoutCancellationException) {
+                    Log.e(TAG, "❌ Cache update timeout after 2 seconds: ${e.message}")
+                    // **PERBAIKAN**: Try to save without timeout
+                    try {
+                        Log.d(TAG, "🔄 FALLBACK: Trying to save cache without timeout...")
+                        cacheManager.updateAllPicklistsIncremental(picklists)
+                        Log.d(TAG, "✅ Fallback cache update completed")
+                    } catch (fallbackError: Exception) {
+                        Log.e(TAG, "❌ Fallback cache update failed: ${fallbackError.message}", fallbackError)
+                    }
+                } catch (e: Exception) {
+                    Log.e(TAG, "❌ Cache update error: ${e.message}", e)
+                    // **PERBAIKAN**: Try to save without timeout
+                    try {
+                        Log.d(TAG, "🔄 FALLBACK: Trying to save cache despite error...")
+                        cacheManager.updateAllPicklistsIncremental(picklists)
+                        Log.d(TAG, "✅ Fallback cache update completed")
+                    } catch (fallbackError: Exception) {
+                        Log.e(TAG, "❌ Fallback cache update failed: ${fallbackError.message}", fallbackError)
+                    }
+                }
+
+                // **PERBAIKAN BARU**: Force save cache untuk memastikan persistence
+                Log.d(TAG, "🔍 DEBUG: Force saving cache...")
+                try {
+                    withTimeout(5000) { // 5 second timeout (increased from 3 seconds)
+                        cacheManager.forceSaveCache()
+                    }
+                    Log.d(TAG, "✅ Cache force save completed")
+                } catch (e: TimeoutCancellationException) {
+                    Log.e(TAG, "❌ Cache force save timeout after 5 seconds: ${e.message}")
+                    // **PERBAIKAN**: Try to save without timeout
+                    try {
+                        Log.d(TAG, "🔄 FALLBACK: Trying to force save cache without timeout...")
+                        cacheManager.forceSaveCache()
+                        Log.d(TAG, "✅ Fallback cache force save completed")
+                    } catch (fallbackError: Exception) {
+                        Log.e(TAG, "❌ Fallback cache force save failed: ${fallbackError.message}", fallbackError)
+                    }
+                } catch (e: Exception) {
+                    Log.e(TAG, "❌ Cache force save error: ${e.message}", e)
+                    // **PERBAIKAN**: Try to save without timeout
+                    try {
+                        Log.d(TAG, "🔄 FALLBACK: Trying to force save cache despite error...")
+                        cacheManager.forceSaveCache()
+                        Log.d(TAG, "✅ Fallback cache force save completed")
+                    } catch (fallbackError: Exception) {
+                        Log.e(TAG, "❌ Fallback cache force save failed: ${fallbackError.message}", fallbackError)
+                    }
+                }
             
             Log.d(TAG, "✅ Fetched and cached ${picklists.size} picklists")
             picklists
@@ -111,44 +303,47 @@ class Repository(private val context: android.content.Context? = null) {
         try {
             // Track query call
             trackQueryCall("getPicklistItems", picklistNo)
-            
-            Log.d(TAG, "🔥 Getting picklist items for: $picklistNo")
-            
-            // Cek cache dulu
-            val cachedItems = cacheManager.getPicklistItems(picklistNo)
-            if (cachedItems != null) {
-                Log.d(TAG, "✅ Using cached items for $picklistNo: ${cachedItems.size} items")
-                
-                // Lakukan background refresh dengan smart update
-                repositoryScope.launch {
-                    try {
-                        Log.d(TAG, "🔄 Background refresh with smart update: $picklistNo")
-                        val freshItems = supabaseService.getPicklistItems(picklistNo)
-                        cacheManager.smartUpdatePicklistItems(picklistNo, freshItems)
-                        Log.d(TAG, "✅ Background smart update completed for: $picklistNo")
-                    } catch (e: Exception) {
-                        Log.e(TAG, "❌ Background smart update failed for $picklistNo: ${e.message}")
+
+            Log.d(TAG, "🔥 SIMPLE PATH: Fetching picklist items directly for: $picklistNo")
+
+            // Fetch langsung agar pasti terbaru
+            var items = supabaseService.getPicklistItems(picklistNo)
+
+            // Fallback: jika kosong, coba via 'in' operator (batch API dengan 1 picklist)
+            if (items.isEmpty()) {
+                Log.w(TAG, "⚠️ Direct fetch returned 0 items for $picklistNo, trying fallback via IN operator (batch)...")
+                try {
+                    val viaBatch = supabaseService.getPicklistItemsBatch(listOf(picklistNo))
+                    val fallbackItems = viaBatch[picklistNo] ?: emptyList()
+                    if (fallbackItems.isNotEmpty()) {
+                        Log.d(TAG, "✅ Fallback via IN operator succeeded: ${fallbackItems.size} items")
+                        items = fallbackItems
+                    } else {
+                        Log.w(TAG, "⚠️ Fallback via IN operator also returned 0 items for $picklistNo")
                     }
+                } catch (e: Exception) {
+                    Log.e(TAG, "❌ Fallback via IN operator failed: ${e.message}", e)
                 }
-                
-                return@withContext cachedItems
             }
-            
-            // Jika tidak ada di cache, fetch dari Supabase
-            val items = supabaseService.getPicklistItems(picklistNo)
-            
-            // Simpan ke cache dengan smart update
-            cacheManager.smartUpdatePicklistItems(picklistNo, items)
-            
-            Log.d(TAG, "🔥 Retrieved ${items.size} items from Supabase")
-            
-            // Debug log untuk item pertama saja
+
+            // Update cache sinkron agar layar berikutnya cepat
+            try {
+                cacheManager.smartUpdatePicklistItems(picklistNo, items)
+                cacheManager.forceSaveCache()
+            } catch (cacheError: Exception) {
+                Log.e(TAG, "❌ Cache update failed for $picklistNo: ${cacheError.message}", cacheError)
+            }
+
+            Log.d(TAG, "✅ SIMPLE PATH: Retrieved ${items.size} items for $picklistNo")
             if (items.isNotEmpty()) {
                 val firstItem = items.first()
                 Log.d(TAG, "🔥 First item: ${firstItem.articleName} ${firstItem.size} - qtyPl=${firstItem.qtyPl}, qtyScan=${firstItem.qtyScan}")
             }
-            
+
             items
+        } catch (ce: CancellationException) {
+            Log.d(TAG, "ℹ️ getPicklistItems cancelled (normal on navigation)")
+            throw ce
         } catch (e: Exception) {
             Log.e(TAG, "❌ Error getting picklist items: ${e.message}", e)
             emptyList()
@@ -194,6 +389,9 @@ class Repository(private val context: android.content.Context? = null) {
             
             Log.d(TAG, "🚀 BATCH Successfully processed ${cachedResults.size} picklists")
             cachedResults
+        } catch (ce: CancellationException) {
+            Log.d(TAG, "ℹ️ getPicklistItemsBatch cancelled (normal on navigation)")
+            throw ce
         } catch (e: Exception) {
             Log.e(TAG, "❌ Error in batch get picklist items: ${e.message}", e)
             picklistNumbers.associateWith { emptyList<PicklistItem>() }
@@ -218,8 +416,23 @@ class Repository(private val context: android.content.Context? = null) {
             val items = getPicklistItems(picklistNo)
             
             if (items.isNotEmpty()) {
-                val totalQty = items.sumOf { it.qtyPl }
-                val scannedQty = items.sumOf { it.qtyScan }
+                // **PERBAIKAN**: Pastikan items adalah List<PicklistItem> yang valid
+                val validItems = items.filterIsInstance<PicklistItem>()
+                if (validItems.isEmpty()) {
+                    Log.e(TAG, "❌ Error calculating status for $picklistNo: No valid PicklistItem objects found")
+                    return@withContext PicklistStatus(
+                        picklistNumber = picklistNo,
+                        isScanned = false,
+                        remainingQty = 0,
+                        totalQty = 0,
+                        scannedQty = 0,
+                        lastScanTime = null,
+                        overscanQty = 0
+                    )
+                }
+                
+                val totalQty = validItems.sumOf { it.qtyPl }
+                val scannedQty = validItems.sumOf { it.qtyScan }
                 val remainingQty = if (scannedQty >= totalQty) 0 else totalQty - scannedQty
                 val isScanned = scannedQty > 0
                 
@@ -273,7 +486,12 @@ class Repository(private val context: android.content.Context? = null) {
             val scannedCountsToday = picklistNumbers.associateWith { pickNo ->
                 async {
                     try {
-                        supabaseService.getPicklistScans(pickNo).size
+                        // Gunakan DISTINCT EPC untuk akurasi scannedQty
+                        val scans = supabaseService.getPicklistScans(pickNo)
+                        val distinctCount = scans.mapNotNull { scan ->
+                            try { scan.getString("epc") } catch (_: Exception) { null }
+                        }.distinct().size
+                        distinctCount
                     } catch (e: Exception) {
                         Log.e(TAG, "❌ Error fetching scans for $pickNo: ${e.message}")
                         0
@@ -286,9 +504,16 @@ class Repository(private val context: android.content.Context? = null) {
                     val scannedToday = scannedCountsToday[picklistNumber] ?: 0
 
                     if (items.isNotEmpty()) {
-                        val totalQty = items.sumOf { it.qtyPl }
+                        // **PERBAIKAN**: Pastikan items adalah List<PicklistItem> yang valid
+                        val validItems = items.filterIsInstance<PicklistItem>()
+                        if (validItems.isEmpty()) {
+                            Log.e(TAG, "❌ Error calculating status for $picklistNumber: No valid PicklistItem objects found")
+                            return@forEach
+                        }
+                        
+                        val totalQty = validItems.sumOf { it.qtyPl }
                         // Gunakan hasil terbesar antara qtyScan dari items dan jumlah scan hari ini dari tabel scan
-                        val scannedQtyFromItems = items.sumOf { it.qtyScan }
+                        val scannedQtyFromItems = validItems.sumOf { it.qtyScan }
                         val scannedQty = maxOf(scannedQtyFromItems, scannedToday)
                         val remainingQty = if (scannedQty >= totalQty) 0 else totalQty - scannedQty
                         val isScanned = scannedQty > 0
@@ -357,6 +582,9 @@ class Repository(private val context: android.content.Context? = null) {
             Log.d(TAG, "✅ BATCH Calculated completion statuses for ${statuses.size} picklists")
             statuses
             
+        } catch (ce: CancellationException) {
+            Log.d(TAG, "ℹ️ getAllPicklistCompletionStatuses cancelled (normal on navigation)")
+            throw ce
         } catch (e: Exception) {
             Log.e(TAG, "❌ Error calculating all completion statuses: ${e.message}")
             emptyList()
@@ -378,11 +606,11 @@ class Repository(private val context: android.content.Context? = null) {
             val cachedItems = cacheManager.getPicklistItems(picklistNo)
             val cachedEpcList = cacheManager.getProcessedEpcList(picklistNo)
             
-            // Jika kedua data ada di cache, return dari cache
-            if (cachedItems != null && cachedEpcList != null) {
-                Log.d(TAG, "✅ Using cached data for $picklistNo: ${cachedItems.size} items, ${cachedEpcList.size} EPCs")
+            // Jika salah satu ATAU kedua data ada di cache, kembalikan yang tersedia dulu
+            if (cachedItems != null || cachedEpcList != null) {
+                Log.d(TAG, "✅ Using cached data for $picklistNo: ${cachedItems?.size ?: 0} items, ${cachedEpcList?.size ?: 0} EPCs")
                 
-                // Lakukan background refresh untuk update incremental
+                // Lakukan background refresh untuk melengkapi atau memperbarui data yang kurang
                 repositoryScope.launch {
                     try {
                         Log.d(TAG, "🔄 Background refresh for incremental update: batch data for $picklistNo")
@@ -392,13 +620,16 @@ class Repository(private val context: android.content.Context? = null) {
                         cacheManager.updatePicklistItemsIncremental(picklistNo, freshItems)
                         cacheManager.updateProcessedEpcListIncremental(picklistNo, freshEpcList)
                         
+                        // **PERBAIKAN BARU**: Force save cache untuk memastikan persistence
+                        cacheManager.forceSaveCache()
+                        
                         Log.d(TAG, "✅ Background incremental update completed for batch data: $picklistNo")
                     } catch (e: Exception) {
                         Log.e(TAG, "❌ Background incremental update failed for batch data $picklistNo: ${e.message}")
                     }
                 }
-                
-                return@withContext Pair(cachedItems, cachedEpcList)
+                // Kembalikan pasangan dengan data yang tersedia (gunakan emptyList() bila null)
+                return@withContext Pair(cachedItems ?: emptyList(), cachedEpcList ?: emptyList())
             }
             
             // Jika tidak ada di cache atau salah satu missing, fetch dari Supabase
@@ -416,8 +647,14 @@ class Repository(private val context: android.content.Context? = null) {
             cacheManager.smartUpdatePicklistItems(picklistNo, items)
             cacheManager.updateProcessedEpcListIncremental(picklistNo, epcList)
             
+            // **PERBAIKAN BARU**: Force save cache untuk memastikan persistence
+            cacheManager.forceSaveCache()
+            
             Log.d(TAG, "✅ Batch fetch completed: ${items.size} items, ${epcList.size} EPCs for picklist: $picklistNo")
             Pair(items, epcList)
+        } catch (ce: CancellationException) {
+            Log.d(TAG, "ℹ️ getPicklistDataBatch cancelled (normal on navigation)")
+            throw ce
         } catch (e: Exception) {
             Log.e(TAG, "❌ Error in batch fetch: ${e.message}", e)
             Pair(emptyList(), emptyList())
@@ -445,6 +682,10 @@ class Repository(private val context: android.content.Context? = null) {
                         Log.d(TAG, "🔄 Background refresh for incremental update: processed EPC list for $picklistNo")
                         val freshEpcList = supabaseService.getProcessedEpcList(picklistNo)
                         cacheManager.updateProcessedEpcListIncremental(picklistNo, freshEpcList)
+                        
+                        // **PERBAIKAN BARU**: Force save cache untuk memastikan persistence
+                        cacheManager.forceSaveCache()
+                        
                         Log.d(TAG, "✅ Background incremental update completed for processed EPC list: $picklistNo")
                     } catch (e: Exception) {
                         Log.e(TAG, "❌ Background incremental update failed for processed EPC list $picklistNo: ${e.message}")
@@ -460,6 +701,9 @@ class Repository(private val context: android.content.Context? = null) {
             
             // Simpan ke cache dengan incremental update
             cacheManager.updateProcessedEpcListIncremental(picklistNo, epcList)
+            
+            // **PERBAIKAN BARU**: Force save cache untuk memastikan persistence
+            cacheManager.forceSaveCache()
             
             Log.d(TAG, "✅ Found ${epcList.size} processed EPCs for picklist: $picklistNo")
             epcList
@@ -499,8 +743,15 @@ class Repository(private val context: android.content.Context? = null) {
                     val scannedToday = scannedCountsToday[picklistNumber] ?: 0
 
                     if (items.isNotEmpty()) {
-                        val totalQty = items.sumOf { it.qtyPl }
-                        val scannedQty = items.sumOf { it.qtyScan }
+                        // **PERBAIKAN**: Pastikan items adalah List<PicklistItem> yang valid
+                        val validItems = items.filterIsInstance<PicklistItem>()
+                        if (validItems.isEmpty()) {
+                            Log.e(TAG, "❌ Error calculating status for $picklistNumber: No valid PicklistItem objects found")
+                            return@forEach
+                        }
+                        
+                        val totalQty = validItems.sumOf { it.qtyPl }
+                        val scannedQty = validItems.sumOf { it.qtyScan }
                         val remainingQty = totalQty - scannedQty
                         val isScanned = scannedQty > 0
                         
@@ -537,6 +788,9 @@ class Repository(private val context: android.content.Context? = null) {
             Log.d(TAG, "✅ FORCE REFRESH: Calculated ${statuses.size} completion statuses")
             statuses
             
+        } catch (ce: CancellationException) {
+            Log.d(TAG, "ℹ️ forceRefreshPicklistCompletionStatuses cancelled (normal on navigation)")
+            throw ce
         } catch (e: Exception) {
             Log.e(TAG, "❌ Error in force refresh completion statuses: ${e.message}", e)
             emptyList()
@@ -568,6 +822,9 @@ class Repository(private val context: android.content.Context? = null) {
             Log.d(TAG, "✅ FORCE REFRESH: Batch items fetch completed")
             results
             
+        } catch (ce: CancellationException) {
+            Log.d(TAG, "ℹ️ getPicklistItemsBatchForceRefresh cancelled (normal on navigation)")
+            throw ce
         } catch (e: Exception) {
             Log.e(TAG, "❌ Error in force refresh batch items fetch: ${e.message}", e)
             emptyMap()
@@ -677,10 +934,30 @@ class Repository(private val context: android.content.Context? = null) {
      */
     suspend fun getCacheStats(): Map<String, Any> = withContext(Dispatchers.IO) {
         try {
-            cacheManager.getCacheStats()
+            Log.d(TAG, "🔥 === GET CACHE STATS START ===")
+            Log.d(TAG, "🔍 DEBUG: getCacheStats() called at ${System.currentTimeMillis()}")
+            val stats = cacheManager.getCacheStats()
+            Log.d(TAG, "🔍 DEBUG: Cache stats result: $stats")
+            stats
         } catch (e: Exception) {
             Log.e(TAG, "❌ Error getting cache stats: ${e.message}", e)
             emptyMap()
+        }
+    }
+    
+    /**
+     * Test koneksi ke Supabase
+     */
+    suspend fun testSupabaseConnection(): Boolean = withContext(Dispatchers.IO) {
+        try {
+            Log.d(TAG, "🔥 === TEST SUPABASE CONNECTION START ===")
+            Log.d(TAG, "🔍 DEBUG: testSupabaseConnection() called at ${System.currentTimeMillis()}")
+            val result = supabaseService.testConnection()
+            Log.d(TAG, "🔍 DEBUG: Supabase connection test result: $result")
+            result
+        } catch (e: Exception) {
+            Log.e(TAG, "❌ Error testing Supabase connection: ${e.message}", e)
+            false
         }
     }
     
@@ -741,6 +1018,182 @@ class Repository(private val context: android.content.Context? = null) {
             
         } catch (e: Exception) {
             Log.e(TAG, "❌ Error in batch fetch: ${e.message}", e)
+            emptyMap()
+        }
+    }
+    
+    /**
+     * ULTRA OPTIMASI: Ambil SEMUA data hari ini dalam 1 SINGLE query saja (ULTRA CEPAT!)
+     * - 1 query dengan JOIN untuk semua data (picklist items + scan data)
+     * - Local processing untuk group dan olah data
+     * - Total: 1 query untuk SEMUA data hari ini
+     */
+    suspend fun getAllTodayDataUltraOptimized(): Map<String, Pair<List<PicklistItem>, List<String>>> = withContext(Dispatchers.IO) {
+        try {
+            Log.d(TAG, "🔥 === GET ALL TODAY DATA ULTRA OPTIMIZED START ===")
+            Log.d(TAG, "🔍 DEBUG: getAllTodayDataUltraOptimized() called at ${System.currentTimeMillis()}")
+            Log.d(TAG, "🚀 ULTRA OPTIMASI: Getting ALL today's data in 1 SINGLE query!")
+            
+            val startTime = System.currentTimeMillis()
+            
+            // **ULTRA OPTIMASI**: Ambil SEMUA data dalam 1 query dengan JOIN
+            val allData = supabaseService.getAllTodayDataSingleQuery()
+            
+            val endTime = System.currentTimeMillis()
+            val duration = endTime - startTime
+            
+            Log.d(TAG, "✅ ULTRA OPTIMASI: Retrieved ${allData.size} picklists in ${duration}ms (1 SINGLE query!)")
+            if (allData.size > 0) {
+                Log.d(TAG, "📊 Performance: ${duration / allData.size}ms per picklist")
+            } else {
+                Log.d(TAG, "📊 Performance: No picklists found to calculate performance")
+            }
+            
+            // Simpan ke cache
+            allData.forEach { (picklistNo, data) ->
+                val (items, scans) = data
+                cacheManager.smartUpdatePicklistItems(picklistNo, items)
+                cacheManager.updateProcessedEpcListIncremental(picklistNo, scans)
+            }
+            
+            // Force save cache
+            cacheManager.forceSaveCache()
+            
+            allData
+            
+        } catch (e: Exception) {
+            Log.e(TAG, "❌ Error in ultra optimized today data fetch: ${e.message}", e)
+            
+            // **FALLBACK**: Jika ultra optimasi gagal, coba optimasi lama
+            Log.d(TAG, "🔄 FALLBACK: Trying optimized approach...")
+            try {
+                val fallbackResult = getAllTodayDataOptimized()
+                Log.d(TAG, "✅ FALLBACK: Retrieved ${fallbackResult.size} picklists from optimized approach")
+                return@withContext fallbackResult
+            } catch (fallbackError: Exception) {
+                Log.e(TAG, "❌ FALLBACK: Error in optimized approach: ${fallbackError.message}", fallbackError)
+                
+                // **FALLBACK 2**: Jika masih gagal, coba ambil dari cache yang ada
+                Log.d(TAG, "🔄 FALLBACK 2: Trying to get data from cache...")
+                try {
+                    val cachedData = mutableMapOf<String, Pair<List<PicklistItem>, List<String>>>()
+                    
+                    val cachedPicklists = cacheManager.getAllPicklists()
+                    if (cachedPicklists != null && cachedPicklists.isNotEmpty()) {
+                        Log.d(TAG, "✅ FALLBACK 2: Found ${cachedPicklists.size} cached picklists")
+                        
+                        cachedPicklists.forEach { picklistNo ->
+                            val cachedItems = cacheManager.getPicklistItems(picklistNo)
+                            val cachedScans = cacheManager.getProcessedEpcList(picklistNo)
+                            
+                            if (cachedItems != null && cachedScans != null) {
+                                cachedData[picklistNo] = Pair(cachedItems, cachedScans)
+                                Log.d(TAG, "✅ FALLBACK 2: Loaded $picklistNo from cache")
+                            }
+                        }
+                        
+                        Log.d(TAG, "✅ FALLBACK 2: Retrieved ${cachedData.size} picklists from cache")
+                        return@withContext cachedData
+                    } else {
+                        Log.d(TAG, "❌ FALLBACK 2: No cached picklists available")
+                    }
+                } catch (fallback2Error: Exception) {
+                    Log.e(TAG, "❌ FALLBACK 2: Error getting cached data: ${fallback2Error.message}", fallback2Error)
+                }
+                
+                emptyMap()
+            }
+        }
+    }
+    
+    /**
+     * OPTIMASI BARU: Ambil SEMUA data hari ini dalam 2 query saja (SANGAT CEPAT!)
+     * - 1 query untuk semua picklist items hari ini
+     * - 1 query untuk semua scan data hari ini
+     * - Total: 2 queries untuk SEMUA data hari ini
+     */
+    suspend fun getAllTodayDataOptimized(): Map<String, Pair<List<PicklistItem>, List<String>>> = withContext(Dispatchers.IO) {
+        try {
+            Log.d(TAG, "🔥 === GET ALL TODAY DATA OPTIMIZED START ===")
+            Log.d(TAG, "🔍 DEBUG: getAllTodayDataOptimized() called at ${System.currentTimeMillis()}")
+            Log.d(TAG, "🚀 OPTIMASI BARU: Getting ALL today's data in 2 queries only!")
+            
+            val startTime = System.currentTimeMillis()
+            
+            // **OPTIMASI BARU**: Ambil SEMUA data hari ini dalam 2 query paralel
+            val itemsDeferred = async { supabaseService.getAllTodayData() }
+            val scansDeferred = async { supabaseService.getAllTodayScanData() }
+            
+            // Tunggu kedua query selesai
+            val allItems = itemsDeferred.await()
+            val allScans = scansDeferred.await()
+            
+            // Gabungkan data items dan scans per picklist
+            val combinedData = mutableMapOf<String, Pair<List<PicklistItem>, List<String>>>()
+            
+            // Ambil semua picklist numbers yang ada
+            val allPicklistNumbers = (allItems.keys + allScans.keys).distinct()
+            
+            allPicklistNumbers.forEach { picklistNo ->
+                val items = allItems[picklistNo] ?: emptyList()
+                val scans = allScans[picklistNo] ?: emptyList()
+                combinedData[picklistNo] = Pair(items, scans)
+            }
+            
+            val endTime = System.currentTimeMillis()
+            val duration = endTime - startTime
+            
+            Log.d(TAG, "✅ OPTIMASI BARU: Retrieved ${combinedData.size} picklists in ${duration}ms (2 queries only!)")
+            if (combinedData.size > 0) {
+                Log.d(TAG, "📊 Performance: ${duration / combinedData.size}ms per picklist")
+            } else {
+                Log.d(TAG, "📊 Performance: No picklists found to calculate performance")
+            }
+            
+            // Simpan ke cache
+            combinedData.forEach { (picklistNo, data) ->
+                val (items, scans) = data
+                cacheManager.smartUpdatePicklistItems(picklistNo, items)
+                cacheManager.updateProcessedEpcListIncremental(picklistNo, scans)
+            }
+            
+            // Force save cache
+            cacheManager.forceSaveCache()
+            
+            combinedData
+            
+        } catch (e: Exception) {
+            Log.e(TAG, "❌ Error in optimized today data fetch: ${e.message}", e)
+            
+            // **FALLBACK**: Jika network error, coba ambil dari cache yang ada
+            Log.d(TAG, "🔄 FALLBACK: Trying to get data from cache due to network error...")
+            try {
+                val cachedData = mutableMapOf<String, Pair<List<PicklistItem>, List<String>>>()
+                
+                // Ambil picklist numbers dari cache
+                val cachedPicklists = cacheManager.getAllPicklists()
+                if (cachedPicklists != null && cachedPicklists.isNotEmpty()) {
+                    Log.d(TAG, "✅ FALLBACK: Found ${cachedPicklists.size} cached picklists")
+                    
+                    cachedPicklists.forEach { picklistNo ->
+                        val cachedItems = cacheManager.getPicklistItems(picklistNo)
+                        val cachedScans = cacheManager.getProcessedEpcList(picklistNo)
+                        
+                        if (cachedItems != null && cachedScans != null) {
+                            cachedData[picklistNo] = Pair(cachedItems, cachedScans)
+                            Log.d(TAG, "✅ FALLBACK: Loaded $picklistNo from cache")
+                        }
+                    }
+                    
+                    Log.d(TAG, "✅ FALLBACK: Retrieved ${cachedData.size} picklists from cache")
+                    return@withContext cachedData
+                } else {
+                    Log.d(TAG, "❌ FALLBACK: No cached picklists available")
+                }
+            } catch (fallbackError: Exception) {
+                Log.e(TAG, "❌ FALLBACK: Error getting cached data: ${fallbackError.message}", fallbackError)
+            }
+            
             emptyMap()
         }
     }

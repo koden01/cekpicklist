@@ -135,9 +135,12 @@ class PicklistAdapter : RecyclerView.Adapter<PicklistAdapter.ViewHolder>() {
                     android.util.Log.d("PicklistAdapter", "🔥 Set YELLOW color untuk: ${item.articleName}")
                 }
                 QtyStatus.GREEN -> {
-                    // Hide entire row untuk item yang sudah complete (sesuai)
-                    itemView.visibility = View.GONE
-                    android.util.Log.d("PicklistAdapter", "🔥 Hide entire row untuk: ${item.articleName} (GREEN/Complete)")
+                    // Tampilkan baris hijau juga agar semua artikel terlihat
+                    itemView.visibility = View.VISIBLE
+                    tvQtyScan.visibility = View.VISIBLE
+                    tvQtyScan.background = null
+                    tvQtyScan.setTextColor(Color.parseColor("#2E7D32")) // Hijau
+                    android.util.Log.d("PicklistAdapter", "🔥 Show GREEN row for: ${item.articleName} (Complete)")
                 }
             }
             

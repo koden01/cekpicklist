@@ -39,6 +39,8 @@
     <color name="primary_color">#FFD700</color>
     <color name="success_color">#4CAF50</color>
     <color name="error_color">#F44336</color>
+    <color name="warning_color">#FF9800</color>
+    <color name="light_gray">#F5F5F5</color>
     <color name="splash_background">#FFD700</color>
     <color name="splash_text_primary">#000000</color>
     <color name="splash_accent">#B8860B</color>

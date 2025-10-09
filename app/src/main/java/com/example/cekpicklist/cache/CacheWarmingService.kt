@@ -3,6 +3,7 @@ package com.example.cekpicklist.cache
 import android.app.Application
 import android.util.Log
 import com.example.cekpicklist.repository.Repository
+import com.example.cekpicklist.MyApplication
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -19,7 +20,9 @@ import kotlinx.coroutines.withContext
 class CacheWarmingService(private val application: Application) {
     
     private val repository = Repository(application.applicationContext)
-    private val cacheManager = CacheManager(application.applicationContext)
+    // Use the same CacheManager instance from MyApplication to keep cache consistent
+    private val cacheManager: CacheManager = (application as? MyApplication)?.getCacheManager()
+        ?: CacheManager(application.applicationContext)
     private val warmingScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     
     companion object {
@@ -34,6 +37,8 @@ class CacheWarmingService(private val application: Application) {
     fun startCacheWarming() {
         warmingScope.launch {
             try {
+                Log.d(TAG, "🔥 === CACHE WARMING SERVICE START ===")
+                Log.d(TAG, "🔍 DEBUG: startCacheWarming() called at ${System.currentTimeMillis()}")
                 Log.d(TAG, "🔥 Starting cache warming...")
                 
                 // Delay untuk memastikan app sudah fully loaded
@@ -56,37 +61,39 @@ class CacheWarmingService(private val application: Application) {
      */
     private suspend fun warmFrequentlyUsedData() = withContext(Dispatchers.IO) {
         try {
+            Log.d(TAG, "🔥 === CACHE WARMING WARM FREQUENTLY USED DATA START ===")
+            Log.d(TAG, "🔍 DEBUG: warmFrequentlyUsedData() called at ${System.currentTimeMillis()}")
             Log.d(TAG, "🔥 Warming frequently used data...")
             
-            // 1. Warm semua picklist numbers
+            // **OPTIMASI BARU**: Warm SEMUA data hari ini dalam 2 query saja!
+            val startTime = System.currentTimeMillis()
+            
+            // 1. Warm semua picklist numbers (1 query)
+            Log.d(TAG, "🔍 DEBUG: Calling repository.getPicklists() from cache warming...")
             val picklists = repository.getPicklists()
             Log.d(TAG, "✅ Warmed picklists: ${picklists.size} items")
             
-            // 2. Warm picklist yang sering digunakan (ambil 3 pertama)
-            val frequentPicklists = picklists.take(3)
-            frequentPicklists.forEach { picklistNo ->
-                try {
-                    // Warm picklist items
-                    repository.getPicklistItems(picklistNo)
-                    Log.d(TAG, "✅ Warmed picklist items: $picklistNo")
-                    
-                    // Warm processed EPC list
-                    repository.getProcessedEpcList(picklistNo)
-                    Log.d(TAG, "✅ Warmed processed EPC list: $picklistNo")
-                    
-                    // Rate limiting
-                    delay(100)
-                    
-                } catch (e: Exception) {
-                    Log.w(TAG, "⚠️ Failed to warm $picklistNo: ${e.message}")
-                }
+            // 2. **OPTIMASI BARU**: Warm SEMUA data hari ini dalam 2 query paralel
+            Log.d(TAG, "🚀 ULTRA OPTIMASI: Warming ALL today's data in 1 SINGLE query!")
+            val allTodayData = repository.getAllTodayDataUltraOptimized()
+            
+            val endTime = System.currentTimeMillis()
+            val duration = endTime - startTime
+            
+            Log.d(TAG, "✅ ULTRA OPTIMASI: Warmed ${allTodayData.size} picklists in ${duration}ms (1 SINGLE query!)")
+            if (allTodayData.size > 0) {
+                Log.d(TAG, "📊 Performance: ${duration / allTodayData.size}ms per picklist")
+            } else {
+                Log.d(TAG, "📊 Performance: No picklists found to calculate performance")
             }
             
-            // 3. Warm picklist statuses (skip karena method tidak tersedia)
-            // repository.getPicklistStatuses() // Method tidak tersedia
-            Log.d(TAG, "✅ Skipped picklist statuses (method not available)")
+            // 3. Log summary
+            allTodayData.forEach { (picklistNo, data) ->
+                val (items, scans) = data
+                Log.d(TAG, "✅ Warmed $picklistNo: ${items.size} items, ${scans.size} scans")
+            }
             
-            Log.d(TAG, "🎉 Cache warming completed successfully")
+            Log.d(TAG, "🎉 ULTRA OPTIMASI Cache warming completed successfully")
             
         } catch (e: Exception) {
             Log.e(TAG, "❌ Error warming frequently used data: ${e.message}", e)

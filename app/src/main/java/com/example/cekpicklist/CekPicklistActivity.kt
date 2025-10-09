@@ -423,6 +423,30 @@ class CekPicklistActivity : BaseRfidActivity() {
                 // Load picklist items berdasarkan pilihan dari PicklistInputActivity
                 Log.i("MainActivity", "🔥 Loading picklist items for: $selectedPicklist")
                 viewModel.loadPicklistItems(selectedPicklist)
+
+                // Retry sekali jika load pertama kosong (kadang batal saat transisi Activity)
+                lifecycleScope.launch {
+                    delay(350)
+                    val current = viewModel.picklistItems.value ?: emptyList()
+                    if (current.isEmpty()) {
+                        Log.w("MainActivity", "⚠️ First load empty (possibly cancelled on navigation), retrying once...")
+                        viewModel.loadPicklistItems(selectedPicklist)
+                    }
+                    // Tunggu loading selesai; jika masih kosong, coba sekali lagi
+                    val loadingObserver = object : androidx.lifecycle.Observer<Boolean> {
+                        override fun onChanged(isLoading: Boolean) {
+                            if (!isLoading) {
+                                viewModel.isLoading.removeObserver(this)
+                                val itemsNow = viewModel.picklistItems.value ?: emptyList()
+                                if (itemsNow.isEmpty()) {
+                                    Log.w("MainActivity", "⚠️ Load finished but items still empty, retrying once more...")
+                                    viewModel.loadPicklistItems(selectedPicklist)
+                                }
+                            }
+                        }
+                    }
+                    viewModel.isLoading.observe(this@CekPicklistActivity, loadingObserver)
+                }
                 
                 // **PERBAIKAN**: Seeding akan dilakukan di observer setelah data selesai dimuat
                 
@@ -760,55 +784,65 @@ class CekPicklistActivity : BaseRfidActivity() {
     private fun performClearRfidOnly() {
         Log.d("MainActivity", "🔥 performClearRfidOnly dipanggil")
         
-        try {
-            // Hentikan scanning terlebih dahulu agar tidak ada EPC baru yang masuk saat proses clear
-            if (isScanning) {
-                stopRfidScanning()
-            }
-            
-            // 1. Clear RFID collection di ViewModel (tanpa save) - ini akan reset counter juga
-            viewModel.clearRfidCollectionOnly()
-            // 1b. Explicitly reset RFID detection counter for UI expectation
-            viewModel.resetRfidDetectionCount()
-            
-            // **PERBAIKAN KRITIS**: Clear RFID buffer di RfidScanManager agar EPC bisa di-scan kembali
+        lifecycleScope.launch {
             try {
-                rfidScanManager.clearAllData()
-                Log.d("MainActivity", "🔥 RFID buffer cleared in RfidScanManager")
+                // 0. Jika sedang scanning: stop dengan grace period agar lookup pending EPC dipicu otomatis
+                if (isScanning) {
+                    stopRfidScanningWithGracePeriod()
+                    // beri waktu singkat agar callback lookup/processing masuk ke ViewModel
+                    delay(250)
+                } else {
+                    // Jika tidak scanning tapi ada EPC unik yang tertampung, paksa lookup sekarang
+                    val pending = getAllUniqueRfids()
+                    if (pending.isNotEmpty()) {
+                        rfidScanManager.triggerLookupNow()
+                        delay(250)
+                    }
+                }
                 
-                // **PERBAIKAN BARU**: Re-seed dengan data dari database setelah clear
-                val currentPicklist = viewModel.getCurrentPicklistNumber()
-                if (currentPicklist != null) {
-                    Log.d("MainActivity", "🔥 Re-seeding RfidScanManager after clear for picklist: $currentPicklist")
-                    seedRfidScanManagerWithDatabaseData(currentPicklist)
+                // 1. Clear RFID collection di ViewModel (tanpa save) - ini akan reset counter juga
+                viewModel.clearRfidCollectionOnly()
+                // 1b. Explicitly reset RFID detection counter for UI expectation
+                viewModel.resetRfidDetectionCount()
+                
+                // **PERBAIKAN KRITIS**: Clear RFID buffer di RfidScanManager agar EPC bisa di-scan kembali
+                try {
+                    rfidScanManager.clearAllData()
+                    Log.d("MainActivity", "🔥 RFID buffer cleared in RfidScanManager")
+                    
+                    // **PERBAIKAN BARU**: Re-seed dengan data dari database setelah clear
+                    val currentPicklist = viewModel.getCurrentPicklistNumber()
+                    if (currentPicklist != null) {
+                        Log.d("MainActivity", "🔥 Re-seeding RfidScanManager after clear for picklist: $currentPicklist")
+                        seedRfidScanManagerWithDatabaseData(currentPicklist)
+                    }
+                } catch (e: Exception) {
+                    Log.e("MainActivity", "❌ Error clearing RFID buffer: ${e.message}", e)
+                }
+                
+                // 2. Reset completion animation flag
+                hasShownCompletionAnimation = false
+                
+                // 3. Non-picklist items sekarang terintegrasi di main list, tidak ada section terpisah
+                
+                // 4. Show success message
+                ToastUtils.showHighToastWithCooldown(this@CekPicklistActivity, "✅ RFID data cleared successfully!")
+                
+                // 5. Update UI counter immediately
+                binding.tvRfidDetected.text = "0"
+                
+                Log.d("MainActivity", "✅ Clear RFID berhasil (tanpa save)")
+                
+                // 6. Lanjutkan scanning kembali bila sebelumnya aktif
+                if (shouldResumeScanningAfterClear) {
+                    Log.d(TAG, "🔥 Auto-resume scanning setelah clear")
+                    shouldResumeScanningAfterClear = false
+                    startRfidScanning()
                 }
             } catch (e: Exception) {
-                Log.e("MainActivity", "❌ Error clearing RFID buffer: ${e.message}", e)
+                Log.e("MainActivity", "❌ Error clearing RFID: ${e.message}", e)
+                ToastUtils.showHighToastWithCooldown(this@CekPicklistActivity, "❌ Error clearing RFID: ${e.message}")
             }
-            
-            // 2. Reset completion animation flag
-            hasShownCompletionAnimation = false
-            
-            // 3. Non-picklist items sekarang terintegrasi di main list, tidak ada section terpisah
-            
-            // 4. Show success message
-            ToastUtils.showHighToastWithCooldown(this, "✅ RFID data cleared successfully!")
-            
-            // 5. Update UI counter immediately
-            binding.tvRfidDetected.text = "0"
-            
-            Log.d("MainActivity", "✅ Clear RFID berhasil (tanpa save)")
-            
-            // 6. Lanjutkan scanning kembali bila sebelumnya aktif
-            if (shouldResumeScanningAfterClear) {
-                Log.d(TAG, "🔥 Auto-resume scanning setelah clear")
-                shouldResumeScanningAfterClear = false
-                startRfidScanning()
-            }
-            
-        } catch (e: Exception) {
-            Log.e("MainActivity", "❌ Error clearing RFID: ${e.message}", e)
-            ToastUtils.showHighToastWithCooldown(this, "❌ Error clearing RFID: ${e.message}")
         }
     }
     
@@ -938,6 +972,9 @@ class CekPicklistActivity : BaseRfidActivity() {
      */
     private fun applySettingsFromSharedPreferences() {
         try {
+            // Paksa grace period = 0 ms
+            val prefs = getSharedPreferences("RFIDSettings", MODE_PRIVATE)
+            prefs.edit().putLong("grace_period", 0L).apply()
             // Use the new method from RfidScanManager that reads from SharedPreferences
             rfidScanManager.refreshSettingsFromSharedPreferences()
             ToastUtils.showHighToastWithCooldown(this, "RFID settings applied successfully")
@@ -1104,15 +1141,28 @@ class CekPicklistActivity : BaseRfidActivity() {
     private fun observeViewModel() {
         Log.d(TAG, "🔥 Setting up ViewModel observers")
         
-        // Observe picklist items
-        viewModel.filteredItems.observe(this) { items ->
-            Log.d(TAG, "🔥 Filtered items updated: ${items.size} items")
+        // Observe ALL picklist items directly so the full article list always shows
+        viewModel.picklistItems.observe(this) { items ->
+            Log.d(TAG, "🔥 === PICKLIST ITEMS OBSERVER TRIGGERED ===")
+            Log.d(TAG, "🔥 picklistItems updated: ${items.size} items")
+            Log.d(TAG, "🔥 Observer triggered at: ${System.currentTimeMillis()}")
+
+            if (items.isNotEmpty()) {
+                Log.d(TAG, "🔥 First item: ${items.first().articleName} ${items.first().size}")
+            }
+
             picklistAdapter.updateItems(items)
-            
+            Log.d(TAG, "🔥 Adapter updated with ${items.size} items")
+
             // Update UI visibility based on items
             updateUIVisibility(items)
-            
-            // Summary cards kini dikelola oleh observer qtySummary di ViewModel
+            Log.d(TAG, "🔥 UI visibility updated")
+
+            // Completion status should consider visible items; use items directly now
+            checkCompletionStatus(items)
+            Log.d(TAG, "🔥 Completion status checked")
+
+            // Summary cards are handled by qtySummary observer
         }
         
         // **PERBAIKAN**: Observe ALL picklist items untuk seeding RfidScanManager
@@ -1128,13 +1178,8 @@ class CekPicklistActivity : BaseRfidActivity() {
             }
         }
         
-        // **PERBAIKAN KRITIS**: Observe filtered items untuk completion check (termasuk non-picklist items)
-        viewModel.filteredItems.observe(this) { filteredItems ->
-            Log.d(TAG, "🔥 Filtered items updated for completion check: ${filteredItems.size} items")
-            
-            // Check for completion dengan filtered items (termasuk non-picklist dan overscan)
-            checkCompletionStatus(filteredItems)
-        }
+        // **PERBAIKAN KRITIS**: Completion check dipindah ke observer utama untuk menghindari duplikasi
+        // checkCompletionStatus() akan dipanggil dari observer utama di atas
         
         // Observe RFID detection count
         viewModel.rfidDetectionCount.observe(this) { count ->
@@ -1174,17 +1219,26 @@ class CekPicklistActivity : BaseRfidActivity() {
      * Update UI visibility based on items
      */
     private fun updateUIVisibility(items: List<PicklistItem>) {
+        Log.d(TAG, "🔥 === UPDATE UI VISIBILITY START ===")
+        Log.d(TAG, "🔥 Items count: ${items.size}")
+        
         if (items.isEmpty()) {
             // Show empty state
             binding.rvPicklistItems.visibility = View.GONE
             binding.llEmptyState.visibility = View.VISIBLE
             Log.d(TAG, "🔥 Showing empty state - no items")
+            Log.d(TAG, "🔥 rvPicklistItems visibility: GONE")
+            Log.d(TAG, "🔥 llEmptyState visibility: VISIBLE")
         } else {
             // Show RecyclerView with items
             binding.llEmptyState.visibility = View.GONE
             binding.rvPicklistItems.visibility = View.VISIBLE
             Log.d(TAG, "🔥 Showing RecyclerView with ${items.size} items")
+            Log.d(TAG, "🔥 rvPicklistItems visibility: VISIBLE")
+            Log.d(TAG, "🔥 llEmptyState visibility: GONE")
         }
+        
+        Log.d(TAG, "🔥 === UPDATE UI VISIBILITY END ===")
     }
     
     /**
@@ -1587,8 +1641,13 @@ class CekPicklistActivity : BaseRfidActivity() {
             
             // Tombol Menu - Gunakan fungsi default device
             KeyEvent.KEYCODE_MENU -> {
-                Log.d("MainActivity", "🔥 Tombol fisik ditekan: MENU - Code: $keyCode (Fungsi default device)")
-                return super.onKeyDown(keyCode, event)
+                Log.d("MainActivity", "🔥 Tombol fisik ditekan: MENU - Code: $keyCode (dibatalkan agar tidak masuk Settings)")
+                return true
+            }
+            // Beberapa device menggunakan KEYCODE_SETTINGS untuk long-press
+            KeyEvent.KEYCODE_SETTINGS -> {
+                Log.d("MainActivity", "🔥 Tombol fisik ditekan: SETTINGS - Code: $keyCode (dibatalkan agar tidak masuk Settings)")
+                return true
             }
             
             // Tombol Volume Up/Down - Gunakan fungsi default device
@@ -1664,6 +1723,19 @@ class CekPicklistActivity : BaseRfidActivity() {
                 Log.d("MainActivity", "🔥 Tombol fisik ditekan: $keyName - Code: $keyCode (Fungsi default device)")
                 return super.onKeyDown(keyCode, event)
             }
+        }
+    }
+    
+    override fun onKeyLongPress(keyCode: Int, event: KeyEvent?): Boolean {
+        // Konsumsi long-press untuk mencegah OS membuka Settings/Menu
+        return when (keyCode) {
+            293, // SCAN_TRIGGER khusus device
+            KeyEvent.KEYCODE_MENU,
+            KeyEvent.KEYCODE_SETTINGS -> {
+                Log.d("MainActivity", "🔥 KEY LONG PRESS consumed: ${getKeyName(keyCode)} ($keyCode)")
+                true
+            }
+            else -> super.onKeyLongPress(keyCode, event)
         }
     }
     

@@ -27,6 +27,13 @@ class PicklistSelectionAdapter(
     fun updatePicklists(newPicklistStatuses: List<PicklistStatus>) {
         picklistStatuses = newPicklistStatuses
         filterPicklists(searchQuery)
+        
+        // Log summary untuk debugging
+        val total = newPicklistStatuses.size
+        val completed = newPicklistStatuses.count { it.isScanned && it.remainingQty == 0 }
+        val remaining = newPicklistStatuses.count { !it.isScanned || it.remainingQty > 0 }
+        
+        Logger.Adapter.d("📊 Picklist Summary: Total=$total, Completed=$completed, Remaining=$remaining")
     }
 
     fun filterPicklists(query: String) {
@@ -71,19 +78,24 @@ class PicklistSelectionAdapter(
         private val tvPicklistInfo: TextView = itemView.findViewById(R.id.tvPicklistInfo)
 
         fun bind(picklistStatus: PicklistStatus, searchQuery: String = "") {
+            // Tampilkan nomor picklist yang unik
             tvPicklistNumber.text = picklistStatus.picklistNumber
             
-            // Set warna dan keterangan berdasarkan status scan (tanpa icon)
+            // Set warna dan keterangan berdasarkan status scan dengan informasi yang lebih detail
             if (picklistStatus.isScanned) {
                 // Picklist sudah pernah di-scan - set warna hijau
                 tvPicklistNumber.setTextColor(itemView.context.getColor(android.R.color.holo_green_dark))
                 
-                // Set info detail berdasarkan status completion
+                // Set info detail berdasarkan status completion dengan informasi qty yang jelas
                 val statusText = when {
-                    picklistStatus.remainingQty == 0 && picklistStatus.overscanQty == 0 -> "✅ Selesai"
-                    picklistStatus.remainingQty == 0 && picklistStatus.overscanQty > 0 -> "⚠️ Overscan"
-                    picklistStatus.remainingQty > 0 -> "⚠️ Sisa ${picklistStatus.remainingQty} qty"
-                    else -> "✅ Sudah di-scan"
+                    picklistStatus.remainingQty == 0 && picklistStatus.overscanQty == 0 -> 
+                        "✅ Selesai (${picklistStatus.scannedQty}/${picklistStatus.totalQty})"
+                    picklistStatus.remainingQty == 0 && picklistStatus.overscanQty > 0 -> 
+                        "⚠️ Overscan +${picklistStatus.overscanQty} (${picklistStatus.scannedQty}/${picklistStatus.totalQty})"
+                    picklistStatus.remainingQty > 0 -> 
+                        "🔄 Sisa ${picklistStatus.remainingQty} qty (${picklistStatus.scannedQty}/${picklistStatus.totalQty})"
+                    else -> 
+                        "✅ Sudah di-scan (${picklistStatus.scannedQty}/${picklistStatus.totalQty})"
                 }
                 
                 tvPicklistInfo.text = statusText
@@ -93,8 +105,13 @@ class PicklistSelectionAdapter(
                 // Picklist belum pernah di-scan sama sekali - set warna default
                 tvPicklistNumber.setTextColor(itemView.context.getColor(android.R.color.black))
                 
-                // Set info untuk belum scan sama sekali
-                tvPicklistInfo.text = "📋 Belum scan sama sekali"
+                // Set info untuk belum scan sama sekali dengan total qty
+                val statusText = if (picklistStatus.totalQty > 0) {
+                    "📋 Belum scan (0/${picklistStatus.totalQty})"
+                } else {
+                    "📋 Belum scan"
+                }
+                tvPicklistInfo.text = statusText
                 tvPicklistInfo.setTextColor(itemView.context.getColor(android.R.color.darker_gray))
             }
             

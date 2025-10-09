@@ -394,6 +394,15 @@ fun playBeepSound() {
         }
     }
 
+    /**
+     * Public helper: trigger lookup sekarang untuk semua RFID unik yang tersimpan.
+     * Berguna ketika perlu memaksa lookup (mis. saat user menekan Clear) meskipun tidak
+     * melalui alur stop dengan grace period.
+     */
+    fun triggerLookupNow() {
+        triggerLookupForAllUniqueRfids()
+    }
+
 	/**
 	 * Tambahkan EPC yang terbaca. Duplicate removal ditangani dengan Set dan opsi threshold RSSI.
 	 */

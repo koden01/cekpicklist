@@ -38,6 +38,9 @@ class MyApplication : Application() {
         // Load cache dari database
         loadCacheFromDatabase()
         
+        // **PERBAIKAN BARU**: Start background refresh untuk persistence 15 jam
+        startBackgroundRefresh()
+        
         Log.d(TAG, "✅ Application initialized successfully")
     }
     
@@ -46,9 +49,11 @@ class MyApplication : Application() {
      */
     private fun startCacheWarming() {
         try {
-            Log.d(TAG, "🔥 Starting cache warming service...")
+            Log.d(TAG, "🔥 === MYAPPLICATION START CACHE WARMING ===")
+            Log.d(TAG, "🔍 DEBUG: startCacheWarming() called at ${System.currentTimeMillis()}")
+            Log.d(TAG, "🔥 Starting ULTRA OPTIMASI cache warming service...")
             cacheWarmingService.startCacheWarming()
-            Log.d(TAG, "✅ Cache warming service started")
+            Log.d(TAG, "✅ ULTRA OPTIMASI Cache warming service started (1 SINGLE query!)")
         } catch (e: Exception) {
             Log.e(TAG, "❌ Error starting cache warming service: ${e.message}", e)
         }
@@ -70,6 +75,19 @@ class MyApplication : Application() {
     }
     
     /**
+     * Start background refresh untuk persistence 15 jam
+     */
+    private fun startBackgroundRefresh() {
+        try {
+            Log.d(TAG, "🚀 Starting background refresh service...")
+            cacheManager.startBackgroundRefresh()
+            Log.d(TAG, "✅ Background refresh service started")
+        } catch (e: Exception) {
+            Log.e(TAG, "❌ Error starting background refresh service: ${e.message}", e)
+        }
+    }
+    
+    /**
      * Get cache warming service instance
      */
     fun getCacheWarmingService(): CacheWarmingService {
@@ -81,5 +99,32 @@ class MyApplication : Application() {
      */
     fun getCacheManager(): CacheManager {
         return cacheManager
+    }
+    
+    /**
+     * Cleanup saat aplikasi di-destroy
+     */
+    override fun onTerminate() {
+        super.onTerminate()
+        try {
+            Log.d(TAG, "🔄 Terminating application...")
+            
+            // Stop background refresh
+            cacheManager.stopBackgroundRefresh()
+            
+            // Force save cache sebelum terminate
+            CoroutineScope(SupervisorJob() + Dispatchers.IO).launch {
+                try {
+                    cacheManager.forceSaveCache()
+                    Log.d(TAG, "✅ Cache saved before terminate")
+                } catch (e: Exception) {
+                    Log.e(TAG, "❌ Error saving cache before terminate: ${e.message}", e)
+                }
+            }
+            
+            Log.d(TAG, "✅ Application terminated")
+        } catch (e: Exception) {
+            Log.e(TAG, "❌ Error during application termination: ${e.message}", e)
+        }
     }
 }

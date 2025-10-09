@@ -17,6 +17,7 @@ import com.example.cekpicklist.data.QtyStatusInfo
 import com.example.cekpicklist.data.QtyStatus
 import com.example.cekpicklist.repository.Repository
 import com.example.cekpicklist.api.NirwanaApiService
+import com.example.cekpicklist.api.SupabaseService.SimplePicklist
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
@@ -58,6 +59,10 @@ class ScanViewModel(application: Application) : AndroidViewModel(application) {
     
     private val _picklistStatuses = MutableLiveData<List<PicklistStatus>>()
     val picklistStatuses: LiveData<List<PicklistStatus>> = _picklistStatuses
+    
+    // NEW: LiveData untuk picklist sederhana dengan status scan
+    private val _simplePicklists = MutableLiveData<List<SimplePicklist>>()
+    val simplePicklists: LiveData<List<SimplePicklist>> = _simplePicklists
 
     private val _picklistItems = MutableLiveData<List<PicklistItem>>()
     val picklistItems: LiveData<List<PicklistItem>> = _picklistItems
@@ -84,6 +89,14 @@ class ScanViewModel(application: Application) : AndroidViewModel(application) {
     
     // **Loading job untuk mencegah konflik**
     private var loadingJob: kotlinx.coroutines.Job? = null
+    // Job terpisah untuk simple picklists agar tidak membatalkan loading utama
+    private var simpleLoadingJob: kotlinx.coroutines.Job? = null
+    // Job terpisah untuk status agar tidak overlap
+    private var statusesLoadingJob: kotlinx.coroutines.Job? = null
+    // Job untuk prefetch semua data hari ini
+    private var prefetchJob: kotlinx.coroutines.Job? = null
+    // Debounce untuk load picklists
+    private var lastPicklistsLoadAt: Long = 0L
     
     // **POIN 5: LiveData untuk Real-time Qty Updates**
     private val _qtyUpdates = MutableLiveData<QtyUpdate>()
@@ -165,9 +178,21 @@ class ScanViewModel(application: Application) : AndroidViewModel(application) {
      */
     fun loadPicklistsOptimized() {
         val startTime = System.currentTimeMillis()
-        Log.i("ScanViewModel", "Loading picklists...")
+        Log.i("ScanViewModel", "🔥 === OPTIMIZED LOADING PICKLISTS START ===")
+        Log.d("ScanViewModel", "🔍 DEBUG: loadPicklistsOptimized() called at ${System.currentTimeMillis()}")
         
-        // Cancel previous loading job to prevent conflicts
+        // Debounce: hindari trigger berulang dalam waktu singkat
+        if (_isLoading.value == true) {
+            Log.d("ScanViewModel", "⏭️ Skip loadPicklistsOptimized: still loading")
+            return
+        }
+        if (startTime - lastPicklistsLoadAt < 1500) {
+            Log.d("ScanViewModel", "⏭️ Skip loadPicklistsOptimized: called too frequently")
+            return
+        }
+        lastPicklistsLoadAt = startTime
+
+        // **V4.3.4 STYLE**: Simple loading without complex mutex
         loadingJob?.cancel()
         
         loadingJob = viewModelScope.launch(Dispatchers.IO) {
@@ -179,15 +204,26 @@ class ScanViewModel(application: Application) : AndroidViewModel(application) {
                 Log.i("ScanViewModel", "🔥 Loading picklists via Repository (with cache)")
                 
                 // Repository sudah handle cache management
+                Log.d("ScanViewModel", "🔍 DEBUG: Calling repository.getPicklists()...")
                 val picklists = repository.getPicklists()
+                Log.d("ScanViewModel", "🔍 DEBUG: Repository returned ${picklists.size} picklists")
+                
+                if (picklists.isNotEmpty()) {
+                    Log.d("ScanViewModel", "🔍 DEBUG: First 3 picklists from repository: ${picklists.take(3).joinToString(", ")}")
+                } else {
+                    Log.w("ScanViewModel", "⚠️ DEBUG: Repository returned empty picklist list!")
+                }
                 
                 withContext(Dispatchers.Main) {
                     if (picklists.isNotEmpty()) {
                         val loadTime = System.currentTimeMillis() - startTime
                         Log.i("ScanViewModel", "✅ Picklists loaded in ${loadTime}ms (${picklists.size} items)")
+                        Log.d("ScanViewModel", "🔍 DEBUG: Setting _picklists.value to ${picklists.size} items")
                         _picklists.value = picklists
+                        Log.d("ScanViewModel", "🔍 DEBUG: _picklists.value set successfully")
                     } else {
                         Log.w("ScanViewModel", "⚠️ No picklists found")
+                        Log.d("ScanViewModel", "🔍 DEBUG: Setting _picklists.value to empty list")
                         _picklists.value = emptyList()
                     }
                 }
@@ -195,7 +231,9 @@ class ScanViewModel(application: Application) : AndroidViewModel(application) {
                 Log.i("ScanViewModel", "🔥 === OPTIMIZED LOADING PICKLISTS END ===")
                 
                 // Load picklist statuses after loading picklists
-                loadPicklistStatuses(picklists)
+                if (picklists.isNotEmpty()) {
+                    loadPicklistStatuses(picklists)
+                }
                 
             } catch (e: CancellationException) {
                 Log.d("ScanViewModel", "ℹ️ Loading cancelled: ${e.message}")
@@ -208,7 +246,9 @@ class ScanViewModel(application: Application) : AndroidViewModel(application) {
                 }
             } finally {
                 withContext(Dispatchers.Main) {
+                    Log.d("ScanViewModel", "🔍 DEBUG: Setting _isLoading.value to false")
                     _isLoading.value = false
+                    Log.d("ScanViewModel", "🔍 DEBUG: _isLoading.value set to false")
                 }
                 loadingJob = null
             }
@@ -221,14 +261,123 @@ class ScanViewModel(application: Application) : AndroidViewModel(application) {
     fun cancelLoadingJobs() {
         loadingJob?.cancel()
         loadingJob = null
+        simpleLoadingJob?.cancel()
+        simpleLoadingJob = null
+        statusesLoadingJob?.cancel()
+        statusesLoadingJob = null
+        prefetchJob?.cancel()
+        prefetchJob = null
         Log.d("ScanViewModel", "🔥 All loading jobs cancelled")
+    }
+    
+    /**
+     * METODE BARU: Load picklist sederhana dengan status scan untuk modal
+     */
+    fun loadSimplePicklists() {
+        val startTime = System.currentTimeMillis()
+        Log.i("ScanViewModel", "🔥 === LOAD SIMPLE PICKLISTS START ===")
+        Log.d("ScanViewModel", "🔍 DEBUG: loadSimplePicklists() called at ${System.currentTimeMillis()}")
+        
+        // Gunakan job terpisah agar tidak membatalkan loading utama/status detail
+        simpleLoadingJob?.cancel()
+        simpleLoadingJob = viewModelScope.launch(Dispatchers.IO) {
+            try {
+                Log.d("ScanViewModel", "🔍 DEBUG: Starting simple picklist loading...")
+                
+                // Ambil picklist sederhana dengan status scan
+                val simplePicklists = repository.getUniquePicklistsWithScanStatus()
+                Log.d("ScanViewModel", "🔍 DEBUG: Repository returned ${simplePicklists.size} simple picklists")
+                
+                withContext(Dispatchers.Main) {
+                    _simplePicklists.value = simplePicklists
+                }
+                
+                val endTime = System.currentTimeMillis()
+                Log.i("ScanViewModel", "✅ SIMPLE PICKLISTS LOADING COMPLETED in ${endTime - startTime}ms")
+                
+            } catch (e: Exception) {
+                Log.e("ScanViewModel", "❌ Error in simple picklist loading: ${e.message}", e)
+            }
+        }
+    }
+
+    /**
+     * Prefetch semua data hari ini ke cache (items + processed EPC) di background
+     * Tidak menyentuh _isLoading agar tidak mengganggu UI
+     */
+    fun prefetchTodayData() {
+        if (prefetchJob?.isActive == true) {
+            Log.d("ScanViewModel", "⏭️ Skip prefetchTodayData: already running")
+            return
+        }
+        prefetchJob = viewModelScope.launch(Dispatchers.IO) {
+            try {
+                Log.d("ScanViewModel", "🚀 PREFETCH: Fetching all today's data into cache...")
+                val result = repository.getAllTodayDataUltraOptimized()
+                Log.d("ScanViewModel", "✅ PREFETCH completed: cached ${result.size} picklists")
+            } catch (e: CancellationException) {
+                Log.d("ScanViewModel", "ℹ️ PREFETCH cancelled: ${e.message}")
+            } catch (e: Exception) {
+                Log.e("ScanViewModel", "❌ PREFETCH error: ${e.message}", e)
+            } finally {
+                prefetchJob = null
+            }
+        }
+    }
+    
+    /**
+     * LAZY LOADING: Load detail picklist saat dipilih
+     */
+    fun loadPicklistDetails(picklistNumber: String) {
+        Log.i("ScanViewModel", "🔥 === LOAD PICKLIST DETAILS START ===")
+        Log.d("ScanViewModel", "🔍 DEBUG: loadPicklistDetails() called for picklist: $picklistNumber")
+        
+        // **CRITICAL FIX**: Set currentPicklistNumber untuk lazy loading
+        currentPicklistNumber = picklistNumber
+        Log.d("ScanViewModel", "🔍 DEBUG: currentPicklistNumber set to: $currentPicklistNumber")
+        
+        viewModelScope.launch(Dispatchers.IO) {
+            try {
+                withContext(Dispatchers.Main) {
+                    _isLoading.value = true
+                }
+                
+                Log.d("ScanViewModel", "🔍 DEBUG: Starting picklist details loading for: $picklistNumber")
+                
+                // Ambil detail picklist
+                val picklistItems = repository.getPicklistDetails(picklistNumber)
+                Log.d("ScanViewModel", "🔍 DEBUG: Repository returned ${picklistItems.size} items for picklist $picklistNumber")
+                
+                withContext(Dispatchers.Main) {
+                    _picklistItems.value = picklistItems
+                    _isLoading.value = false
+                    
+                    // **CRITICAL FIX**: Update filtered items setelah picklist items diupdate
+                    updateFilteredItems()
+                    Log.d("ScanViewModel", "🔍 DEBUG: updateFilteredItems() called after loading picklist details")
+                }
+                
+                Log.i("ScanViewModel", "✅ PICKLIST DETAILS LOADING COMPLETED for $picklistNumber")
+                
+            } catch (e: Exception) {
+                Log.e("ScanViewModel", "❌ Error in picklist details loading: ${e.message}", e)
+                withContext(Dispatchers.Main) {
+                    _isLoading.value = false
+                }
+            }
+        }
     }
     
     /**
      * Load scan status for all picklists
      */
     private fun loadPicklistStatuses(picklists: List<String>) {
-        viewModelScope.launch(Dispatchers.IO) {
+        // Hindari overlap: jika masih berjalan, biarkan yang lama selesai
+        if (statusesLoadingJob?.isActive == true) {
+            Log.d("ScanViewModel", "⏭️ Skip loadPicklistStatuses: already in progress")
+            return
+        }
+        statusesLoadingJob = viewModelScope.launch(Dispatchers.IO) {
             try {
                 Log.d("ScanViewModel", "🔥 Loading picklist statuses for ${picklists.size} picklists")
                 
@@ -255,6 +404,68 @@ class ScanViewModel(application: Application) : AndroidViewModel(application) {
     }
 
     /**
+     * ULTRA OPTIMASI: Prefetch SEMUA data hari ini dalam 1 SINGLE query saja (ULTRA CEPAT!)
+     */
+    fun prefetchAllTodayDataUltraOptimized() {
+        Log.d("ScanViewModel", "🔥 === PREFETCH ALL TODAY DATA ULTRA OPTIMIZED START ===")
+        Log.d("ScanViewModel", "🔍 DEBUG: prefetchAllTodayDataUltraOptimized() called at ${System.currentTimeMillis()}")
+        Log.d("ScanViewModel", "🚀 ULTRA OPTIMASI: Prefetching ALL today's data in 1 SINGLE query!")
+        
+        viewModelScope.launch(Dispatchers.IO) {
+            try {
+                val startTime = System.currentTimeMillis()
+                
+                // **ULTRA OPTIMASI**: Ambil SEMUA data hari ini dalam 1 query dengan JOIN
+                Log.d("ScanViewModel", "🔍 DEBUG: Calling repository.getAllTodayDataUltraOptimized()...")
+                val allTodayData = repository.getAllTodayDataUltraOptimized()
+                
+                val endTime = System.currentTimeMillis()
+                val duration = endTime - startTime
+                
+                Log.d("ScanViewModel", "✅ ULTRA OPTIMASI: Retrieved ${allTodayData.size} picklists in ${duration}ms (1 SINGLE query!)")
+                
+                // Update picklists jika belum ada
+                if (_picklists.value.isNullOrEmpty()) {
+                    val picklistNumbers = allTodayData.keys.toList()
+                    withContext(Dispatchers.Main) {
+                        _picklists.value = picklistNumbers
+                        Log.d("ScanViewModel", "✅ Updated picklists: ${picklistNumbers.size} items")
+                    }
+                }
+                
+                // Generate statuses dari data yang sudah di-cache
+                val statuses = allTodayData.map { (picklistNo, data) ->
+                    val (items, scans) = data
+                    val totalQty = items.sumOf { it.qtyPl }
+                    val scannedQty = scans.size
+                    val remainingQty = totalQty - scannedQty
+                    
+                    PicklistStatus(
+                        picklistNumber = picklistNo,
+                        isScanned = remainingQty <= 0,
+                        remainingQty = remainingQty,
+                        totalQty = totalQty,
+                        scannedQty = scannedQty,
+                        lastScanTime = if (scans.isNotEmpty()) System.currentTimeMillis().toString() else null,
+                        overscanQty = maxOf(0, scannedQty - totalQty)
+                    )
+                }
+                
+                withContext(Dispatchers.Main) {
+                    _picklistStatuses.value = statuses
+                    Log.d("ScanViewModel", "✅ OPTIMASI: Updated ${statuses.size} picklist statuses from optimized data")
+                }
+                
+            } catch (e: CancellationException) {
+                Log.d("ScanViewModel", "ℹ️ Optimized prefetch cancelled: ${e.message}")
+                throw e
+            } catch (t: Throwable) {
+                Log.e("ScanViewModel", "❌ Optimized prefetch failed: ${t.message}")
+            }
+        }
+    }
+
+    /**
      * Prefetch picklist statuses: seed dari cache bila ada agar UI cepat,
      * lalu lengkapi dengan fetch jaringan (status hari ini) dan update kembali.
      */
@@ -262,7 +473,7 @@ class ScanViewModel(application: Application) : AndroidViewModel(application) {
         val currentPicklists = _picklists.value ?: emptyList()
         if (currentPicklists.isEmpty()) return
 
-        // Seed cepat dari cache (tanpa suspend) via repository.getBatchPicklistData yang akan gunakan cache bila ada
+        // **PERBAIKAN**: Gunakan job terpisah untuk prefetch agar tidak conflict dengan loadingJob
         viewModelScope.launch(Dispatchers.IO) {
             try {
                 // Ambil data dari cache jika tersedia
@@ -277,8 +488,14 @@ class ScanViewModel(application: Application) : AndroidViewModel(application) {
                     }
                 }
 
+                // **PERBAIKAN**: Delay sedikit sebelum fetch dari jaringan untuk menghindari race condition
+                delay(1000)
+
                 // Prefetch lengkap dari jaringan (menghitung scan hari ini) dan update UI kembali
                 loadPicklistStatuses(currentPicklists)
+            } catch (e: CancellationException) {
+                Log.d("ScanViewModel", "ℹ️ Prefetch cancelled: ${e.message}")
+                throw e // Re-throw cancellation
             } catch (t: Throwable) {
                 Log.e("ScanViewModel", "❌ Prefetch picklist statuses failed: ${t.message}")
             }
@@ -295,8 +512,12 @@ class ScanViewModel(application: Application) : AndroidViewModel(application) {
 
         Log.d("ScanViewModel", "🔥 Force refreshing picklist statuses (bypass cache)")
         
+        // **PERBAIKAN**: Gunakan job terpisah untuk force refresh agar tidak conflict dengan loadingJob
         viewModelScope.launch(Dispatchers.IO) {
             try {
+                // **PERBAIKAN**: Delay sedikit untuk menghindari race condition
+                delay(500)
+                
                 // **OPTIMASI**: Langsung fetch dari jaringan tanpa cache menggunakan method baru
                 val statuses = repository.forceRefreshPicklistCompletionStatuses(currentPicklists)
                 
@@ -310,6 +531,9 @@ class ScanViewModel(application: Application) : AndroidViewModel(application) {
                     }
                 }
                 
+            } catch (e: CancellationException) {
+                Log.d("ScanViewModel", "ℹ️ Force refresh cancelled: ${e.message}")
+                throw e // Re-throw cancellation
             } catch (e: Exception) {
                 Log.e("ScanViewModel", "❌ Error force refreshing picklist statuses: ${e.message}")
             }
@@ -326,11 +550,8 @@ class ScanViewModel(application: Application) : AndroidViewModel(application) {
         Log.i("ScanViewModel", "🔥 Picklist: $picklistNumber")
         Log.i("ScanViewModel", "🔥 Timestamp: ${java.text.SimpleDateFormat("HH:mm:ss.SSS", java.util.Locale.getDefault()).format(java.util.Date())}")
         
-        // **PERBAIKAN**: Cancel previous loading job untuk mencegah konflik
-        loadingJob?.cancel()
-        
-        // Check apakah sudah loading picklist yang sama untuk menghindari duplikasi
-        if (currentPicklistNumber == picklistNumber && _isLoading.value == true) {
+        // Hindari membatalkan request yang sedang berjalan untuk picklist yang sama
+        if (currentPicklistNumber == picklistNumber && (loadingJob?.isActive == true || _isLoading.value == true)) {
             Log.w("ScanViewModel", "⚠️ Already loading picklist $picklistNumber, skipping duplicate request")
             return
         }
@@ -365,11 +586,8 @@ class ScanViewModel(application: Application) : AndroidViewModel(application) {
                 }
                 
                 Log.i("ScanViewModel", "🔥 Loading picklist items via Repository (with cache)")
-                
-                // **OPTIMASI SINGLE BATCH**: Load picklist items dan processed EPC list dalam satu operasi
-                val batchResult = repository.getPicklistDataBatch(picklistNumber)
-                val items = batchResult.first
-                val processedEpcList = batchResult.second
+                // v4.3.4 flow: ambil list artikel langsung
+                val items = repository.getPicklistItems(picklistNumber)
                 
                 val loadTime = System.currentTimeMillis() - startTime
                 
@@ -388,23 +606,6 @@ class ScanViewModel(application: Application) : AndroidViewModel(application) {
                     
                     Log.i("ScanViewModel", "🔥 Summary: Total items=${items.size}, Scanned items=$scannedItems, Completed items=$completedItems")
                     Log.i("ScanViewModel", "🔥 Quantities: Total qtyPl=$totalQtyPl, Total qtyScan=$totalQtyScan, Remaining=${totalQtyPl - totalQtyScan}")
-                    
-                    // **PERBAIKAN KRITIS**: Seed unique EPC set TERLEBIH DAHULU sebelum update UI
-                    val seedSet = processedEpcList.toMutableSet()
-                    uniqueEpcPerPicklist[picklistNumber] = seedSet
-                    processedEpcPerPicklist[picklistNumber] = seedSet.toMutableSet()
-                    
-                    // **PERBAIKAN BARU**: Seed RfidScanManager juga dengan data dari database
-                    // Note: RfidScanManager seeding akan dilakukan di Activity level
-                    Log.d("ScanViewModel", "🔥 Will seed RfidScanManager with ${processedEpcList.size} EPCs from database")
-                    
-                    // **DEBUG**: Log detail tentang seeding
-                    Log.d("ScanViewModel", "🔥 Seeded ${seedSet.size} unique EPCs from database for picklist: $picklistNumber")
-                    if (seedSet.isNotEmpty()) {
-                        Log.d("ScanViewModel", "🔥 Seeded EPCs: ${seedSet.take(5).joinToString(", ")}${if (seedSet.size > 5) "..." else ""}")
-                    }
-                    Log.d("ScanViewModel", "🔥 Unique EPC set initialized: ${uniqueEpcPerPicklist[picklistNumber]?.size ?: 0} EPCs")
-                    Log.d("ScanViewModel", "🔥 Processed EPC set initialized: ${processedEpcPerPicklist[picklistNumber]?.size ?: 0} EPCs")
                     
                     // **PERBAIKAN**: Update UI di main thread SETELAH seeding selesai
                     withContext(Dispatchers.Main) {
@@ -1218,9 +1419,13 @@ class ScanViewModel(application: Application) : AndroidViewModel(application) {
         val items = _picklistItems.value ?: emptyList()
         val processedData = _processedRfidData.value ?: emptyList()
         
+        Log.d("ScanViewModel", "🔥 === UPDATE FILTERED ITEMS START ===")
         Log.d("ScanViewModel", "🔥 updateFilteredItems: items=${items.size}, processedData=${processedData.size}")
+        items.forEach { item ->
+            Log.d("ScanViewModel", "🔥   - PICKLIST ITEM: ${item.articleName} ${item.size} - qtyPl=${item.qtyPl}, qtyScan=${item.qtyScan}")
+        }
         processedData.forEach { item ->
-            Log.d("ScanViewModel", "🔥   - ${item.articleName} ${item.size} (${item.tagStatus})")
+            Log.d("ScanViewModel", "🔥   - PROCESSED DATA: ${item.articleName} ${item.size} (${item.tagStatus})")
         }
         
         // **PERBAIKAN**: Agregasi non-picklist per (articleId,size) agar qty mencerminkan jumlah EPC
@@ -1307,6 +1512,11 @@ class ScanViewModel(application: Application) : AndroidViewModel(application) {
         }
         
         _filteredItems.value = filteredItems
+        Log.d("ScanViewModel", "🔥 === UPDATE FILTERED ITEMS COMPLETED ===")
+        Log.d("ScanViewModel", "🔥 Final filtered items: ${filteredItems.size}")
+        filteredItems.forEach { item ->
+            Log.d("ScanViewModel", "🔥   - ${item.articleName} ${item.size} - qtyPl=${item.qtyPl}, qtyScan=${item.qtyScan}")
+        }
     }
     
     // **POIN 5: LiveData untuk Real-time Qty Updates**
@@ -1382,7 +1592,88 @@ class ScanViewModel(application: Application) : AndroidViewModel(application) {
      * Get cache info untuk debugging
      */
     fun getCacheInfo(): String {
-        return "Cache Info: Not implemented yet"
+        Log.d("ScanViewModel", "🔥 === GET CACHE INFO START ===")
+        Log.d("ScanViewModel", "🔍 DEBUG: getCacheInfo() called at ${System.currentTimeMillis()}")
+        val picklists = _picklists.value ?: emptyList()
+        val statuses = _picklistStatuses.value ?: emptyList()
+        val isLoading = _isLoading.value ?: false
+        
+        Log.d("ScanViewModel", "🔍 DEBUG: Cache info - picklists: ${picklists.size}, statuses: ${statuses.size}, loading: $isLoading")
+        
+        return """
+            Cache Info:
+            - Picklists: ${picklists.size} items
+            - Statuses: ${statuses.size} items  
+            - Loading: $isLoading
+            - Picklist Numbers: ${picklists.take(3).joinToString(", ")}${if (picklists.size > 3) "..." else ""}
+        """.trimIndent()
+    }
+    
+    /**
+     * Debug method untuk troubleshooting
+     */
+    fun debugPicklistData() {
+        viewModelScope.launch {
+            try {
+                Log.d("ScanViewModel", "🔥 === DEBUG PICKLIST DATA START ===")
+                Log.d("ScanViewModel", "🔍 DEBUG: debugPicklistData() called at ${System.currentTimeMillis()}")
+                Log.d("ScanViewModel", "🔍 DEBUG: Starting picklist data debug...")
+
+                // Test koneksi Supabase
+                val isConnected = repository.testSupabaseConnection()
+                Log.d("ScanViewModel", "🔍 DEBUG: Supabase connection: $isConnected")
+
+                // Cek cache stats
+                val cacheStats = repository.getCacheStats()
+                Log.d("ScanViewModel", "🔍 DEBUG: Cache stats: $cacheStats")
+
+                // Cek picklist data
+                Log.d("ScanViewModel", "🔍 DEBUG: Calling repository.getPicklists() from debug...")
+                val picklists = repository.getPicklists()
+                Log.d("ScanViewModel", "🔍 DEBUG: Picklists from repository: ${picklists.size} items")
+
+                // Cek optimized data
+                Log.d("ScanViewModel", "🔍 DEBUG: Calling repository.getAllTodayDataOptimized() from debug...")
+                val optimizedData = repository.getAllTodayDataOptimized()
+                Log.d("ScanViewModel", "🔍 DEBUG: Optimized data: ${optimizedData.size} picklists")
+
+                Log.d("ScanViewModel", "🔍 DEBUG: Debug completed")
+
+            } catch (e: Exception) {
+                Log.e("ScanViewModel", "❌ DEBUG: Error during debug: ${e.message}", e)
+            }
+        }
+    }
+
+    fun forceRefreshPicklistData() {
+        viewModelScope.launch {
+            try {
+                Log.d("ScanViewModel", "🔥 === FORCE REFRESH PICKLIST DATA START ===")
+                Log.d("ScanViewModel", "🔍 DEBUG: forceRefreshPicklistData() called at ${System.currentTimeMillis()}")
+                Log.d("ScanViewModel", "🔄 Force refreshing picklist data...")
+
+                // **PERBAIKAN**: Coba ambil data langsung dari cache tanpa timeout
+                try {
+                    Log.d("ScanViewModel", "🔍 DEBUG: Attempting direct cache access...")
+                    val directPicklists = repository.getPicklists()
+                    
+                    if (directPicklists.isNotEmpty()) {
+                        Log.d("ScanViewModel", "✅ Force refresh successful: ${directPicklists.size} picklists")
+                        _picklists.value = directPicklists
+                        
+                        // Load statuses juga
+                        loadPicklistStatuses(directPicklists)
+                    } else {
+                        Log.w("ScanViewModel", "⚠️ Force refresh returned empty list")
+                    }
+                } catch (e: Exception) {
+                    Log.e("ScanViewModel", "❌ Force refresh failed: ${e.message}", e)
+                }
+
+            } catch (e: Exception) {
+                Log.e("ScanViewModel", "❌ Error during force refresh: ${e.message}", e)
+            }
+        }
     }
     
     /**

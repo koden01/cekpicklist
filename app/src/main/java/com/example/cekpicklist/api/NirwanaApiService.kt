@@ -1,8 +1,7 @@
 package com.example.cekpicklist.api
 
 import android.util.Log
-import com.google.gson.Gson
-import com.google.gson.JsonSyntaxException
+import org.json.JSONObject
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.delay
@@ -41,8 +40,7 @@ class NirwanaApiService {
         private const val VERBOSE_LOGS = false
         private const val LOG_HTTP_BODIES = false
 
-        // **PERBAIKAN BARU**: Gson instance untuk parsing JSON
-        private val gson = Gson()
+        // **PERBAIKAN BARU**: Menggunakan org.json untuk parsing JSON
     }
     
     private val authMutex = Mutex()
@@ -576,15 +574,16 @@ class NirwanaApiService {
                             Log.i(TAG, "🔥 ===== NIRWANA API RESPONSE END =====")
                         }
                         
-                        // **PERBAIKAN BARU**: Gunakan Gson untuk parsing JSON yang lebih robust
-                        v("Starting Gson JSON parsing for chunk ${chunkIndex + 1}... Response length: ${response.length}")
+                        // **PERBAIKAN BARU**: Gunakan org.json untuk parsing JSON yang lebih robust
+                        v("Starting org.json JSON parsing for chunk ${chunkIndex + 1}... Response length: ${response.length}")
                         
                         val chunkProducts = mutableListOf<ProductInfo>()
                         
                         try {
-                            val nirwanaResponse = gson.fromJson(response, NirwanaBatchResponse::class.java)
+                            val jsonObject = JSONObject(response)
+                            val nirwanaResponse = NirwanaBatchResponse.fromJson(jsonObject)
                             
-                            v("GSON parsing success (Chunk ${chunkIndex + 1}), products: ${nirwanaResponse.data.size}")
+                            v("org.json parsing success (Chunk ${chunkIndex + 1}), products: ${nirwanaResponse.data.size}")
                             
                             // **LOGGING**: Tampilkan semua EPC yang ditemukan dalam response
                             val allEpcsInResponse = nirwanaResponse.data.flatMap { it.rfidList }
@@ -627,13 +626,13 @@ class NirwanaApiService {
                                 v("Product #${index + 1} parsed: ${productInfo.articleName} ${productInfo.size}, rfids: ${productData.rfidList}")
                             }
                             
-                            v("GSON parsing complete (Chunk ${chunkIndex + 1}), total products: ${chunkProducts.size}")
+                            v("org.json parsing complete (Chunk ${chunkIndex + 1}), total products: ${chunkProducts.size}")
                             
-                        } catch (e: JsonSyntaxException) {
-                            Log.e(TAG, "❌ Gson parsing failed for chunk ${chunkIndex + 1}: ${e.message}", e)
+                        } catch (e: Exception) {
+                            Log.e(TAG, "❌ org.json parsing failed for chunk ${chunkIndex + 1}: ${e.message}", e)
                             Log.w(TAG, "⚠️ Falling back to manual parsing for chunk ${chunkIndex + 1}...")
                             
-                            // Fallback ke manual parsing jika Gson gagal
+                            // Fallback ke manual parsing jika org.json gagal
                             parseResponseManually(response, chunkProducts)
                         }
                         
@@ -732,7 +731,7 @@ class NirwanaApiService {
     }
     
     /**
-     * Fallback function untuk manual parsing jika Gson gagal
+     * Fallback function untuk manual parsing jika org.json gagal
      */
     private fun parseResponseManually(response: String, products: MutableList<ProductInfo>) {
         Log.d(TAG, "🔍 Starting manual parsing fallback...")
@@ -1067,16 +1066,17 @@ class NirwanaApiService {
                                 val chunkProducts = mutableListOf<ProductInfo>()
                                 
                                 // **DETAILED LOGGING**: Log parsing process
-                                Log.d(TAG, "🔍 Starting to parse relocation response with Gson...")
+                                Log.d(TAG, "🔍 Starting to parse relocation response with org.json...")
                                 Log.d(TAG, "🔍 Response length: ${responseBody.length} characters")
                                 
                                 try {
-                                    // **PERBAIKAN**: Gunakan Gson untuk parsing JSON yang lebih robust
-                                    Log.d(TAG, "🔍 Starting Gson JSON parsing for relocation...")
+                                    // **PERBAIKAN**: Gunakan org.json untuk parsing JSON yang lebih robust
+                                    Log.d(TAG, "🔍 Starting org.json JSON parsing for relocation...")
                                     
-                                    val nirwanaResponse = gson.fromJson(responseBody, NirwanaBatchResponse::class.java)
+                                    val jsonObject = JSONObject(responseBody)
+                                    val nirwanaResponse = NirwanaBatchResponse.fromJson(jsonObject)
                                     
-                                    Log.d(TAG, "🔍 GSON parsing success, products: ${nirwanaResponse.data.size}")
+                                    Log.d(TAG, "🔍 org.json parsing success, products: ${nirwanaResponse.data.size}")
                                     
                                     // **LOGGING**: Tampilkan semua EPC yang ditemukan dalam response
                                     val allEpcsInResponse = nirwanaResponse.data.flatMap { it.rfidList }
@@ -1134,13 +1134,13 @@ class NirwanaApiService {
                                                 "rfidList=[${productData.rfidList.joinToString(",")}]")
                                     }
                                     
-                                    Log.d(TAG, "🔍 GSON parsing complete, total products: ${chunkProducts.size}")
+                                    Log.d(TAG, "🔍 org.json parsing complete, total products: ${chunkProducts.size}")
                                     
-                                } catch (e: JsonSyntaxException) {
-                                    Log.e(TAG, "❌ Gson parsing failed for relocation: ${e.message}", e)
+                                } catch (e: Exception) {
+                                    Log.e(TAG, "❌ org.json parsing failed for relocation: ${e.message}", e)
                                     Log.w(TAG, "⚠️ Falling back to manual parsing for relocation...")
                                     
-                                    // Fallback ke manual parsing jika Gson gagal
+                                    // Fallback ke manual parsing jika org.json gagal
                                     parseResponseManually(responseBody, chunkProducts)
                                 }
                                 

@@ -22,8 +22,8 @@ android {
         applicationId = "com.example.cekpicklist"
         minSdk = 30
         targetSdk = 35
-        versionCode = 19
-        versionName = "4.5.0"
+        versionCode = 21
+        versionName = "4.6.0"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         
@@ -115,6 +115,8 @@ dependencies {
     // RFID SDK
     implementation(files("libs/DeviceAPI_ver20250209_release.aar"))
 }
+
+
 
 
 

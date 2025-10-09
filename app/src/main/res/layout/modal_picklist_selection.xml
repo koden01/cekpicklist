@@ -27,7 +27,7 @@
             android:layout_width="0dp"
             android:layout_height="wrap_content"
             android:layout_weight="1"
-            android:text="Pilih Picklist"
+            android:text="Pilih Picklist Hari Ini"
             android:textSize="20sp"
             android:textStyle="bold"
             android:textColor="@android:color/black" />
@@ -54,6 +54,47 @@
             android:focusable="true"
             android:foreground="?android:attr/selectableItemBackground"
             android:padding="4dp" />
+
+    </LinearLayout>
+
+    <!-- Summary Info -->
+    <LinearLayout
+        android:id="@+id/llSummaryInfo"
+        android:layout_width="match_parent"
+        android:layout_height="wrap_content"
+        android:orientation="horizontal"
+        android:gravity="center_vertical"
+        android:background="@color/light_gray"
+        android:padding="12dp"
+        android:layout_marginBottom="16dp"
+        android:visibility="gone">
+
+        <TextView
+            android:id="@+id/tvTotalPicklists"
+            android:layout_width="0dp"
+            android:layout_height="wrap_content"
+            android:layout_weight="1"
+            android:text="Total: 0 picklist"
+            android:textSize="14sp"
+            android:textColor="@color/text_secondary"
+            android:gravity="start" />
+
+        <TextView
+            android:id="@+id/tvCompletedPicklists"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="Selesai: 0"
+            android:textSize="14sp"
+            android:textColor="@color/success_color"
+            android:layout_marginEnd="16dp" />
+
+        <TextView
+            android:id="@+id/tvRemainingPicklists"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:text="Sisa: 0"
+            android:textSize="14sp"
+            android:textColor="@color/warning_color" />
 
     </LinearLayout>
 
