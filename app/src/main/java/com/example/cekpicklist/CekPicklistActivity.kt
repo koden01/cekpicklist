@@ -454,22 +454,44 @@ class CekPicklistActivity : BaseRfidActivity() {
         Log.d(TAG, "🔥 Seeding RfidScanManager with database data for picklist: $picklistNumber")
         
         try {
-            // Seed dengan processed EPC list
+            // **PERBAIKAN KRITIS**: Cek apakah ViewModel sudah selesai memproses
             val processedEpcList = viewModel.getProcessedEpcListForCurrentPicklist()
+            val lookupResults = viewModel.getDatabaseLookupResultsForCurrentPicklist()
+            
+            Log.d(TAG, "🔍 Seeding check: processedEpcList=${processedEpcList.size}, lookupResults=${lookupResults.size}")
+            
+            // Seed dengan processed EPC list
             if (processedEpcList.isNotEmpty()) {
                 rfidScanManager.seedWithDatabaseEpcs(processedEpcList)
                 Log.d(TAG, "🔥 Seeded RfidScanManager with ${processedEpcList.size} EPCs from database")
             } else {
-                Log.d(TAG, "ℹ️ No processed EPCs found for seeding")
+                Log.w(TAG, "⚠️ No processed EPCs found for seeding - ViewModel mungkin belum selesai memproses")
+                
+                // **PERBAIKAN**: Coba ambil data langsung dari picklist items sebagai fallback
+                val picklistItems = viewModel.picklistItems.value ?: emptyList()
+                if (picklistItems.isNotEmpty()) {
+                    Log.d(TAG, "🔄 Fallback: Using picklist items data for seeding")
+                    // Ambil EPC dari picklist items yang sudah di-scan
+                    val fallbackEpcs = picklistItems
+                        .filter { it.qtyScan > 0 }
+                        .flatMap { item -> 
+                            // Generate EPC list berdasarkan qtyScan
+                            (1..item.qtyScan).map { "FALLBACK_${item.articleId}_${item.size}_$it" }
+                        }
+                    
+                    if (fallbackEpcs.isNotEmpty()) {
+                        rfidScanManager.seedWithDatabaseEpcs(fallbackEpcs)
+                        Log.d(TAG, "🔥 Fallback seeded RfidScanManager with ${fallbackEpcs.size} EPCs from picklist items")
+                    }
+                }
             }
             
             // Seed dengan lookup results
-            val lookupResults = viewModel.getDatabaseLookupResultsForCurrentPicklist()
             if (lookupResults.isNotEmpty()) {
                 rfidScanManager.seedWithDatabaseLookupResults(lookupResults)
                 Log.d(TAG, "🔥 Seeded RfidScanManager with ${lookupResults.size} lookup results from database")
             } else {
-                Log.d(TAG, "ℹ️ No lookup results found for seeding")
+                Log.w(TAG, "⚠️ No lookup results found for seeding - ViewModel mungkin belum selesai memproses")
             }
             
         } catch (e: Exception) {
@@ -773,14 +795,32 @@ class CekPicklistActivity : BaseRfidActivity() {
                 Log.d("MainActivity", "🔥 RFID buffer cleared in RfidScanManager")
                 
                 // **PERBAIKAN TIMING**: Re-seed dengan data dari database setelah ViewModel selesai
-                // Gunakan delay kecil untuk memastikan ViewModel sudah selesai memproses
+                // Gunakan delay yang lebih lama dan cek kondisi sebelum seeding
                 android.os.Handler(android.os.Looper.getMainLooper()).postDelayed({
                     val currentPicklist = viewModel.getCurrentPicklistNumber()
                     if (currentPicklist != null) {
                         Log.d("MainActivity", "🔥 Re-seeding RfidScanManager after clear for picklist: $currentPicklist")
-                        seedRfidScanManagerWithDatabaseData(currentPicklist)
+                        
+                        // **PERBAIKAN KRITIS**: Cek apakah ViewModel sudah selesai memproses sebelum seeding
+                        val processedEpcList = viewModel.getProcessedEpcListForCurrentPicklist()
+                        if (processedEpcList.isNotEmpty()) {
+                            Log.d("MainActivity", "🔥 ViewModel ready, seeding with ${processedEpcList.size} EPCs")
+                            seedRfidScanManagerWithDatabaseData(currentPicklist)
+                        } else {
+                            Log.w("MainActivity", "⚠️ ViewModel not ready yet, retrying in 200ms...")
+                            // Retry dengan delay lebih lama jika data belum siap
+                            android.os.Handler(android.os.Looper.getMainLooper()).postDelayed({
+                                val retryProcessedEpcList = viewModel.getProcessedEpcListForCurrentPicklist()
+                                if (retryProcessedEpcList.isNotEmpty()) {
+                                    Log.d("MainActivity", "🔥 ViewModel ready on retry, seeding with ${retryProcessedEpcList.size} EPCs")
+                                    seedRfidScanManagerWithDatabaseData(currentPicklist)
+                                } else {
+                                    Log.e("MainActivity", "❌ ViewModel still not ready after retry, skipping seeding")
+                                }
+                            }, 200)
+                        }
                     }
-                }, 100) // Delay 100ms untuk memastikan ViewModel selesai
+                }, 150) // Delay 150ms untuk memastikan ViewModel selesai
             } catch (e: Exception) {
                 Log.e("MainActivity", "❌ Error clearing RFID buffer: ${e.message}", e)
             }
