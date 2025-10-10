@@ -1,6 +1,8 @@
 ﻿param(
     [Parameter(Mandatory=$true)]
-    [string]$Version
+    [string]$Version,
+    [Parameter(Mandatory=$false)]
+    [string]$VersionCode = ""
 )
 
 # Update README script
@@ -25,14 +27,33 @@ try {
     # Get current date
     $currentDate = Get-Date -Format "yyyy-MM-dd"
     
-    # Update version and date
+    # Get version code from build.gradle.kts if not provided
+    if (-not $VersionCode) {
+        $buildGradlePath = "app/build.gradle.kts"
+        if (Test-Path $buildGradlePath) {
+            $buildContent = Get-Content $buildGradlePath -Raw
+            $versionCodeMatch = [regex]::Match($buildContent, 'versionCode\s*=\s*(\d+)')
+            if ($versionCodeMatch.Success) {
+                $VersionCode = $versionCodeMatch.Groups[1].Value
+            }
+        }
+    }
+    
+    # Update version and date - support multiple patterns
+    if ($VersionCode) {
+        $readmeContent = $readmeContent -replace '\*\*Version\*\*: [0-9]+\.[0-9]+\.[0-9]+ \(Version Code: [0-9]+\)', "**Version**: $Version (Version Code: $VersionCode)"
+    } else {
+        $readmeContent = $readmeContent -replace '\*\*Version\*\*: [0-9]+\.[0-9]+\.[0-9]+ \(Version Code: [0-9]+\)', "**Version**: $Version (Version Code: [AUTO])"
+    }
     $readmeContent = $readmeContent -replace '\*\*Version\*\*: [0-9]+\.[0-9]+\.[0-9]+ \(Auto-updating\)', "**Version**: $Version (Auto-updating)"
     $readmeContent = $readmeContent -replace '\*\*Last Updated\*\*: [0-9]{4}-[0-9]{2}-[0-9]{2}', "**Last Updated**: $currentDate"
     
     # Debug: Show what was replaced
     Write-Host "Debug: Looking for version pattern..." -ForegroundColor Yellow
-    if ($readmeContent -match '\*\*Version\*\*: [0-9]+\.[0-9]+\.[0-9]+ \(Auto-updating\)') {
-        Write-Host "Found version pattern to replace" -ForegroundColor Green
+    if ($readmeContent -match '\*\*Version\*\*: [0-9]+\.[0-9]+\.[0-9]+ \(Version Code: [0-9]+\)') {
+        Write-Host "Found version pattern (Version Code) to replace" -ForegroundColor Green
+    } elseif ($readmeContent -match '\*\*Version\*\*: [0-9]+\.[0-9]+\.[0-9]+ \(Auto-updating\)') {
+        Write-Host "Found version pattern (Auto-updating) to replace" -ForegroundColor Green
     } else {
         Write-Host "Version pattern not found" -ForegroundColor Red
     }
