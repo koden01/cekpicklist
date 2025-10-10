@@ -410,8 +410,8 @@ android {
         applicationId = "com.example.cekpicklist"
         minSdk = 30
         targetSdk = 35
-        versionCode = 12
-        versionName = "4.3.4"
+        versionCode = 14
+        versionName = "5.0.1"
     }
     
     buildFeatures {
@@ -766,12 +766,12 @@ Aplikasi **Cek Picklist** siap untuk production dengan:
 
 ---
 
-**Version**: 4.3.4 (Version Code: 12)  
+**Version**: 5.0.1 (Version Code: 14)  
 **Last Updated**: 2025-10-10  
 **Platform**: Android 11+ (API 30+)  
 **Auto Versioning**: ✅ Enabled dengan PowerShell Scripts  
 **Status**: ✅ Production Ready  
-**Latest Tag**: v4.3.4
+**Latest Tag**: v5.0.1
 
 
 
