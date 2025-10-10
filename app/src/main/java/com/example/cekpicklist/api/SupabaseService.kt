@@ -983,4 +983,64 @@ class SupabaseService {
         formatter.timeZone = java.util.TimeZone.getTimeZone("UTC")
         return formatter.format(java.util.Date())
     }
+    
+    /**
+     * PERBAIKAN: Reset qtyScan untuk item picklist tertentu (untuk cleanup overscan)
+     * @param picklistNo Nomor picklist
+     * @param articleId ID artikel
+     * @param size Ukuran
+     * @param targetQtyScan Target qtyScan yang diinginkan (biasanya qtyPl)
+     * @return true jika berhasil, false jika gagal
+     */
+    suspend fun resetPicklistItemQtyScan(picklistNo: String, articleId: String, size: String, targetQtyScan: Int): Boolean = withContext(Dispatchers.IO) {
+        try {
+            Log.d("SupabaseService", "🧹 Resetting qtyScan for picklist: $picklistNo, article: $articleId, size: $size")
+            
+            val encodedPicklistNo = URLEncoder.encode(picklistNo, "UTF-8")
+            val encodedArticleId = URLEncoder.encode(articleId, "UTF-8")
+            val encodedSize = URLEncoder.encode(size, "UTF-8")
+            
+            val updateUrl = "$supabaseUrl/rest/v1/picklist_item?no_picklist=eq.$encodedPicklistNo&article_id=eq.$encodedArticleId&size=eq.$encodedSize"
+            
+            Log.d("SupabaseService", "🔥 Reset qtyScan URL: $updateUrl")
+            
+            val url = URL(updateUrl)
+            val connection = url.openConnection() as HttpURLConnection
+            
+            connection.requestMethod = "PATCH"
+            connection.setRequestProperty("apikey", supabaseKey)
+            connection.setRequestProperty("Authorization", "Bearer $supabaseKey")
+            connection.setRequestProperty("Content-Type", "application/json")
+            connection.setRequestProperty("Prefer", "return=minimal")
+            
+            // Reset qtyScan ke targetQtyScan (biasanya qtyPl)
+            val updateData = """
+                {
+                    "qty_scan": $targetQtyScan,
+                    "updated_at": "${getCurrentTimestamp()}"
+                }
+            """.trimIndent()
+            
+            connection.doOutput = true
+            connection.outputStream.use { outputStream ->
+                outputStream.write(updateData.toByteArray(Charsets.UTF_8))
+            }
+            
+            val responseCode = connection.responseCode
+            Log.d("SupabaseService", "🔥 Reset qtyScan response code: $responseCode")
+            
+            if (responseCode in 200..299) {
+                Log.d("SupabaseService", "✅ Successfully reset qtyScan for $articleId $size in picklist $picklistNo to $targetQtyScan")
+                true
+            } else {
+                val errorMessage = connection.errorStream?.bufferedReader()?.readText() ?: "Unknown error"
+                Log.e("SupabaseService", "❌ Failed to reset qtyScan: $responseCode - $errorMessage")
+                false
+            }
+            
+        } catch (e: Exception) {
+            Log.e("SupabaseService", "❌ Error resetting qtyScan: ${e.message}", e)
+            false
+        }
+    }
 }

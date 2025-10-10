@@ -1599,6 +1599,18 @@ class ScanViewModel(application: Application) : AndroidViewModel(application) {
                 _isLoading.value = true
                 lastClearTime = System.currentTimeMillis()
                 
+                // **PERBAIKAN KRITIS**: Hapus overscan data dari database terlebih dahulu
+                val picklistForCleanup = currentPicklistNumber
+                if (picklistForCleanup != null) {
+                    Log.d("ScanViewModel", "🧹 Removing overscan data from database for picklist: $picklistForCleanup")
+                    val overscanRemoved = repository.removeOverscanDataForPicklist(picklistForCleanup)
+                    if (overscanRemoved) {
+                        Log.d("ScanViewModel", "✅ Overscan data successfully removed from database")
+                    } else {
+                        Log.w("ScanViewModel", "⚠️ Failed to remove some overscan data from database")
+                    }
+                }
+                
                 // **PERBAIKAN**: Cek apakah semua item sudah complete sebelum reset
                 val items = _picklistItems.value ?: emptyList()
                 val allItemsComplete = items.all { it.isComplete() }
@@ -1689,18 +1701,10 @@ class ScanViewModel(application: Application) : AndroidViewModel(application) {
                     // **CRITICAL FIX**: Set RFID counter sesuai total qtyScan dari database
                     val totalQtyScanFromDatabase = databaseItems.sumOf { it.qtyScan }
                     
-                    // **PERBAIKAN KRITIS**: Jangan override counter dengan database value
-                    // Gunakan nilai maksimum antara current counter dan database value
-                    val currentCounter = totalRfidDetections
-                    val maxCounter = kotlin.math.max(currentCounter, totalQtyScanFromDatabase)
-                    
-                    if (maxCounter > currentCounter) {
-                        totalRfidDetections = maxCounter
-                        _rfidDetectionCount.value = maxCounter
-                        Log.d("ScanViewModel", "📊 RFID counter updated (max): $currentCounter -> $maxCounter (DB: $totalQtyScanFromDatabase)")
-                    } else {
-                        Log.d("ScanViewModel", "📊 RFID counter maintained: $currentCounter (DB: $totalQtyScanFromDatabase)")
-                    }
+                    // **PERBAIKAN KRITIS**: Set counter sesuai database value (setelah overscan dibersihkan)
+                    totalRfidDetections = totalQtyScanFromDatabase
+                    _rfidDetectionCount.value = totalQtyScanFromDatabase
+                    Log.d("ScanViewModel", "📊 RFID counter set to database value: $totalQtyScanFromDatabase (after overscan cleanup)")
                     
                     Log.d("ScanViewModel", "✅ Data reloaded from database - qtyScan dikembalikan ke nilai asli")
                     Log.d("ScanViewModel", "✅ RFID counter dikembalikan ke ${totalQtyScanFromDatabase} (sesuai database)")
@@ -2682,6 +2686,25 @@ class ScanViewModel(application: Application) : AndroidViewModel(application) {
                 _isLoading.value = true
                 lastClearTime = System.currentTimeMillis()
                 
+                // **PERBAIKAN KRITIS**: Hapus overscan data dari database terlebih dahulu
+                val picklistForCleanup = currentPicklistNumber
+                if (picklistForCleanup != null) {
+                    Log.d("ScanViewModel", "🧹 Removing overscan data from database for picklist: $picklistForCleanup")
+                    try {
+                        val overscanRemoved = repository.removeOverscanDataForPicklist(picklistForCleanup)
+                        if (overscanRemoved) {
+                            Log.d("ScanViewModel", "✅ Overscan data successfully removed from database")
+                        } else {
+                            Log.w("ScanViewModel", "⚠️ Failed to remove some overscan data from database")
+                        }
+                    } catch (e: kotlinx.coroutines.CancellationException) {
+                        Log.d("ScanViewModel", "🔥 Overscan cleanup cancelled (normal behavior): ${e.message}")
+                        // Jangan re-throw cancellation, biarkan proses berlanjut
+                    } catch (e: Exception) {
+                        Log.e("ScanViewModel", "❌ Error removing overscan data: ${e.message}", e)
+                    }
+                }
+                
                 // removed backgroundProcessingJob
                 backgroundReloadJob?.cancel()
                 backgroundReloadJob = null
@@ -2729,18 +2752,10 @@ class ScanViewModel(application: Application) : AndroidViewModel(application) {
                     // **CRITICAL FIX**: Set RFID counter sesuai total qtyScan dari database
                     val totalQtyScanFromDatabase = databaseItems.sumOf { it.qtyScan }
                     
-                    // **PERBAIKAN KRITIS**: Jangan override counter dengan database value
-                    // Gunakan nilai maksimum antara current counter dan database value
-                    val currentCounter = totalRfidDetections
-                    val maxCounter = kotlin.math.max(currentCounter, totalQtyScanFromDatabase)
-                    
-                    if (maxCounter > currentCounter) {
-                        totalRfidDetections = maxCounter
-                        _rfidDetectionCount.value = maxCounter
-                        Log.d("ScanViewModel", "📊 RFID counter updated (max): $currentCounter -> $maxCounter (DB: $totalQtyScanFromDatabase)")
-                    } else {
-                        Log.d("ScanViewModel", "📊 RFID counter maintained: $currentCounter (DB: $totalQtyScanFromDatabase)")
-                    }
+                    // **PERBAIKAN KRITIS**: Set counter sesuai database value (setelah overscan dibersihkan)
+                    totalRfidDetections = totalQtyScanFromDatabase
+                    _rfidDetectionCount.value = totalQtyScanFromDatabase
+                    Log.d("ScanViewModel", "📊 RFID counter set to database value: $totalQtyScanFromDatabase (after overscan cleanup)")
                     
                     Log.d("ScanViewModel", "✅ Data reloaded from database - qtyScan dikembalikan ke nilai asli")
                     Log.d("ScanViewModel", "✅ RFID counter dikembalikan ke ${totalQtyScanFromDatabase} (sesuai database)")
@@ -2755,6 +2770,9 @@ class ScanViewModel(application: Application) : AndroidViewModel(application) {
                 
                 Log.d("ScanViewModel", "✅ Clear RFID collection berhasil (tanpa save)")
                 
+            } catch (e: kotlinx.coroutines.CancellationException) {
+                Log.d("ScanViewModel", "🔥 Clear RFID collection cancelled (normal behavior): ${e.message}")
+                // Jangan set error message untuk cancellation
             } catch (e: Exception) {
                 Log.e("ScanViewModel", "❌ Error clearing RFID collection: ${e.message}", e)
                 _errorMessage.value = "Error clearing RFID collection: ${e.message}"

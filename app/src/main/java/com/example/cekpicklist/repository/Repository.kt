@@ -622,6 +622,53 @@ class Repository(private val context: android.content.Context? = null) {
         }
     }
     
+    /**
+     * PERBAIKAN: Hapus overscan data dari database untuk picklist tertentu
+     * Digunakan saat back button ditekan untuk membersihkan overscan
+     */
+    suspend fun removeOverscanDataForPicklist(picklistNo: String): Boolean = withContext(Dispatchers.IO) {
+        try {
+            Log.d(TAG, "🧹 Removing overscan data for picklist: $picklistNo")
+            
+            // Dapatkan semua item picklist
+            val picklistItems = getPicklistItems(picklistNo)
+            val overscanItems = picklistItems.filter { it.qtyScan > it.qtyPl }
+            
+            if (overscanItems.isEmpty()) {
+                Log.d(TAG, "✅ No overscan items found for picklist: $picklistNo")
+                return@withContext true
+            }
+            
+            Log.d(TAG, "🔍 Found ${overscanItems.size} overscan items to clean up")
+            
+            // Reset qtyScan untuk item yang overscan ke qtyPl (bukan 0)
+            var successCount = 0
+            for (item in overscanItems) {
+                try {
+                    val success = supabaseService.resetPicklistItemQtyScan(picklistNo, item.articleId, item.size, item.qtyPl)
+                    if (success) {
+                        successCount++
+                        Log.d(TAG, "✅ Reset qtyScan for overscan item: ${item.articleName} ${item.size} (was ${item.qtyScan}, now ${item.qtyPl})")
+                    } else {
+                        Log.w(TAG, "⚠️ Failed to reset qtyScan for: ${item.articleName} ${item.size}")
+                    }
+                } catch (e: Exception) {
+                    Log.e(TAG, "❌ Error resetting qtyScan for ${item.articleName} ${item.size}: ${e.message}", e)
+                }
+            }
+            
+            Log.d(TAG, "✅ Overscan cleanup completed: $successCount/${overscanItems.size} items reset")
+            successCount == overscanItems.size
+            
+        } catch (e: kotlinx.coroutines.CancellationException) {
+            Log.d(TAG, "🔥 Overscan cleanup cancelled (normal behavior): ${e.message}")
+            false
+        } catch (e: Exception) {
+            Log.e(TAG, "❌ Error removing overscan data: ${e.message}", e)
+            false
+        }
+    }
+    
     suspend fun savePicklistScan(picklistNo: String, articleId: String, epc: String, productId: String, articleName: String = "", size: String = ""): Boolean = withContext(Dispatchers.IO) {
         try {
             Log.d(TAG, "🔥 Saving picklist scan: $picklistNo, $articleId, $epc, $productId, $articleName, $size")

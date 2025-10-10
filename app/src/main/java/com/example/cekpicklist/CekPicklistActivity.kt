@@ -763,22 +763,24 @@ class CekPicklistActivity : BaseRfidActivity() {
                 stopRfidScanning()
             }
             
-            // 1. Clear RFID collection di ViewModel (tanpa save) - ini akan reset counter juga
+            // 1. Clear RFID collection di ViewModel (tanpa save) - ini akan mengatur counter sesuai database
             viewModel.clearRfidCollectionOnly()
-            // 1b. Explicitly reset RFID detection counter for UI expectation
-            viewModel.resetRfidDetectionCount()
+            // 1b. JANGAN reset counter lagi - clearRfidCollectionOnly() sudah mengatur counter yang benar
             
             // **PERBAIKAN KRITIS**: Clear RFID buffer di RfidScanManager agar EPC bisa di-scan kembali
             try {
                 rfidScanManager.clearAllData()
                 Log.d("MainActivity", "🔥 RFID buffer cleared in RfidScanManager")
                 
-                // **PERBAIKAN BARU**: Re-seed dengan data dari database setelah clear
-                val currentPicklist = viewModel.getCurrentPicklistNumber()
-                if (currentPicklist != null) {
-                    Log.d("MainActivity", "🔥 Re-seeding RfidScanManager after clear for picklist: $currentPicklist")
-                    seedRfidScanManagerWithDatabaseData(currentPicklist)
-                }
+                // **PERBAIKAN TIMING**: Re-seed dengan data dari database setelah ViewModel selesai
+                // Gunakan delay kecil untuk memastikan ViewModel sudah selesai memproses
+                android.os.Handler(android.os.Looper.getMainLooper()).postDelayed({
+                    val currentPicklist = viewModel.getCurrentPicklistNumber()
+                    if (currentPicklist != null) {
+                        Log.d("MainActivity", "🔥 Re-seeding RfidScanManager after clear for picklist: $currentPicklist")
+                        seedRfidScanManagerWithDatabaseData(currentPicklist)
+                    }
+                }, 100) // Delay 100ms untuk memastikan ViewModel selesai
             } catch (e: Exception) {
                 Log.e("MainActivity", "❌ Error clearing RFID buffer: ${e.message}", e)
             }
@@ -791,8 +793,7 @@ class CekPicklistActivity : BaseRfidActivity() {
             // 4. Show success message
             ToastUtils.showHighToastWithCooldown(this, "✅ RFID data cleared successfully!")
             
-            // 5. Update UI counter immediately
-            binding.tvRfidDetected.text = "0"
+            // 5. UI counter akan di-update oleh ViewModel berdasarkan data database
             
             Log.d("MainActivity", "✅ Clear RFID berhasil (tanpa save)")
             

@@ -126,24 +126,7 @@ class NirwanaApiTest {
      */
     fun testBatchLookup() = runBlocking {
         try {
-            Log.d(TAG, "🔥 Testing Batch EPC Lookup...")
-            
-            val testEpcs = listOf(
-                TEST_EPC,
-                "E2000020880F013520006C8G", // Contoh EPC lain
-                "E2000020880F013520006C8H"  // Contoh EPC lain
-            )
-            
-            val nirwanaService = NirwanaApiService()
-            val results = nirwanaService.batchLookupEpcToArticleId(testEpcs)
-            
-            Log.d(TAG, "🔥 Batch lookup results:")
-            results.forEach { (epc, articleId) ->
-                Log.d(TAG, "🔥 EPC: $epc -> Article ID: $articleId")
-            }
-            
-            val successCount = results.count { it.value != null }
-            Log.d(TAG, "✅ Batch Lookup test completed: $successCount/${testEpcs.size} successful")
+            Log.d(TAG, "⏸️ Batch Lookup test skipped - method not available in v4.3.4")
             
         } catch (e: Exception) {
             Log.e(TAG, "❌ Batch Lookup test ERROR: ${e.message}", e)

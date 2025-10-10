@@ -116,10 +116,10 @@ class RfidScanManager(
 		stopInventorySafely()
 		return if (settings.gracePeriodMs <= 0L) {
 			isGraceActive = false
-            // **NEW**: Trigger lookup saat stop (tanpa grace period)
-            triggerLookupForAllUniqueRfids()
-            onGracePeriodCompleted?.invoke()
-            Log.d(tag, "🔥 Scanning stopped (no grace period)")
+			// **NEW**: Trigger lookup saat stop (tanpa grace period)
+			triggerLookupForAllUniqueRfids()
+			onGracePeriodCompleted?.invoke()
+			Log.d(tag, "🔥 Scanning stopped (no grace period)")
 			true
 		} else {
 			isGraceActive = true

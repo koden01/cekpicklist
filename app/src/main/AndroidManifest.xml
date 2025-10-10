@@ -61,11 +61,22 @@
             android:theme="@style/Theme.CekPicklist">
         </activity>
         
-        <!-- Auto-Update Service -->
-        <service
+        <!-- Auto-Update Service - Disabled in v4.3.4 -->
+        <!-- <service
             android:name=".service.AutoUpdateService"
             android:exported="false"
-            android:enabled="true" />
+            android:enabled="true" /> -->
+        
+        <!-- FileProvider untuk APK installation -->
+        <provider
+            android:name="androidx.core.content.FileProvider"
+            android:authorities="${applicationId}.fileprovider"
+            android:exported="false"
+            android:grantUriPermissions="true">
+            <meta-data
+                android:name="android.support.FILE_PROVIDER_PATHS"
+                android:resource="@xml/file_paths" />
+        </provider>
     </application>
 
 </manifest>

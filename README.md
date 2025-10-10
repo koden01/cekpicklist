@@ -16,11 +16,11 @@
 2) Zipalign dan Sign:
 ```
 "%ANDROID_HOME%/build-tools/35.0.1/zipalign" -p -f 4 app/build/outputs/apk/release/app-release-unsigned.apk app/build/outputs/apk/release/app-release-aligned.apk
-"%ANDROID_HOME%/build-tools/35.0.1/apksigner" sign --ks cekpicklist-release-key.keystore --ks-key-alias cekpicklist --ks-pass pass:CekPicklist#2025 --key-pass pass:CekPicklist#2025 --out app/build/outputs/apk/release/CekPicklist-v1.0-signed.apk app/build/outputs/apk/release/app-release-aligned.apk
+"%ANDROID_HOME%/build-tools/35.0.1/apksigner" sign --ks cekpicklist-release-key.keystore --ks-key-alias cekpicklist --ks-pass pass:CekPicklist#2025 --key-pass pass:CekPicklist#2025 --out app/build/outputs/apk/release/CekPicklist-v4.3.4-signed.apk app/build/outputs/apk/release/app-release-aligned.apk
 ```
 3) Verifikasi:
 ```
-"%ANDROID_HOME%/build-tools/35.0.1/apksigner" verify --print-certs app/build/outputs/apk/release/CekPicklist-v1.0-signed.apk
+"%ANDROID_HOME%/build-tools/35.0.1/apksigner" verify --print-certs app/build/outputs/apk/release/CekPicklist-v4.3.4-signed.apk
 ```
 
 ### Signing Otomatis di Gradle
@@ -83,15 +83,15 @@ APK release disiapkan dengan keystore lokal berikut untuk mempermudah build beri
 2) Zipalign lalu sign:
 ```
 "%ANDROID_HOME%/build-tools/35.0.1/zipalign" -p -f 4 app/build/outputs/apk/release/app-release-unsigned.apk app/build/outputs/apk/release/app-release-aligned.apk
-"%ANDROID_HOME%/build-tools/35.0.1/apksigner" sign --ks cekpicklist-release-key.keystore --ks-key-alias cekpicklist --ks-pass pass:CekPicklist#2025 --key-pass pass:CekPicklist#2025 --out app/build/outputs/apk/release/CekPicklist-v1.0-signed.apk app/build/outputs/apk/release/app-release-aligned.apk
+"%ANDROID_HOME%/build-tools/35.0.1/apksigner" sign --ks cekpicklist-release-key.keystore --ks-key-alias cekpicklist --ks-pass pass:CekPicklist#2025 --key-pass pass:CekPicklist#2025 --out app/build/outputs/apk/release/CekPicklist-v4.3.4-signed.apk app/build/outputs/apk/release/app-release-aligned.apk
 ```
 
 3) Verifikasi signature:
 ```
-"%ANDROID_HOME%/build-tools/35.0.1/apksigner" verify --print-certs app/build/outputs/apk/release/CekPicklist-v1.0-signed.apk
+"%ANDROID_HOME%/build-tools/35.0.1/apksigner" verify --print-certs app/build/outputs/apk/release/CekPicklist-v4.3.4-signed.apk
 ```
 
-Output signed APK: `app/build/outputs/apk/release/CekPicklist-v1.0-signed.apk`
+Output signed APK: `app/build/outputs/apk/release/CekPicklist-v4.3.4-signed.apk`
 
 ## Enable Signing Otomatis (Opsional)
 
@@ -308,23 +308,27 @@ CREATE TABLE picklist_scan (
 - **Article B**: qty PL = 5, qty scan = 4 → **4 RFID DISIMPAN** (valid)
 - **Article C**: qty PL = 0, qty scan = 3 → **3 RFID DIBUANG** (non-picklist)
 
-### **9. Auto-Update System**
+### **9. Auto-Update System dengan Download & Install Otomatis**
 - **GitHub Integration**: Cek versi terbaru dari GitHub releases API
 - **Smart Interval**: Update check minimal 1 hari sekali untuk menghindari spam
 - **Version Comparison**: Bandingkan versi current vs latest dengan format major.minor.patch
-- **Update Dialog**: Dialog informatif dengan opsi download, nanti, atau disable
+- **Auto Download**: Download APK otomatis dari GitHub releases
+- **Progress Notification**: Notifikasi real-time untuk progress download
+- **Install Confirmation**: Dialog konfirmasi sebelum install APK
 - **User Control**: User bisa disable update check atau force check manual
 - **Non-blocking**: Update check berjalan di background tanpa mengganggu UI
-- **Direct Download**: Buka GitHub releases page untuk download APK terbaru
+- **Error Handling**: Comprehensive error handling untuk download dan install
 
-#### **Cara Kerja Auto-Update:**
+#### **Cara Kerja Auto-Update Baru:**
 - **Automatic Check**: Saat aplikasi dibuka, sistem cek update otomatis
 - **Version API**: Menggunakan GitHub API untuk mendapatkan versi terbaru
-- **Dialog Options**: 
-  - 📥 **Download**: Buka GitHub releases page
-  - ⏰ **Nanti**: Tutup dialog, cek lagi nanti
-  - ❌ **Jangan Tampilkan Lagi**: Disable update check
-- **Manual Check**: Opsi manual check di Settings (jika tersedia)
+- **Auto Download**: Jika ada update, download APK otomatis dengan progress notification
+- **Install Dialog**: 
+  - 🚀 **Install Sekarang**: Install APK langsung
+  - ⏰ **Install Nanti**: Simpan APK untuk install nanti
+  - 🗑️ **Hapus File**: Hapus APK yang sudah di-download
+- **Progress Tracking**: Real-time progress notification selama download
+- **Error Recovery**: Fallback ke manual download jika auto-download gagal
 
 ---
 
@@ -379,6 +383,23 @@ NIRWANA_USERNAME=your-username
 NIRWANA_PASSWORD=your-password
 ```
 
+### **Required Permissions untuk Auto-Update**
+```xml
+<!-- Internet access -->
+<uses-permission android:name="android.permission.INTERNET" />
+<uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
+
+<!-- Storage access untuk download APK -->
+<uses-permission android:name="android.permission.WRITE_EXTERNAL_STORAGE" />
+<uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE" />
+
+<!-- Install APK permission -->
+<uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES" />
+
+<!-- Notification permission -->
+<uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
+```
+
 ### **Build Configuration**
 ```kotlin
 android {
@@ -389,14 +410,37 @@ android {
         applicationId = "com.example.cekpicklist"
         minSdk = 30
         targetSdk = 35
-        versionCode = 1
-        versionName = "1.0"
+        versionCode = 12
+        versionName = "4.3.4"
     }
     
     buildFeatures {
         viewBinding = true
     }
 }
+```
+
+### **FileProvider Configuration untuk APK Installation**
+```xml
+<!-- AndroidManifest.xml -->
+<provider
+    android:name="androidx.core.content.FileProvider"
+    android:authorities="${applicationId}.fileprovider"
+    android:exported="false"
+    android:grantUriPermissions="true">
+    <meta-data
+        android:name="android.support.FILE_PROVIDER_PATHS"
+        android:resource="@xml/file_paths" />
+</provider>
+```
+
+```xml
+<!-- res/xml/file_paths.xml -->
+<paths xmlns:android="http://schemas.android.com/apk/res/android">
+    <external-files-path name="downloads" path="downloads/" />
+    <external-cache-path name="cache" path="." />
+    <files-path name="internal" path="." />
+</paths>
 ```
 
 ---
@@ -668,6 +712,33 @@ git push --dry-run origin main
 9. **Settings Integration** ✅
 10. **Auto Versioning** ✅
 11. **Auto-Update System** ✅
+12. **Overscan Cleanup System** ✅
+13. **Clear Button Functionality** ✅
+14. **WindowLeaked Error Prevention** ✅
+
+### **🔧 Recent Fixes & Improvements (v4.3.4)**
+
+#### **Overscan Cleanup System**
+- **Database Integration**: Implementasi `removeOverscanDataForPicklist()` untuk membersihkan data overscan dari database
+- **Smart Reset**: `qtyScan` di-reset ke `qtyPl` (bukan 0) untuk mempertahankan data yang valid
+- **Back Button Behavior**: Overscan data dibersihkan saat tombol back ditekan
+- **Clear Button Integration**: Overscan cleanup terintegrasi dengan tombol clear
+
+#### **Clear Button Functionality**
+- **Data Reload**: Tombol clear sekarang memuat ulang data picklist yang sudah pernah di-scan
+- **RFID Counter Fix**: Counter RFID menampilkan nilai yang benar berdasarkan database
+- **Race Condition Fix**: Mengatasi masalah timing antara ViewModel dan Activity
+- **Seeding Optimization**: RFID scan manager di-seed ulang dengan data yang benar
+
+#### **Error Prevention**
+- **WindowLeaked Fix**: Mencegah `WindowLeaked` error dengan proper dialog lifecycle management
+- **CancellationException Handling**: Proper handling untuk coroutine cancellation
+- **UI State Management**: Perbaikan state management untuk mencegah UI kosong
+
+#### **Performance Improvements**
+- **Batch Data Loading**: Optimasi loading data dengan batch operations
+- **Cache Management**: Improved cache invalidation dan refresh
+- **Memory Optimization**: Better memory management untuk large datasets
 
 ### **🚀 Future Enhancements**
 - **Unit Testing**: Implementasi testing framework
@@ -695,11 +766,13 @@ Aplikasi **Cek Picklist** siap untuk production dengan:
 
 ---
 
-**Version**: 1 (Auto-updating)  
-**Last Updated**: 2025-10-06  
+**Version**: 4.3.4 (Version Code: 12)  
+**Last Updated**: 2025-10-10  
 **Platform**: Android 11+ (API 30+)  
 **Auto Versioning**: ✅ Enabled dengan PowerShell Scripts  
-**Status**: ✅ Production Ready
+**Status**: ✅ Production Ready  
+**Latest Tag**: v4.3.4
+
 
 
 

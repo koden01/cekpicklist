@@ -281,6 +281,16 @@ class HalamanAwalActivity : AppCompatActivity() {
         activeDialog = androidx.appcompat.app.AlertDialog.Builder(this)
             .setView(dialogView)
             .setCancelable(true)
+            .setOnCancelListener {
+                // Dialog dibatalkan (back button atau tap outside)
+                activeDialog = null
+                Logger.PicklistInput.d("Dialog cancelled by user")
+            }
+            .setOnDismissListener {
+                // Dialog ditutup
+                activeDialog = null
+                Logger.PicklistInput.d("Dialog dismissed")
+            }
             .create()
         
         activeDialog?.show()
@@ -346,6 +356,26 @@ class HalamanAwalActivity : AppCompatActivity() {
         Logger.PicklistInput.d("hideStatusIndicator() called")
         
         // TODO: Implementasi hide status indicator
+    }
+
+    override fun onPause() {
+        super.onPause()
+        // Dismiss dialog saat Activity pause untuk mencegah WindowLeaked
+        try { activeDialog?.dismiss() } catch (_: Throwable) {}
+        activeDialog = null
+        try { loadingDialog?.dismiss() } catch (_: Throwable) {}
+        loadingDialog = null
+        Logger.PicklistInput.d("onPause() called - dialogs dismissed")
+    }
+    
+    override fun onStop() {
+        super.onStop()
+        // Dismiss dialog saat Activity stop untuk mencegah WindowLeaked
+        try { activeDialog?.dismiss() } catch (_: Throwable) {}
+        activeDialog = null
+        try { loadingDialog?.dismiss() } catch (_: Throwable) {}
+        loadingDialog = null
+        Logger.PicklistInput.d("onStop() called - dialogs dismissed")
     }
 
     override fun onDestroy() {

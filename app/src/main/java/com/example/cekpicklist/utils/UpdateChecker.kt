@@ -1,12 +1,22 @@
 package com.example.cekpicklist.utils
 
+import android.app.NotificationChannel
+import android.app.NotificationManager
+import android.app.PendingIntent
 import android.content.Context
+import android.content.Intent
 import android.content.pm.PackageManager
+import android.net.Uri
+import android.os.Build
 import android.util.Log
 import androidx.appcompat.app.AlertDialog
+import androidx.core.app.NotificationCompat
+import androidx.core.content.FileProvider
 import com.example.cekpicklist.R
 import kotlinx.coroutines.*
 import org.json.JSONObject
+import java.io.File
+import java.io.FileOutputStream
 import java.net.HttpURLConnection
 import java.net.URL
 
@@ -20,6 +30,9 @@ class UpdateChecker(private val context: Context) {
         private const val TAG = "UpdateChecker"
         private const val GITHUB_API_URL = "https://api.github.com/repos/koden01/cekpicklist/releases/latest"
         private const val MIN_UPDATE_INTERVAL_DAYS = 1 // Minimal 1 hari antar cek
+        private const val NOTIFICATION_ID = 1001
+        private const val CHANNEL_ID = "update_channel"
+        private const val CHANNEL_NAME = "Update Notifications"
     }
     
     private val prefs = context.getSharedPreferences("UpdateChecker", Context.MODE_PRIVATE)
@@ -103,6 +116,46 @@ class UpdateChecker(private val context: Context) {
     }
     
     /**
+     * Ambil download URL APK dari GitHub API
+     */
+    private suspend fun getDownloadUrlFromGitHub(): String {
+        return withContext(Dispatchers.IO) {
+            val url = URL(GITHUB_API_URL)
+            val connection = url.openConnection() as HttpURLConnection
+            
+            try {
+                connection.requestMethod = "GET"
+                connection.setRequestProperty("Accept", "application/vnd.github.v3+json")
+                connection.connectTimeout = 10000
+                connection.readTimeout = 10000
+                
+                val responseCode = connection.responseCode
+                if (responseCode == HttpURLConnection.HTTP_OK) {
+                    val response = connection.inputStream.bufferedReader().use { it.readText() }
+                    val json = JSONObject(response)
+                    val assets = json.getJSONArray("assets")
+                    
+                    // Cari file APK
+                    for (i in 0 until assets.length()) {
+                        val asset = assets.getJSONObject(i)
+                        val name = asset.getString("name")
+                        if (name.endsWith(".apk")) {
+                            return@withContext asset.getString("browser_download_url")
+                        }
+                    }
+                    
+                    throw Exception("APK file not found in release assets")
+                } else {
+                    Log.e(TAG, "GitHub API error: $responseCode")
+                    throw Exception("GitHub API error: $responseCode")
+                }
+            } finally {
+                connection.disconnect()
+            }
+        }
+    }
+    
+    /**
      * Ambil versi aplikasi saat ini
      */
     private fun getCurrentVersion(): String {
@@ -161,10 +214,10 @@ class UpdateChecker(private val context: Context) {
                 🔧 Performa yang lebih baik
                 🛡️ Keamanan yang ditingkatkan
                 
-                Apakah Anda ingin mengunduh update?
+                Apakah Anda ingin mengunduh dan menginstall update?
             """.trimIndent())
-            .setPositiveButton("📥 Download") { _, _ ->
-                openDownloadPage()
+            .setPositiveButton("📥 Download & Install") { _, _ ->
+                downloadAndInstallUpdate(latestVersion)
             }
             .setNegativeButton("⏰ Nanti") { dialog, _ ->
                 dialog.dismiss()
@@ -179,7 +232,266 @@ class UpdateChecker(private val context: Context) {
     }
     
     /**
-     * Buka halaman download
+     * Download dan install update
+     */
+    private fun downloadAndInstallUpdate(latestVersion: String) {
+        CoroutineScope(Dispatchers.IO).launch {
+            try {
+                // Setup notification channel
+                setupNotificationChannel()
+                
+                // Show download started notification
+                showDownloadNotification(0, "Memulai download...")
+                
+                // Get download URL
+                val downloadUrl = getDownloadUrlFromGitHub()
+                Log.d(TAG, "Download URL: $downloadUrl")
+                
+                // Download APK
+                val apkFile = downloadApk(downloadUrl, latestVersion)
+                
+                // Show download completed notification
+                showDownloadNotification(100, "Download selesai!")
+                
+                // Show install confirmation dialog
+                withContext(Dispatchers.Main) {
+                    showInstallConfirmationDialog(apkFile, latestVersion)
+                }
+                
+            } catch (e: Exception) {
+                Log.e(TAG, "Error downloading update: ${e.message}", e)
+                withContext(Dispatchers.Main) {
+                    showDownloadErrorDialog(e.message ?: "Unknown error")
+                }
+            }
+        }
+    }
+    
+    /**
+     * Download APK file
+     */
+    private suspend fun downloadApk(downloadUrl: String, version: String): File {
+        return withContext(Dispatchers.IO) {
+            val url = URL(downloadUrl)
+            val connection = url.openConnection() as HttpURLConnection
+            
+            try {
+                connection.requestMethod = "GET"
+                connection.connectTimeout = 30000
+                connection.readTimeout = 60000
+                
+                val responseCode = connection.responseCode
+                if (responseCode == HttpURLConnection.HTTP_OK) {
+                    val contentLength = connection.contentLength
+                    val inputStream = connection.inputStream
+                    
+                    // Create download directory
+                    val downloadDir = File(context.getExternalFilesDir(null), "downloads")
+                    if (!downloadDir.exists()) {
+                        downloadDir.mkdirs()
+                    }
+                    
+                    // Create APK file
+                    val apkFile = File(downloadDir, "CekPicklist-v$version.apk")
+                    val outputStream = FileOutputStream(apkFile)
+                    
+                    val buffer = ByteArray(8192)
+                    var totalBytesRead = 0
+                    var bytesRead: Int
+                    
+                    while (inputStream.read(buffer).also { bytesRead = it } != -1) {
+                        outputStream.write(buffer, 0, bytesRead)
+                        totalBytesRead += bytesRead
+                        
+                        // Update progress notification
+                        if (contentLength > 0) {
+                            val progress = (totalBytesRead * 100 / contentLength)
+                            showDownloadNotification(progress, "Downloading... ${progress}%")
+                        }
+                    }
+                    
+                    outputStream.close()
+                    inputStream.close()
+                    
+                    Log.d(TAG, "APK downloaded successfully: ${apkFile.absolutePath}")
+                    apkFile
+                } else {
+                    throw Exception("Download failed with response code: $responseCode")
+                }
+            } finally {
+                connection.disconnect()
+            }
+        }
+    }
+    
+    /**
+     * Setup notification channel
+     */
+    private fun setupNotificationChannel() {
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
+            val channel = NotificationChannel(
+                CHANNEL_ID,
+                CHANNEL_NAME,
+                NotificationManager.IMPORTANCE_LOW
+            ).apply {
+                description = "Notifications for app updates"
+                setShowBadge(false)
+            }
+            
+            val notificationManager = context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
+            notificationManager.createNotificationChannel(channel)
+        }
+    }
+    
+    /**
+     * Show download progress notification
+     */
+    private fun showDownloadNotification(progress: Int, message: String) {
+        val notificationManager = context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
+        
+        val notification = NotificationCompat.Builder(context, CHANNEL_ID)
+            .setSmallIcon(R.drawable.ic_launcher_foreground)
+            .setContentTitle("🔄 Download Update")
+            .setContentText(message)
+            .setProgress(100, progress, progress == 0)
+            .setOngoing(true)
+            .setAutoCancel(false)
+            .build()
+        
+        notificationManager.notify(NOTIFICATION_ID, notification)
+    }
+    
+    /**
+     * Show install confirmation dialog
+     */
+    private fun showInstallConfirmationDialog(apkFile: File, version: String) {
+        val dialog = AlertDialog.Builder(context, R.style.RoundDialogTheme)
+            .setTitle("✅ Download Selesai")
+            .setMessage("""
+                APK versi $version berhasil diunduh!
+                
+                Apakah Anda ingin menginstall update sekarang?
+                
+                📱 Aplikasi akan restart setelah instalasi
+                🔄 Data akan tetap aman
+            """.trimIndent())
+            .setPositiveButton("🚀 Install Sekarang") { _, _ ->
+                installApk(apkFile)
+            }
+            .setNegativeButton("⏰ Install Nanti") { dialog, _ ->
+                dialog.dismiss()
+                // Keep notification for later installation
+            }
+            .setNeutralButton("🗑️ Hapus File") { dialog, _ ->
+                apkFile.delete()
+                dismissDownloadNotification()
+                dialog.dismiss()
+            }
+            .create()
+        
+        dialog.show()
+    }
+    
+    /**
+     * Install APK file
+     */
+    private fun installApk(apkFile: File) {
+        try {
+            val intent = Intent(Intent.ACTION_VIEW)
+            val uri = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.N) {
+                FileProvider.getUriForFile(
+                    context,
+                    "${context.packageName}.fileprovider",
+                    apkFile
+                )
+            } else {
+                Uri.fromFile(apkFile)
+            }
+            
+            intent.setDataAndType(uri, "application/vnd.android.package-archive")
+            intent.flags = Intent.FLAG_GRANT_READ_URI_PERMISSION
+            intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+            
+            context.startActivity(intent)
+            
+            // Dismiss notification
+            dismissDownloadNotification()
+            
+        } catch (e: Exception) {
+            Log.e(TAG, "Error installing APK: ${e.message}", e)
+            showInstallErrorDialog(e.message ?: "Installation failed")
+        }
+    }
+    
+    /**
+     * Show download error dialog
+     */
+    private fun showDownloadErrorDialog(message: String) {
+        val dialog = AlertDialog.Builder(context, R.style.RoundDialogTheme)
+            .setTitle("❌ Download Gagal")
+            .setMessage("""
+                Gagal mengunduh update:
+                $message
+                
+                Silakan coba lagi atau download manual dari GitHub.
+            """.trimIndent())
+            .setPositiveButton("🌐 Buka GitHub") { _, _ ->
+                openDownloadPage()
+            }
+            .setNegativeButton("❌ Tutup") { dialog, _ ->
+                dialog.dismiss()
+            }
+            .create()
+        
+        dialog.show()
+    }
+    
+    /**
+     * Show install error dialog
+     */
+    private fun showInstallErrorDialog(message: String) {
+        val dialog = AlertDialog.Builder(context, R.style.RoundDialogTheme)
+            .setTitle("❌ Install Gagal")
+            .setMessage("""
+                Gagal menginstall update:
+                $message
+                
+                Pastikan "Install from unknown sources" diaktifkan di Settings.
+            """.trimIndent())
+            .setPositiveButton("⚙️ Buka Settings") { _, _ ->
+                openAppSettings()
+            }
+            .setNegativeButton("❌ Tutup") { dialog, _ ->
+                dialog.dismiss()
+            }
+            .create()
+        
+        dialog.show()
+    }
+    
+    /**
+     * Open app settings
+     */
+    private fun openAppSettings() {
+        try {
+            val intent = Intent(android.provider.Settings.ACTION_APPLICATION_DETAILS_SETTINGS)
+            intent.data = Uri.parse("package:${context.packageName}")
+            context.startActivity(intent)
+        } catch (e: Exception) {
+            Log.e(TAG, "Error opening app settings: ${e.message}", e)
+        }
+    }
+    
+    /**
+     * Dismiss download notification
+     */
+    private fun dismissDownloadNotification() {
+        val notificationManager = context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
+        notificationManager.cancel(NOTIFICATION_ID)
+    }
+    
+    /**
+     * Buka halaman download (fallback)
      */
     private fun openDownloadPage() {
         try {
