@@ -24,6 +24,7 @@ import com.example.cekpicklist.data.PicklistItem
 import com.example.cekpicklist.databinding.ActivityMainBinding
 import com.example.cekpicklist.utils.ToastUtils
 import com.example.cekpicklist.utils.Logger
+import com.example.cekpicklist.service.DailySyncService
 import com.example.cekpicklist.utils.RfidScanSettings
 import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
@@ -42,13 +43,21 @@ class CekPicklistActivity : BaseRfidActivity() {
         ScanViewModelFactory(application) 
     }
     private lateinit var picklistAdapter: PicklistAdapter
+    private lateinit var dailySyncService: DailySyncService
     // RFID handled by BaseRfidActivity/RfidScanManager
     private var hasShownCompletionAnimation = false
+    private var isSeedingInProgress = false
+    private var seedingRetryCount = 0
+    private val MAX_SEEDING_RETRIES = 3
     private var completionCheckJob: Job? = null
     
     // **PERBAIKAN**: Tambahkan cooldown untuk tombol scan
     private var lastScanButtonClickTime = 0L
     private val SCAN_BUTTON_COOLDOWN_MS = 2000L // 2 detik cooldown
+    
+    // **PERBAIKAN**: Tambahkan cooldown untuk tombol clear
+    private var lastClearButtonClickTime = 0L
+    private val CLEAR_BUTTON_COOLDOWN_MS = 3000L // 3 detik cooldown
     
     // Sound variables
     private var soundPool: SoundPool? = null
@@ -60,6 +69,22 @@ class CekPicklistActivity : BaseRfidActivity() {
     override fun onResume() {
         super.onResume()
         Log.d(TAG, "🔥 onResume - menerapkan power level")
+        
+        // **DAILY SYNC STRATEGY**: Initialize daily sync saat app resume
+        lifecycleScope.launch {
+            try {
+                Log.d(TAG, "🚀 Initializing daily sync...")
+                val syncSuccess = dailySyncService.initializeDailySync()
+                
+                if (syncSuccess) {
+                    Log.d(TAG, "✅ Daily sync initialized successfully")
+                } else {
+                    Log.w(TAG, "⚠️ Daily sync initialization failed")
+                }
+            } catch (e: Exception) {
+                Log.e(TAG, "❌ Error initializing daily sync: ${e.message}", e)
+            }
+        }
     }
     
     /**
@@ -205,6 +230,9 @@ class CekPicklistActivity : BaseRfidActivity() {
         super.onCreate(savedInstanceState)
         android.util.Log.e("CEKPICKLIST_MAIN", "super.onCreate selesai")
         
+        // **DAILY SYNC STRATEGY**: Initialize daily sync service
+        dailySyncService = DailySyncService(this)
+        
         binding = ActivityMainBinding.inflate(layoutInflater)
         android.util.Log.e("CEKPICKLIST_MAIN", "binding inflate selesai")
         
@@ -325,8 +353,10 @@ class CekPicklistActivity : BaseRfidActivity() {
     }
 
     override fun handleDataCleared() {
-        binding.tvRfidDetected.text = "0"
-        picklistAdapter.updateItems(emptyList())
+        // **PERBAIKAN**: Jangan clear UI manual - biarkan observer yang update UI
+        // binding.tvRfidDetected.text = "0" // ❌ DIHAPUS - akan di-update oleh observer
+        // picklistAdapter.updateItems(emptyList()) // ❌ DIHAPUS - akan di-update oleh observer
+        Log.d(TAG, "🔥 handleDataCleared called - UI akan di-update oleh observer")
     }
     
     /**
@@ -338,9 +368,9 @@ class CekPicklistActivity : BaseRfidActivity() {
         // **PERBAIKAN**: Clear overscan dan non-picklist sebelum kembali
         viewModel.clearRfidAndResetToInitialState()
         
-        // Clear UI
-        picklistAdapter.updateItems(emptyList())
-        updateSummaryCards(0, 0)
+        // **PERBAIKAN**: Jangan clear UI manual - biarkan observer yang update UI
+        // picklistAdapter.updateItems(emptyList()) // ❌ DIHAPUS - menyebabkan race condition
+        // updateSummaryCards(0, 0) // ❌ DIHAPUS - akan di-update oleh observer
         
         // Reset completion animation flag
         hasShownCompletionAnimation = false
@@ -453,36 +483,61 @@ class CekPicklistActivity : BaseRfidActivity() {
     private fun seedRfidScanManagerWithDatabaseData(picklistNumber: String) {
         Log.d(TAG, "🔥 Seeding RfidScanManager with database data for picklist: $picklistNumber")
         
+        // **PERBAIKAN BARU**: Cegah multiple seeding yang bersamaan
+        if (isSeedingInProgress) {
+            Log.d(TAG, "⚠️ Seeding already in progress, skipping duplicate seeding")
+            return
+        }
+        
+        // **PERBAIKAN BARU**: Cek apakah sudah pernah di-seed untuk picklist ini
+        val currentSeededPicklist = rfidScanManager.getSeededPicklistNumber()
+        if (currentSeededPicklist == picklistNumber) {
+            Log.d(TAG, "⚠️ Picklist $picklistNumber already seeded, skipping duplicate seeding")
+            return
+        }
+        
+        isSeedingInProgress = true
+        
         try {
             // **PERBAIKAN KRITIS**: Cek apakah ViewModel sudah selesai memproses
             val processedEpcList = viewModel.getProcessedEpcListForCurrentPicklist()
             val lookupResults = viewModel.getDatabaseLookupResultsForCurrentPicklist()
+            val picklistItems = viewModel.picklistItems.value ?: emptyList()
             
-            Log.d(TAG, "🔍 Seeding check: processedEpcList=${processedEpcList.size}, lookupResults=${lookupResults.size}")
-            
-            // Seed dengan processed EPC list
+            Log.d(TAG, "🔍 Seeding check: processedEpcList=${processedEpcList.size}, lookupResults=${lookupResults.size}, picklistItems=${picklistItems.size}")
             if (processedEpcList.isNotEmpty()) {
-                rfidScanManager.seedWithDatabaseEpcs(processedEpcList)
+                Log.d(TAG, "🔍 First 5 processed EPCs for seeding: ${processedEpcList.take(5).joinToString(", ")}")
+            } else {
+                Log.w(TAG, "⚠️ CRITICAL: processedEpcList is EMPTY during seeding check!")
+                Log.w(TAG, "⚠️ This means getProcessedEpcListForCurrentPicklist() returned empty list")
+                Log.w(TAG, "⚠️ Current picklist: $picklistNumber")
+                Log.w(TAG, "⚠️ This is the root cause of clear second failure!")
+            }
+            
+            // **PERBAIKAN BARU**: Hanya seed jika ada data yang valid
+            if (processedEpcList.isNotEmpty()) {
+                rfidScanManager.seedWithDatabaseEpcs(processedEpcList, picklistNumber)
                 Log.d(TAG, "🔥 Seeded RfidScanManager with ${processedEpcList.size} EPCs from database")
+                seedingRetryCount = 0 // Reset counter setelah berhasil
             } else {
                 Log.w(TAG, "⚠️ No processed EPCs found for seeding - ViewModel mungkin belum selesai memproses")
+                Log.w(TAG, "⚠️ This means getProcessedEpcListForCurrentPicklist() returned empty list")
+                Log.w(TAG, "⚠️ Check if ViewModel successfully reloaded data from database after clear")
                 
-                // **PERBAIKAN**: Coba ambil data langsung dari picklist items sebagai fallback
-                val picklistItems = viewModel.picklistItems.value ?: emptyList()
-                if (picklistItems.isNotEmpty()) {
-                    Log.d(TAG, "🔄 Fallback: Using picklist items data for seeding")
-                    // Ambil EPC dari picklist items yang sudah di-scan
-                    val fallbackEpcs = picklistItems
-                        .filter { it.qtyScan > 0 }
-                        .flatMap { item -> 
-                            // Generate EPC list berdasarkan qtyScan
-                            (1..item.qtyScan).map { "FALLBACK_${item.articleId}_${item.size}_$it" }
-                        }
+                // **PERBAIKAN BARU**: Hanya retry jika belum mencapai max retries
+                if (seedingRetryCount < MAX_SEEDING_RETRIES) {
+                    seedingRetryCount++
+                    Log.w(TAG, "⚠️ Retrying seeding in 1000ms... (attempt $seedingRetryCount/$MAX_SEEDING_RETRIES)")
                     
-                    if (fallbackEpcs.isNotEmpty()) {
-                        rfidScanManager.seedWithDatabaseEpcs(fallbackEpcs)
-                        Log.d(TAG, "🔥 Fallback seeded RfidScanManager with ${fallbackEpcs.size} EPCs from picklist items")
-                    }
+                    android.os.Handler(android.os.Looper.getMainLooper()).postDelayed({
+                        Log.d(TAG, "🔄 Retrying seeding after delay...")
+                        seedRfidScanManagerWithDatabaseData(picklistNumber)
+                    }, 1000) // Delay lebih lama untuk memberi waktu ViewModel reload data
+                    return
+                } else {
+                    Log.e(TAG, "❌ Max seeding retries reached ($MAX_SEEDING_RETRIES) - giving up")
+                    Log.e(TAG, "❌ This indicates a persistent issue with processed EPC data reloading")
+                    seedingRetryCount = 0 // Reset counter
                 }
             }
             
@@ -494,8 +549,16 @@ class CekPicklistActivity : BaseRfidActivity() {
                 Log.w(TAG, "⚠️ No lookup results found for seeding - ViewModel mungkin belum selesai memproses")
             }
             
+            // **PERBAIKAN**: Log final state setelah seeding
+            val finalEpcCount = rfidScanManager.getUniqueRfidCount()
+            val finalProductCount = rfidScanManager.getAllLookupResults().size
+            Log.d(TAG, "🔍 Final RfidScanManager state: EPCs=${finalEpcCount}, Products=${finalProductCount}")
+            
         } catch (e: Exception) {
             Log.e(TAG, "❌ Error seeding RfidScanManager with database data: ${e.message}", e)
+        } finally {
+            // **PERBAIKAN BARU**: Reset flag setelah seeding selesai
+            isSeedingInProgress = false
         }
     }
     
@@ -642,6 +705,22 @@ class CekPicklistActivity : BaseRfidActivity() {
         }
         
         binding.btnClear.setOnClickListener {
+            val currentTime = System.currentTimeMillis()
+            val timeSinceLastClick = currentTime - lastClearButtonClickTime
+            
+            Log.d(TAG, "🔥 UI BUTTON CLICKED: btnClear - timeSinceLastClick: ${timeSinceLastClick}ms")
+            
+            // **PERBAIKAN**: Cek cooldown untuk mencegah clear berulang terlalu cepat
+            if (timeSinceLastClick < CLEAR_BUTTON_COOLDOWN_MS) {
+                val remainingCooldown = CLEAR_BUTTON_COOLDOWN_MS - timeSinceLastClick
+                Log.d(TAG, "🔥 Clear button cooldown active - remaining: ${remainingCooldown}ms")
+                ToastUtils.showHighToastWithCooldown(this, "Tunggu ${remainingCooldown/1000 + 1} detik sebelum clear lagi")
+                return@setOnClickListener
+            }
+            
+            // Update last click time
+            lastClearButtonClickTime = currentTime
+            
             Logger.MainActivity.d("btnClear clicked - showing clear confirmation dialog")
             Logger.Dialog.d("Using RoundDialogTheme for clear confirmation")
             Logger.Dialog.d("Text colors: Primary=Black, Secondary=Black, Tertiary=Black")
@@ -777,7 +856,7 @@ class CekPicklistActivity : BaseRfidActivity() {
      * - TIDAK menyimpan data ke Supabase
      */
     private fun performClearRfidOnly() {
-        Log.d("MainActivity", "🔥 performClearRfidOnly dipanggil")
+        Log.d("MainActivity", "🔥 performClearRfidOnly dipanggil - RESET DAN RELOAD PICKLIST")
         
         try {
             // Hentikan scanning terlebih dahulu agar tidak ada EPC baru yang masuk saat proses clear
@@ -785,45 +864,73 @@ class CekPicklistActivity : BaseRfidActivity() {
                 stopRfidScanning()
             }
             
-            // 1. Clear RFID collection di ViewModel (tanpa save) - ini akan mengatur counter sesuai database
+            // **PERBAIKAN KRITIS**: Simpan picklist number sebelum clear
+            val currentPicklistNumber = viewModel.getCurrentPicklistNumber()
+            Log.d("MainActivity", "🔥 Current picklist to reload: $currentPicklistNumber")
+            
+            // **DEBUG**: Log kondisi sebelum clear
+            val beforeClearItems = viewModel.picklistItems.value?.size ?: 0
+            val beforeClearProcessedData = viewModel.processedRfidData.value?.size ?: 0
+            val beforeClearRfidCount = rfidScanManager.getUniqueRfidCount()
+            Log.d("MainActivity", "🔥 BEFORE CLEAR: picklistItems=$beforeClearItems, processedData=$beforeClearProcessedData, rfidCount=$beforeClearRfidCount")
+            
+            if (currentPicklistNumber == null) {
+                Log.e("MainActivity", "❌ No current picklist number found!")
+                ToastUtils.showHighToastWithCooldown(this, "❌ Error: No picklist selected")
+                return
+            }
+            
+            // **PERBAIKAN KRITIS**: Clear yang benar-benar mengembalikan kondisi seperti awal
+            // 1. Clear RFID collection di ViewModel (tanpa save) - ini sudah mencakup clear ke initial state
+            // **PERBAIKAN BARU**: Clear cache terlebih dahulu untuk memastikan data fresh
+            viewModel.clearCacheForCurrentPicklist()
+            
+            // **PERBAIKAN BARU**: Tunggu cache clearing selesai sebelum melanjutkan
+            // Thread.sleep(100) // Small delay to ensure cache clearing completes
+            
             viewModel.clearRfidCollectionOnly()
-            // 1b. JANGAN reset counter lagi - clearRfidCollectionOnly() sudah mengatur counter yang benar
+            
+            // **DEBUG**: Log kondisi setelah clear
+            val afterClearItems = viewModel.picklistItems.value?.size ?: 0
+            val afterClearProcessedData = viewModel.processedRfidData.value?.size ?: 0
+            val afterClearRfidCount = rfidScanManager.getUniqueRfidCount()
+            val afterClearCurrentPicklist = viewModel.getCurrentPicklistNumber()
+            Log.d("MainActivity", "🔥 AFTER CLEAR: picklistItems=$afterClearItems, processedData=$afterClearProcessedData, rfidCount=$afterClearRfidCount, currentPicklist=$afterClearCurrentPicklist")
+            
+            // **PERBAIKAN BARU**: Reset retry counter untuk clear yang baru
+            seedingRetryCount = 0
             
             // **PERBAIKAN KRITIS**: Clear RFID buffer di RfidScanManager agar EPC bisa di-scan kembali
             try {
                 rfidScanManager.clearAllData()
                 Log.d("MainActivity", "🔥 RFID buffer cleared in RfidScanManager")
                 
-                // **PERBAIKAN TIMING**: Re-seed dengan data dari database setelah ViewModel selesai
-                // Gunakan delay yang lebih lama dan cek kondisi sebelum seeding
-                android.os.Handler(android.os.Looper.getMainLooper()).postDelayed({
-                    val currentPicklist = viewModel.getCurrentPicklistNumber()
-                    if (currentPicklist != null) {
-                        Log.d("MainActivity", "🔥 Re-seeding RfidScanManager after clear for picklist: $currentPicklist")
-                        
-                        // **PERBAIKAN KRITIS**: Cek apakah ViewModel sudah selesai memproses sebelum seeding
-                        val processedEpcList = viewModel.getProcessedEpcListForCurrentPicklist()
-                        if (processedEpcList.isNotEmpty()) {
-                            Log.d("MainActivity", "🔥 ViewModel ready, seeding with ${processedEpcList.size} EPCs")
-                            seedRfidScanManagerWithDatabaseData(currentPicklist)
-                        } else {
-                            Log.w("MainActivity", "⚠️ ViewModel not ready yet, retrying in 200ms...")
-                            // Retry dengan delay lebih lama jika data belum siap
-                            android.os.Handler(android.os.Looper.getMainLooper()).postDelayed({
-                                val retryProcessedEpcList = viewModel.getProcessedEpcListForCurrentPicklist()
-                                if (retryProcessedEpcList.isNotEmpty()) {
-                                    Log.d("MainActivity", "🔥 ViewModel ready on retry, seeding with ${retryProcessedEpcList.size} EPCs")
-                                    seedRfidScanManagerWithDatabaseData(currentPicklist)
-                                } else {
-                                    Log.e("MainActivity", "❌ ViewModel still not ready after retry, skipping seeding")
-                                }
-                            }, 200)
-                        }
-                    }
-                }, 150) // Delay 150ms untuk memastikan ViewModel selesai
+                // **PERBAIKAN**: Jangan clear UI manual - biarkan observer yang update UI setelah data reload
+                // picklistAdapter.updateItems(emptyList()) // ❌ DIHAPUS - menyebabkan race condition
+                // binding.tvRfidDetected.text = "0" // ❌ DIHAPUS - akan di-update oleh observer
+                // binding.tvTotalQty.text = "0" // ❌ DIHAPUS - akan di-update oleh observer  
+                // binding.tvRemainingQty.text = "0" // ❌ DIHAPUS - akan di-update oleh observer
+                Log.d("MainActivity", "🔥 UI state akan di-update oleh observer setelah data reload")
+                
+                // **PERBAIKAN**: Jangan clear ViewModel lagi karena clearRfidCollectionOnly() sudah mencakup ini
+                Log.d("MainActivity", "🔥 ViewModel already cleared by clearRfidCollectionOnly()")
+                
             } catch (e: Exception) {
                 Log.e("MainActivity", "❌ Error clearing RFID buffer: ${e.message}", e)
             }
+            
+            // **PERBAIKAN KRITIS**: RELOAD PICKLIST AWAL seperti saat pertama kali load
+            Log.d("MainActivity", "🔄 Reloading picklist: $currentPicklistNumber")
+            
+            // **PERBAIKAN**: Tambahkan delay kecil untuk memastikan clear operation selesai
+            // sebelum memulai reload untuk menghindari race condition
+            android.os.Handler(android.os.Looper.getMainLooper()).postDelayed({
+                // Load picklist data dari awal
+                viewModel.loadPicklistItems(currentPicklistNumber)
+            }, 100) // 100ms delay
+            
+            // **DEBUG**: Log kondisi setelah reload (akan di-update oleh observer)
+            Log.d("MainActivity", "🔥 AFTER RELOAD: loadPicklistItems() called, waiting for observer to update...")
             
             // 2. Reset completion animation flag
             hasShownCompletionAnimation = false
@@ -831,16 +938,41 @@ class CekPicklistActivity : BaseRfidActivity() {
             // 3. Non-picklist items sekarang terintegrasi di main list, tidak ada section terpisah
             
             // 4. Show success message
-            ToastUtils.showHighToastWithCooldown(this, "✅ RFID data cleared successfully!")
+            ToastUtils.showHighToastWithCooldown(this, "✅ RFID data cleared and picklist reloaded!")
             
-            // 5. UI counter akan di-update oleh ViewModel berdasarkan data database
-            
-            Log.d("MainActivity", "✅ Clear RFID berhasil (tanpa save)")
+            Log.d("MainActivity", "✅ Clear RFID dan reload picklist berhasil")
             
         } catch (e: Exception) {
             Log.e("MainActivity", "❌ Error clearing RFID: ${e.message}", e)
             ToastUtils.showHighToastWithCooldown(this, "❌ Error clearing RFID: ${e.message}")
         }
+        
+        // **PERBAIKAN**: Log final state setelah clear
+        val finalEpcCount = rfidScanManager.getUniqueRfidCount()
+        val finalProductCount = rfidScanManager.getAllLookupResults().size
+        Log.d("MainActivity", "🔍 Final RfidScanManager state after clear: EPCs=${finalEpcCount}, Products=${finalProductCount}")
+        
+        // **PERBAIKAN**: Log ViewModel state setelah clear
+        val viewModelEpcCount = viewModel.getProcessedEpcListForCurrentPicklist().size
+        val viewModelPicklistItems = viewModel.picklistItems.value?.size ?: 0
+        Log.d("MainActivity", "🔍 Final ViewModel state after clear: processedEpcList=${viewModelEpcCount}, picklistItems=${viewModelPicklistItems}")
+        
+        // **PERBAIKAN**: Log UI state setelah clear
+        val uiRfidCount = binding.tvRfidDetected.text.toString()
+        Log.d("MainActivity", "🔍 Final UI state after clear: tvRfidDetected='$uiRfidCount'")
+        
+        // **PERBAIKAN**: Log completion status setelah clear
+        val currentPicklist = viewModel.getCurrentPicklistNumber()
+        val completionStatus = if (currentPicklist != null) {
+            viewModel.getPicklistCompletionStatus(currentPicklist)
+        } else {
+            null
+        }
+        Log.d("MainActivity", "🔍 Final completion status after clear: $completionStatus")
+        
+        // **PERBAIKAN**: Log loading state setelah clear
+        val loadingState = viewModel.isLoading.value
+        Log.d("MainActivity", "🔍 Final loading state after clear: $loadingState")
     }
     
     /**
@@ -860,10 +992,10 @@ class CekPicklistActivity : BaseRfidActivity() {
             // 1b. Explicitly reset RFID detection counter to align with Clear expectations
             viewModel.resetRfidDetectionCount()
             
-            // 2. Reset RFID counter display
-            binding.tvRfidDetected.text = "0"
+            // **PERBAIKAN**: Jangan reset UI manual - biarkan observer yang update UI
+            // binding.tvRfidDetected.text = "0" // ❌ DIHAPUS - akan di-update oleh observer
             
-            // 3. Show success message
+            // 2. Show success message
             ToastUtils.showHighToastWithCooldown(this, "Scan data berhasil direset dan data scan yang valid ditampilkan ulang")
             
             Log.d("MainActivity", "🔥 Clear RFID & reset berhasil dilakukan")
@@ -884,13 +1016,10 @@ class CekPicklistActivity : BaseRfidActivity() {
             // Clear RFID buffer di ViewModel
             // viewModel.clearAllData() // TODO: Implementasi method ini
             
-            // Clear UI
-            // viewModel.clearError() // TODO: Implementasi method ini
-            picklistAdapter.updateItems(emptyList())
-            updateSummaryCards(0, 0)
-            
-            // Reset RFID counter display
-            binding.tvRfidDetected.text = "0"
+            // **PERBAIKAN**: Jangan clear UI manual - biarkan observer yang update UI
+            // picklistAdapter.updateItems(emptyList()) // ❌ DIHAPUS - menyebabkan race condition
+            // updateSummaryCards(0, 0) // ❌ DIHAPUS - akan di-update oleh observer
+            // binding.tvRfidDetected.text = "0" // ❌ DIHAPUS - akan di-update oleh observer
             
             // Show success message
             ToastUtils.showHighToastWithCooldown(this, "Semua data berhasil dibersihkan")
@@ -909,7 +1038,7 @@ class CekPicklistActivity : BaseRfidActivity() {
     private fun checkPowerLevelStatus() {
         try {
             val sharedPreferences = getSharedPreferences("RFIDSettings", MODE_PRIVATE)
-            val savedPowerLevel = sharedPreferences.getInt("power_level", 20)
+            val savedPowerLevel = sharedPreferences.getInt("power_level", 25)
             val currentSettings = getRfidScanSettings()
             
             val message = """
@@ -918,7 +1047,7 @@ class CekPicklistActivity : BaseRfidActivity() {
                 📱 Saved in Settings: $savedPowerLevel
                 🔌 Current RFID Power: ${currentSettings.powerLevel}
                 🔄 Duplicate Removal: ${currentSettings.duplicateRemovalEnabled}
-                ⏱️ Grace Period: ${currentSettings.gracePeriodMs}ms
+                // **GRACE PERIOD REMOVED**: Tidak perlu log grace period
                 📶 RSSI Threshold: ${currentSettings.rssiThreshold}
                 
                 ${if (currentSettings.powerLevel != savedPowerLevel) "⚠️ Power level tidak sesuai!" else "✅ Power level sesuai"}
@@ -987,7 +1116,7 @@ class CekPicklistActivity : BaseRfidActivity() {
      */
     private fun getRSSIThreshold(): Int {
         val sharedPrefs = getSharedPreferences("RFIDSettings", MODE_PRIVATE)
-        return sharedPrefs.getInt("rssi_threshold", -70)
+        return sharedPrefs.getInt("rssi_threshold", -55)
     }
     
     /**
@@ -1020,7 +1149,6 @@ class CekPicklistActivity : BaseRfidActivity() {
             
             if (detectedRfids.isEmpty()) {
                 Log.d("MainActivity", "ℹ️ No RFIDs detected for batch lookup")
-                binding.swipeRefreshLayout.isRefreshing = false
                 Toast.makeText(this, "Tidak ada RFID yang terdeteksi", Toast.LENGTH_SHORT).show()
                 return
             }
@@ -1038,8 +1166,6 @@ class CekPicklistActivity : BaseRfidActivity() {
                     val processingTime = System.currentTimeMillis() - startTime
                     
                     runOnUiThread {
-                        binding.swipeRefreshLayout.isRefreshing = false
-                        
                         if (successCount > 0) {
                             val message = if (successCount == detectedRfids.size) {
                                 "✅ Semua ${successCount} RFID berhasil diproses (${processingTime}ms)"
@@ -1065,7 +1191,6 @@ class CekPicklistActivity : BaseRfidActivity() {
                 } catch (e: Exception) {
                     Log.e("MainActivity", "❌ Error during batch lookup: ${e.message}", e)
                     runOnUiThread {
-                        binding.swipeRefreshLayout.isRefreshing = false
                         Toast.makeText(
                             this@CekPicklistActivity, 
                             "Error batch lookup: ${e.message}", 
@@ -1077,7 +1202,6 @@ class CekPicklistActivity : BaseRfidActivity() {
             
         } catch (e: Exception) {
             Log.e("MainActivity", "❌ Error starting batch lookup: ${e.message}", e)
-            binding.swipeRefreshLayout.isRefreshing = false
             Toast.makeText(this, "Error: ${e.message}", Toast.LENGTH_SHORT).show()
         }
     }
@@ -1138,6 +1262,18 @@ class CekPicklistActivity : BaseRfidActivity() {
         // Observe picklist items
         viewModel.filteredItems.observe(this) { items ->
             Log.d(TAG, "🔥 Filtered items updated: ${items.size} items")
+            Log.d(TAG, "🔥 Observer triggered at: ${java.text.SimpleDateFormat("HH:mm:ss.SSS", java.util.Locale.getDefault()).format(java.util.Date())}")
+            
+            // **DEBUG**: Log detail items untuk debugging
+            if (items.isNotEmpty()) {
+                Log.d(TAG, "🔥 FilteredItems detail:")
+                items.take(3).forEach { item ->
+                    Log.d(TAG, "🔥   - ${item.articleName} ${item.size}: qtyPl=${item.qtyPl}, qtyScan=${item.qtyScan}, isComplete=${item.isComplete()}, tagStatus=${item.tagStatus}")
+                }
+            } else {
+                Log.w(TAG, "⚠️ FilteredItems is EMPTY - display will show no data!")
+            }
+            
             picklistAdapter.updateItems(items)
             
             // Update UI visibility based on items
@@ -1147,24 +1283,101 @@ class CekPicklistActivity : BaseRfidActivity() {
         }
         
         // **PERBAIKAN**: Observe ALL picklist items untuk seeding RfidScanManager
-        viewModel.picklistItems.observe(this) { allItems ->
-            Log.d(TAG, "🔥 All picklist items updated: ${allItems.size} items")
-            
-            // **PERBAIKAN KRITIS**: Seed RfidScanManager dengan data dari database SETELAH data selesai dimuat
-            // Ini mencegah RFID yang sudah pernah di-scan dihitung ulang
-            val currentPicklist = viewModel.getCurrentPicklistNumber()
-            if (currentPicklist != null && allItems.isNotEmpty()) {
-                Log.d(TAG, "🔥 Data loaded, seeding RfidScanManager for picklist: $currentPicklist")
-                seedRfidScanManagerWithDatabaseData(currentPicklist)
+            viewModel.picklistItems.observe(this) { allItems ->
+                Log.d(TAG, "🔥 All picklist items updated: ${allItems.size} items")
+                Log.d(TAG, "🔥 Observer triggered at: ${java.text.SimpleDateFormat("HH:mm:ss.SSS", java.util.Locale.getDefault()).format(java.util.Date())}")
+
+                // **PERBAIKAN KRITIS**: Seed RfidScanManager dengan data dari database SETELAH data selesai dimuat
+                // Ini mencegah RFID yang sudah pernah di-scan dihitung ulang
+                val currentPicklist = viewModel.getCurrentPicklistNumber()
+                if (currentPicklist != null && allItems.isNotEmpty()) {
+                    Log.d(TAG, "🔥 Data loaded, seeding RfidScanManager for picklist: $currentPicklist")
+
+                    // **PERBAIKAN BARU**: Tambahkan delay yang lebih lama untuk memastikan ViewModel sudah selesai memproses data
+                    // Setelah clear, ViewModel perlu waktu untuk reload processed EPC list dari database
+                    android.os.Handler(android.os.Looper.getMainLooper()).postDelayed({
+                        // **PERBAIKAN KRITIS**: Cek apakah processed EPC list sudah tersedia sebelum seeding
+                        val processedEpcList = viewModel.getProcessedEpcListForCurrentPicklist()
+                        Log.d(TAG, "🔍 Seeding check: processedEpcList=${processedEpcList.size} EPCs")
+                        if (processedEpcList.isNotEmpty()) {
+                            Log.d(TAG, "🔥 Processed EPC list ready (${processedEpcList.size} EPCs), proceeding with seeding")
+                            Log.d(TAG, "🔍 First 5 EPCs: ${processedEpcList.take(5).joinToString(", ")}")
+                            seedRfidScanManagerWithDatabaseData(currentPicklist)
+                        } else {
+                            Log.w(TAG, "⚠️ Processed EPC list still empty, skipping seeding to prevent infinite retry")
+                            Log.w(TAG, "⚠️ This suggests the ViewModel did not successfully reload processed EPCs from database")
+                        }
+                    }, 2000) // Delay 2 detik untuk memastikan data siap
+                }
             }
-        }
         
         // **PERBAIKAN KRITIS**: Observe filtered items untuk completion check (termasuk non-picklist items)
         viewModel.filteredItems.observe(this) { filteredItems ->
             Log.d(TAG, "🔥 Filtered items updated for completion check: ${filteredItems.size} items")
             
-            // Check for completion dengan filtered items (termasuk non-picklist dan overscan)
-            checkCompletionStatus(filteredItems)
+            // **PERBAIKAN KRITIS**: Check completion dengan ALL items (tidak hanya filtered items)
+            // karena filtered items menyembunyikan item yang sudah complete
+            val allItems = viewModel.picklistItems.value ?: emptyList()
+            val processedData = viewModel.processedRfidData.value ?: emptyList()
+            
+            Log.d(TAG, "🔥 Completion check data: allItems=${allItems.size}, processedData=${processedData.size}")
+            
+            // **PERBAIKAN BARU**: Gunakan logika yang sama dengan updateFilteredItems di ViewModel
+            // untuk memastikan konsistensi data
+            val nonPicklistGroups = processedData
+                .filter { it.tagStatus == "NON_PICKLIST" }
+                .groupBy { Pair(it.articleId, it.size) }
+
+            val nonPicklistItems = nonPicklistGroups.map { (key, group) ->
+                val any = group.first()
+                val totalQty = group.size
+                PicklistItem(
+                    id = "non_picklist_${any.articleId}_${any.size}",
+                    noPicklist = viewModel.getCurrentPicklistNumber() ?: "",
+                    articleId = any.articleId,
+                    articleName = any.articleName,
+                    size = any.size,
+                    productId = any.productId,
+                    qtyPl = 0,
+                    qtyScan = totalQty,
+                    createdAt = "",
+                    warehouse = any.warehouse,
+                    tagStatus = "NON_PICKLIST"
+                )
+            }
+
+            val overscanGroups = processedData
+                .filter { it.tagStatus == "OVERCAN" }
+                .filter { pd -> allItems.none { it.articleId == pd.articleId && it.size == pd.size } }
+                .groupBy { Pair(it.articleId, it.size) }
+
+            val overscanItems = overscanGroups.map { (key, group) ->
+                val any = group.first()
+                val totalQty = group.size
+                PicklistItem(
+                    id = "overscan_${any.articleId}_${any.size}",
+                    noPicklist = viewModel.getCurrentPicklistNumber() ?: "",
+                    articleId = any.articleId,
+                    articleName = any.articleName,
+                    size = any.size,
+                    productId = any.productId,
+                    qtyPl = 0,
+                    qtyScan = totalQty,
+                    createdAt = "",
+                    warehouse = any.warehouse,
+                    tagStatus = "OVERCAN"
+                )
+            }
+
+            val additionalItems = nonPicklistItems + overscanItems
+            val combinedItems = allItems + additionalItems
+            
+            Log.d(TAG, "🔥 Combined items for completion check: ${combinedItems.size} total items")
+            Log.d(TAG, "🔥   - ${allItems.size} picklist items")
+            Log.d(TAG, "🔥   - ${nonPicklistItems.size} non-picklist items")
+            Log.d(TAG, "🔥   - ${overscanItems.size} overscan items")
+            
+            checkCompletionStatus(combinedItems)
         }
         
         // Observe RFID detection count
@@ -1186,7 +1399,7 @@ class CekPicklistActivity : BaseRfidActivity() {
         
         // Observe error messages
         viewModel.errorMessage.observe(this) { error ->
-            if (error.isNotEmpty()) {
+            if (!error.isNullOrEmpty()) {
                 Log.e(TAG, "🔥 ViewModel error: $error")
                 ToastUtils.showHighToastWithCooldown(this, error)
             }
@@ -1215,6 +1428,28 @@ class CekPicklistActivity : BaseRfidActivity() {
             binding.llEmptyState.visibility = View.GONE
             binding.rvPicklistItems.visibility = View.VISIBLE
             Log.d(TAG, "🔥 Showing RecyclerView with ${items.size} items")
+            
+            // **DEBUG**: Log RecyclerView properties untuk troubleshooting
+            Log.d(TAG, "🔥 RecyclerView Debug Info:")
+            Log.d(TAG, "🔥   - visibility: ${binding.rvPicklistItems.visibility}")
+            Log.d(TAG, "🔥   - width: ${binding.rvPicklistItems.width}")
+            Log.d(TAG, "🔥   - height: ${binding.rvPicklistItems.height}")
+            Log.d(TAG, "🔥   - adapter: ${binding.rvPicklistItems.adapter}")
+            Log.d(TAG, "🔥   - layoutManager: ${binding.rvPicklistItems.layoutManager}")
+            Log.d(TAG, "🔥   - itemCount: ${binding.rvPicklistItems.adapter?.itemCount}")
+            
+            // **DEBUG**: Log parent LinearLayout properties
+            val parentLayout = binding.rvPicklistItems.parent as? LinearLayout
+            Log.d(TAG, "🔥 Parent LinearLayout Debug Info:")
+            Log.d(TAG, "🔥   - parent: ${parentLayout}")
+            Log.d(TAG, "🔥   - visibility: ${parentLayout?.visibility}")
+            Log.d(TAG, "🔥   - width: ${parentLayout?.width}")
+            Log.d(TAG, "🔥   - height: ${parentLayout?.height}")
+            
+            // **DEBUG**: Force layout update
+            binding.rvPicklistItems.requestLayout()
+            binding.rvPicklistItems.invalidate()
+            Log.d(TAG, "🔥 Forced RecyclerView layout update")
         }
     }
     
@@ -1223,6 +1458,7 @@ class CekPicklistActivity : BaseRfidActivity() {
      */
     private fun checkCompletionStatus(filteredItems: List<PicklistItem>) {
         Log.d(TAG, "🔥 checkCompletionStatus called with ${filteredItems.size} filtered items")
+        Log.d(TAG, "🔥 hasShownCompletionAnimation: $hasShownCompletionAnimation")
         
         if (hasShownCompletionAnimation) {
             Log.d(TAG, "🔥 Completion animation already shown, skipping")
@@ -1245,18 +1481,24 @@ class CekPicklistActivity : BaseRfidActivity() {
         
         // Log detail setiap non-picklist item
         nonPicklistItems.forEach { item ->
-            Log.d(TAG, "🔥 Non-Picklist Item: ${item.articleName} ${item.size} - qtyPl=${item.qtyPl}, qtyScan=${item.qtyScan} (BLOCKS completion)")
+            Log.d(TAG, "🔥 Non-Picklist Item: ${item.articleName} ${item.size} - qtyPl=${item.qtyPl}, qtyScan=${item.qtyScan}, tagStatus=${item.tagStatus} (BLOCKS completion)")
         }
         
         // Log detail setiap overscan item
         overscanItems.forEach { item ->
-            Log.d(TAG, "🔥 Overscan Item: ${item.articleName} ${item.size} - qtyPl=${item.qtyPl}, qtyScan=${item.qtyScan} (BLOCKS completion)")
+            Log.d(TAG, "🔥 Overscan Item: ${item.articleName} ${item.size} - qtyPl=${item.qtyPl}, qtyScan=${item.qtyScan}, tagStatus=${item.tagStatus} (BLOCKS completion)")
+        }
+        
+        // **PERBAIKAN KRITIS**: Jangan cek completion jika tidak ada picklist items sama sekali (misalnya setelah clear)
+        if (picklistItems.isEmpty()) {
+            Log.d(TAG, "🔥 No picklist items available for completion check, skipping")
+            return
         }
         
         // **PERBAIKAN KRITIS**: Cek completion dengan syarat TIDAK ada non-picklist atau overscan
         val hasNonPicklistItems = nonPicklistItems.isNotEmpty()
         val hasOverscanItems = overscanItems.isNotEmpty()
-        val hasIncompletePicklistItems = picklistItems.isNotEmpty()
+        val hasIncompletePicklistItems = picklistItems.any { !it.isComplete() }
         
         Log.d(TAG, "🔥 Completion check: ${picklistItems.size} picklist items remaining, hasIncomplete=$hasIncompletePicklistItems")
         Log.d(TAG, "🔥 Blocking conditions: hasNonPicklist=$hasNonPicklistItems, hasOverscan=$hasOverscanItems, hasIncomplete=$hasIncompletePicklistItems")
@@ -1317,7 +1559,8 @@ class CekPicklistActivity : BaseRfidActivity() {
         viewModel.saveDataToSupabaseOnCompletion()
         
         // **PERBAIKAN BARU**: Update status picklist ke "completed" di database
-        viewModel.updatePicklistStatus("completed")
+        // **DISABLED**: Kolom 'status' tidak ada di tabel picklist
+        // viewModel.updatePicklistStatus("completed")
         
         // Sembunyikan tombol submit
         binding.btnSubmit.visibility = View.GONE
@@ -1796,6 +2039,11 @@ class CekPicklistActivity : BaseRfidActivity() {
     
     override fun onDestroy() {
         super.onDestroy()
+        
+        // **DAILY SYNC STRATEGY**: Stop daily sync service
+        if (::dailySyncService.isInitialized) {
+            dailySyncService.stopSync()
+        }
         
         // Stop RFID scanning
         stopRfidScanning()

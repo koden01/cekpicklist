@@ -6,6 +6,9 @@
     <uses-permission android:name="android.permission.INTERNET" />
     <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE" />
     
+    <!-- Permissions untuk Built-in Barcode Scanner -->
+    <!-- Tidak memerlukan permission kamera karena menggunakan scanner bawaan -->
+    
     <!-- Permissions untuk Auto-Update -->
     <uses-permission android:name="android.permission.WRITE_EXTERNAL_STORAGE" />
     <uses-permission android:name="android.permission.READ_EXTERNAL_STORAGE" />
@@ -48,6 +51,25 @@
             android:keepScreenOn="true" />
         
         <activity
+            android:name=".RelocationActivity"
+            android:exported="false"
+            android:screenOrientation="portrait"
+            android:theme="@style/Theme.CekPicklist">
+        </activity>
+        
+        <activity
+            android:name=".LocationActivity"
+            android:exported="false"
+            android:screenOrientation="portrait"
+            android:theme="@style/Theme.CekPicklist">
+        </activity>
+        <activity
+            android:name=".LocationDemoActivity"
+            android:exported="false"
+            android:screenOrientation="portrait"
+            android:theme="@style/Theme.CekPicklist">
+        </activity>
+        <activity
             android:name=".SettingsActivity"
             android:exported="false"
             android:screenOrientation="portrait"
@@ -55,11 +77,26 @@
         </activity>
         
         <activity
-            android:name=".RelocationActivity"
+            android:name=".BarcodeScannerTabsActivity"
             android:exported="false"
             android:screenOrientation="portrait"
             android:theme="@style/Theme.CekPicklist">
         </activity>
+        
+        <activity
+            android:name=".OutActivity"
+            android:exported="false"
+            android:screenOrientation="portrait"
+            android:theme="@style/Theme.CekPicklist">
+        </activity>
+
+        <activity
+            android:name=".ReturActivity"
+            android:exported="false"
+            android:screenOrientation="portrait"
+            android:theme="@style/Theme.CekPicklist" />
+        
+        <!-- CustomScanActivity dihapus - tidak diperlukan karena hanya menggunakan built-in scanner -->
         
         <!-- Auto-Update Service - Disabled in v4.3.4 -->
         <!-- <service

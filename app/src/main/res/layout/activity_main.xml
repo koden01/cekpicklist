@@ -222,67 +222,60 @@
 
     </LinearLayout>
 
-    <!-- RecyclerView untuk list items - Swipe refresh dinonaktifkan -->
-    <androidx.swiperefreshlayout.widget.SwipeRefreshLayout
-        android:id="@+id/swipeRefreshLayout"
+    <!-- RecyclerView untuk list items - Simplified layout -->
+    <LinearLayout
         android:layout_width="match_parent"
         android:layout_height="0dp"
         android:layout_weight="1"
-        android:enabled="false">
+        android:orientation="vertical">
 
-        <FrameLayout
+        <androidx.recyclerview.widget.RecyclerView
+            android:id="@+id/rvPicklistItems"
             android:layout_width="match_parent"
-            android:layout_height="match_parent">
+            android:layout_height="match_parent"
+            android:layout_marginHorizontal="16dp"
+            android:clipToPadding="false"
+            android:paddingBottom="80dp"
+            android:visibility="gone" />
 
-            <androidx.recyclerview.widget.RecyclerView
-                android:id="@+id/rvPicklistItems"
-                android:layout_width="match_parent"
-                android:layout_height="match_parent"
-                android:layout_marginHorizontal="16dp"
-                android:clipToPadding="false"
-                android:paddingBottom="80dp"
-                android:visibility="gone" />
+        <!-- Placeholder untuk list kosong -->
+        <LinearLayout
+            android:id="@+id/llEmptyState"
+            android:layout_width="match_parent"
+            android:layout_height="match_parent"
+            android:orientation="vertical"
+            android:gravity="center"
+            android:visibility="visible"
+            android:layout_marginHorizontal="16dp"
+            android:background="@android:color/transparent">
 
-            <!-- Placeholder untuk list kosong -->
-            <LinearLayout
-                android:id="@+id/llEmptyState"
-                android:layout_width="match_parent"
-                android:layout_height="match_parent"
-                android:orientation="vertical"
+            <ImageView
+                android:layout_width="48dp"
+                android:layout_height="48dp"
+                android:src="@drawable/ic_search_modern"
+                android:alpha="0.2"
+                android:layout_marginBottom="16dp" />
+
+            <TextView
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="Pilih picklist untuk melihat detail"
+                android:textSize="14sp"
+                android:textColor="@android:color/darker_gray"
+                android:gravity="center" />
+
+            <TextView
+                android:layout_width="wrap_content"
+                android:layout_height="wrap_content"
+                android:text="Klik pada nomor picklist di atas"
+                android:textSize="12sp"
+                android:textColor="@android:color/darker_gray"
                 android:gravity="center"
-                android:visibility="visible"
-                android:layout_marginHorizontal="16dp"
-                android:background="@android:color/transparent">
+                android:layout_marginTop="4dp" />
 
-                <ImageView
-                    android:layout_width="48dp"
-                    android:layout_height="48dp"
-                    android:src="@drawable/ic_search_modern"
-                    android:alpha="0.2"
-                    android:layout_marginBottom="16dp" />
+        </LinearLayout>
 
-                <TextView
-                    android:layout_width="wrap_content"
-                    android:layout_height="wrap_content"
-                    android:text="Pilih picklist untuk melihat detail"
-                    android:textSize="14sp"
-                    android:textColor="@android:color/darker_gray"
-                    android:gravity="center" />
-
-                <TextView
-                    android:layout_width="wrap_content"
-                    android:layout_height="wrap_content"
-                    android:text="Klik pada nomor picklist di atas"
-                    android:textSize="12sp"
-                    android:textColor="@android:color/darker_gray"
-                    android:gravity="center"
-                    android:layout_marginTop="4dp" />
-
-            </LinearLayout>
-
-        </FrameLayout>
-
-    </androidx.swiperefreshlayout.widget.SwipeRefreshLayout>
+    </LinearLayout>
 
     <!-- Bottom Action Bar -->
     <LinearLayout

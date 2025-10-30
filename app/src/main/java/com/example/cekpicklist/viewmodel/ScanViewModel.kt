@@ -16,6 +16,7 @@ import com.example.cekpicklist.data.QtyUpdate
 import com.example.cekpicklist.data.QtyStatusInfo
 import com.example.cekpicklist.data.QtyStatus
 import com.example.cekpicklist.repository.Repository
+import com.example.cekpicklist.repository.EnhancedRepository
 import com.example.cekpicklist.api.NirwanaApiService
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.Dispatchers
@@ -51,6 +52,7 @@ data class Sextuple<A, B, C, D, E, F>(
 
 class ScanViewModel(application: Application) : AndroidViewModel(application) {
     private val repository = Repository(application.applicationContext)
+    private val enhancedRepository = EnhancedRepository(application)
     
     // LiveData untuk UI
     private val _picklists = MutableLiveData<List<String>>()
@@ -178,8 +180,8 @@ class ScanViewModel(application: Application) : AndroidViewModel(application) {
                 
                 Log.i("ScanViewModel", "🔥 Loading picklists via Repository (with cache)")
                 
-                // Repository sudah handle cache management
-                val picklists = repository.getPicklists()
+                // **LOCAL-FIRST FIX**: Gunakan EnhancedRepository untuk Local-First strategy
+                val picklists = enhancedRepository.getPicklists()
                 
                 withContext(Dispatchers.Main) {
                     if (picklists.isNotEmpty()) {
@@ -195,7 +197,7 @@ class ScanViewModel(application: Application) : AndroidViewModel(application) {
                 Log.i("ScanViewModel", "🔥 === OPTIMIZED LOADING PICKLISTS END ===")
                 
                 // Load picklist statuses after loading picklists
-                loadPicklistStatuses(picklists)
+                loadPicklistStatusesInternal(picklists)
                 
             } catch (e: CancellationException) {
                 Log.d("ScanViewModel", "ℹ️ Loading cancelled: ${e.message}")
@@ -225,31 +227,55 @@ class ScanViewModel(application: Application) : AndroidViewModel(application) {
     }
     
     /**
-     * Load scan status for all picklists
+     * Load scan status for all picklists using Room query (UNIFIED METHOD)
      */
-    private fun loadPicklistStatuses(picklists: List<String>) {
+    private fun loadPicklistStatusesInternal(picklists: List<String>) {
+        Log.d("ScanViewModel", "🔥 Loading picklist statuses for ${picklists.size} picklists (repository batch)")
+        loadPicklistStatuses()
+    }
+    
+    /**
+     * Refresh picklist statuses after scanning operations
+     * This ensures the modal shows updated status after RFID scanning
+     * **UPDATED**: Menggunakan Room query untuk performa yang lebih baik
+     */
+    fun refreshPicklistStatuses() {
+        Log.d("ScanViewModel", "🔄 Refreshing picklist statuses after scan operation (repository batch)")
+        val picklists = _picklists.value ?: emptyList()
+        if (picklists.isNotEmpty()) {
+            // Force refresh dengan delay untuk memastikan data ter-sync
+            viewModelScope.launch {
+                kotlinx.coroutines.delay(100) // Small delay untuk memastikan database ter-update
+                loadPicklistStatusesInternal(picklists)
+            }
+        }
+    }
+    
+    /**
+     * **NEW**: Load picklist statuses menggunakan query Room langsung
+     * Lebih efisien dan akurat karena menggunakan SQL query langsung dari database
+     */
+    fun loadPicklistStatuses() {
         viewModelScope.launch(Dispatchers.IO) {
             try {
-                Log.d("ScanViewModel", "🔥 Loading picklist statuses for ${picklists.size} picklists")
-                
-                // Use batch processing for better performance
+                Log.d("ScanViewModel", "🔥 Loading picklist statuses via Repository (batch computation)")
+
+                val picklists = _picklists.value ?: emptyList()
+                if (picklists.isEmpty()) {
+                    withContext(Dispatchers.Main) { _picklistStatuses.value = emptyList() }
+                    return@launch
+                }
+
                 val statuses = repository.getAllPicklistCompletionStatuses(picklists)
-                
+
                 withContext(Dispatchers.Main) {
                     _picklistStatuses.value = statuses
-                    Log.d("ScanViewModel", "✅ Loaded ${statuses.size} picklist statuses")
-                    
-                    // Log each status for debugging
-                    statuses.forEach { status ->
-                        Log.d("ScanViewModel", "📊 ${status.picklistNumber}: scanned=${status.isScanned}, total=${status.totalQty}, scanned=${status.scannedQty}, remaining=${status.remainingQty}")
-                    }
+                    Log.d("ScanViewModel", "✅ Loaded ${statuses.size} picklist statuses (repository batch)")
                 }
-                
+
             } catch (e: Exception) {
-                Log.e("ScanViewModel", "❌ Error loading picklist statuses: ${e.message}", e)
-                withContext(Dispatchers.Main) {
-                    _picklistStatuses.value = emptyList()
-                }
+                Log.e("ScanViewModel", "❌ Error loading picklist statuses (repository batch): ${e.message}", e)
+                withContext(Dispatchers.Main) { _picklistStatuses.value = emptyList() }
             }
         }
     }
@@ -264,14 +290,21 @@ class ScanViewModel(application: Application) : AndroidViewModel(application) {
         Log.i("ScanViewModel", "🔥 Picklist: $picklistNumber")
         Log.i("ScanViewModel", "🔥 Timestamp: ${java.text.SimpleDateFormat("HH:mm:ss.SSS", java.util.Locale.getDefault()).format(java.util.Date())}")
         
-        // **PERBAIKAN**: Cancel previous loading job untuk mencegah konflik
-        loadingJob?.cancel()
-        
-        // Check apakah sudah loading picklist yang sama untuk menghindari duplikasi
-        if (currentPicklistNumber == picklistNumber && _isLoading.value == true) {
+        // **PERBAIKAN**: Cek apakah sudah loading picklist yang sama
+        if (loadingJob?.isActive == true && currentPicklistNumber == picklistNumber) {
             Log.w("ScanViewModel", "⚠️ Already loading picklist $picklistNumber, skipping duplicate request")
             return
         }
+        
+        // **PERBAIKAN KRITIS**: Force cancel stuck loading jobs
+        if (loadingJob?.isActive == true) {
+            Log.w("ScanViewModel", "⚠️ Loading job already active for $picklistNumber, force cancelling stuck job...")
+            loadingJob?.cancel()
+            loadingJob = null
+        }
+        
+        // **PERBAIKAN**: Cancel previous loading job hanya jika tidak aktif
+        loadingJob?.cancel()
         
         // **PERBAIKAN BARU**: Clear EPC yang sudah diproses saat ganti picklist
         val previousPicklist = currentPicklistNumber
@@ -304,8 +337,13 @@ class ScanViewModel(application: Application) : AndroidViewModel(application) {
                 
                 Log.i("ScanViewModel", "🔥 Loading picklist items via Repository (with cache)")
                 
-                // **OPTIMASI SINGLE BATCH**: Load picklist items dan processed EPC list dalam satu operasi
-                val batchResult = repository.getPicklistDataBatch(picklistNumber)
+                // **PERBAIKAN**: Tambahkan timeout untuk mencegah job stuck
+                val batchResult = withTimeout(15000) { // 15 detik timeout - lebih masuk akal
+                    // **LOCAL-FIRST FIX**: Gunakan EnhancedRepository untuk Local-First strategy
+                    val items = enhancedRepository.getPicklistItems(picklistNumber)
+                    val processedEpcList = enhancedRepository.getProcessedEpcList(picklistNumber)
+                    Pair(items, processedEpcList)
+                }
                 val items = batchResult.first
                 val processedEpcList = batchResult.second
                 
@@ -372,6 +410,13 @@ class ScanViewModel(application: Application) : AndroidViewModel(application) {
                 
                 Log.i("ScanViewModel", "🔥 === LOADING PICKLIST ITEMS END ===")
                 
+            } catch (e: kotlinx.coroutines.TimeoutCancellationException) {
+                val loadTime = System.currentTimeMillis() - startTime
+                Log.e("ScanViewModel", "⏰ Loading timeout after ${loadTime}ms for picklist: $picklistNumber")
+                withContext(Dispatchers.Main) {
+                    _errorMessage.value = "Loading timeout for picklist: $picklistNumber"
+                    _picklistItems.value = emptyList()
+                }
             } catch (e: kotlinx.coroutines.CancellationException) {
                 Log.d("ScanViewModel", "🔥 Loading cancelled for picklist: $picklistNumber")
                 throw e // Re-throw cancellation exception
@@ -949,6 +994,13 @@ class ScanViewModel(application: Application) : AndroidViewModel(application) {
                     updateFilteredItems()
                     updateQtySummary()
                     updateQtyStatusColors()
+                    
+                    // **NEW FIX**: Refresh picklist statuses after scanning to keep modal in sync
+                    // Delay sedikit untuk memastikan data ter-sync ke database
+                    viewModelScope.launch {
+                        kotlinx.coroutines.delay(500) // 500ms delay
+                        refreshPicklistStatuses()
+                    }
                     }
                 } finally {
                     uiMergeMutex.unlock()
@@ -1157,6 +1209,16 @@ class ScanViewModel(application: Application) : AndroidViewModel(application) {
         val processedData = _processedRfidData.value ?: emptyList()
         
         Log.d("ScanViewModel", "🔥 updateFilteredItems: items=${items.size}, processedData=${processedData.size}")
+        Log.d("ScanViewModel", "🔥 updateFilteredItems: currentPicklistNumber=$currentPicklistNumber")
+        
+        // **DEBUG**: Log detail items untuk debugging
+        if (items.isNotEmpty()) {
+            Log.d("ScanViewModel", "🔥 Items detail:")
+            items.take(3).forEach { item ->
+                Log.d("ScanViewModel", "🔥   - ${item.articleName} ${item.size}: qtyPl=${item.qtyPl}, qtyScan=${item.qtyScan}, isComplete=${item.isComplete()}")
+            }
+        }
+        
         processedData.forEach { item ->
             Log.d("ScanViewModel", "🔥   - ${item.articleName} ${item.size} (${item.tagStatus})")
         }
@@ -1215,9 +1277,9 @@ class ScanViewModel(application: Application) : AndroidViewModel(application) {
         // Gabungkan item picklist dengan item tambahan (non-picklist dan overscan yang tidak ada di picklist)
         val combinedItems = items + additionalItems
         
-        // **PERBAIKAN BARU**: Filter out completed items dan maintain consistent sorting
+        // **PERBAIKAN BARU**: Always hide completed items (consistent behavior)
         val filteredItems = combinedItems
-            .filter { !it.isComplete() } // Hide completed items
+            .filter { !it.isComplete() } // Always hide completed items
             .sortedWith(compareBy<PicklistItem> { it.tagStatus } // Sort by status first
                 .thenBy { it.articleName } // Then by article name
                 .thenBy { it.size }) // Finally by size
@@ -1242,6 +1304,17 @@ class ScanViewModel(application: Application) : AndroidViewModel(application) {
             combinedItems.filter { it.isComplete() }.forEach { item ->
                 Log.d("ScanViewModel", "🔥   - ${item.articleName} ${item.size} (qtyPl=${item.qtyPl}, qtyScan=${item.qtyScan})")
             }
+        }
+        
+        // **DEBUG**: Log detail filteredItems untuk debugging
+        Log.d("ScanViewModel", "🔥 Final filteredItems: ${filteredItems.size} items")
+        if (filteredItems.isNotEmpty()) {
+            Log.d("ScanViewModel", "🔥 FilteredItems detail:")
+            filteredItems.take(3).forEach { item ->
+                Log.d("ScanViewModel", "🔥   - ${item.articleName} ${item.size}: qtyPl=${item.qtyPl}, qtyScan=${item.qtyScan}, isComplete=${item.isComplete()}, tagStatus=${item.tagStatus}")
+            }
+        } else {
+            Log.w("ScanViewModel", "⚠️ FilteredItems is EMPTY - this will cause display to show no data!")
         }
         
         _filteredItems.value = filteredItems
@@ -1666,29 +1739,33 @@ class ScanViewModel(application: Application) : AndroidViewModel(application) {
                 // removed retry queue & attempts
                 Log.d("ScanViewModel", "🧹 Cleared retry queue and attempts")
                 
-                // **PERBAIKAN BARU**: Clear processed EPC set untuk picklist saat ini saja
+                // **PERBAIKAN KRITIS**: JANGAN hapus processedEpcPerPicklist dan uniqueEpcPerPicklist
+                // karena data ini diperlukan untuk seeding RfidScanManager setelah clear
+                // Hanya hapus appliedEpcPerPicklist untuk reset session tracking
                 val currentPicklist = currentPicklistNumber
                 if (currentPicklist != null) {
-                    processedEpcPerPicklist.remove(currentPicklist)
-                    uniqueEpcPerPicklist.remove(currentPicklist)
+                    // **PERBAIKAN**: Jangan hapus processedEpcPerPicklist dan uniqueEpcPerPicklist
+                    // processedEpcPerPicklist.remove(currentPicklist)  // ❌ JANGAN HAPUS!
+                    // uniqueEpcPerPicklist.remove(currentPicklist)       // ❌ JANGAN HAPUS!
                     appliedEpcPerPicklist.remove(currentPicklist)
-                    Log.d("ScanViewModel", "🧹 Cleared all EPC sets untuk picklist: $currentPicklist (processed, unique, applied)")
+                    Log.d("ScanViewModel", "🧹 Cleared applied EPC set untuk picklist: $currentPicklist (preserved processed & unique sets)")
                 }
                 
                 // **CRITICAL FIX**: Reload data dari database untuk mengembalikan qtyScan ke nilai asli
                 if (currentPicklistNumber != null) {
                     Log.d("ScanViewModel", "🔥 Reloading data from database for picklist: $currentPicklistNumber")
                     
-                    // **OPTIMASI SINGLE BATCH**: Load picklist items dan processed EPC list dalam satu operasi
-                    val batchResult = repository.getPicklistDataBatch(currentPicklistNumber!!)
-                    val databaseItems = batchResult.first
-                    val processedEpcList = batchResult.second
+                    // **LOCAL-FIRST FIX**: Load picklist items dan processed EPC list menggunakan EnhancedRepository
+                    val databaseItems = enhancedRepository.getPicklistItems(currentPicklistNumber!!)
+                    val processedEpcList = enhancedRepository.getProcessedEpcList(currentPicklistNumber!!)
                     
                     // Set data langsung ke UI
                     _picklistItems.value = databaseItems
                     
-                    // **OPTIMASI**: Process processed EPC list yang sudah di-load dalam batch
-                    if (processedEpcList.isNotEmpty()) {
+                    // **PERBAIKAN KRITIS**: Hanya update processedEpcPerPicklist jika kosong
+                    // Ini mencegah overwrite data yang sudah ada dari load awal
+                    val existingProcessedEpcs = processedEpcPerPicklist[currentPicklistNumber!!]
+                    if (existingProcessedEpcs.isNullOrEmpty() && processedEpcList.isNotEmpty()) {
                         val epcSet = processedEpcList.toMutableSet()
                         processedEpcPerPicklist[currentPicklistNumber!!] = epcSet
                         
@@ -1696,6 +1773,14 @@ class ScanViewModel(application: Application) : AndroidViewModel(application) {
                         uniqueEpcPerPicklist[currentPicklistNumber!!] = epcSet
                         Log.d("ScanViewModel", "🔥 Reloaded ${processedEpcList.size} processed EPCs for picklist: $currentPicklistNumber")
                         Log.d("ScanViewModel", "🔥 Seeded uniqueEpcPerPicklist with ${epcSet.size} EPCs")
+                        
+                        // **PERBAIKAN BARU**: Verifikasi bahwa processedEpcPerPicklist benar-benar terisi
+                        val verificationList = getProcessedEpcListForCurrentPicklist()
+                        Log.d("ScanViewModel", "🔍 Verification: getProcessedEpcListForCurrentPicklist() returns ${verificationList.size} EPCs")
+                    } else if (existingProcessedEpcs?.isNotEmpty() == true) {
+                        Log.d("ScanViewModel", "✅ Processed EPCs already exist (${existingProcessedEpcs.size} EPCs), skipping reload")
+                    } else {
+                        Log.w("ScanViewModel", "⚠️ No processed EPC list returned from database for picklist: $currentPicklistNumber")
                     }
                     
                     // **CRITICAL FIX**: Set RFID counter sesuai total qtyScan dari database
@@ -1729,6 +1814,72 @@ class ScanViewModel(application: Application) : AndroidViewModel(application) {
                 _isLoading.value = false
             }
         }
+    }
+    
+    /**
+     * Clear cache untuk picklist saat ini untuk memastikan data fresh setelah clear
+     */
+    fun clearCacheForCurrentPicklist() {
+        val currentPicklist = currentPicklistNumber
+        if (currentPicklist != null) {
+            Log.d("ScanViewModel", "🧹 Clearing cache for picklist: $currentPicklist")
+            viewModelScope.launch {
+                try {
+                    repository.clearCacheForPicklist(currentPicklist)
+                    Log.d("ScanViewModel", "✅ Cache cleared for picklist: $currentPicklist")
+                } catch (e: Exception) {
+                    Log.e("ScanViewModel", "❌ Error clearing cache: ${e.message}", e)
+                }
+            }
+        } else {
+            Log.w("ScanViewModel", "⚠️ No current picklist to clear cache for")
+        }
+    }
+
+    /**
+     * Clear ViewModel ke kondisi awal seperti sebelum picklist di-load
+     * TAPI JANGAN hapus currentPicklistNumber, processedEpcPerPicklist, dan uniqueEpcPerPicklist
+     * karena kita akan reload picklist yang sama
+     */
+    fun clearToInitialState() {
+        Log.d("ScanViewModel", "🔥 Clearing ViewModel to initial state")
+        
+        // Clear semua data picklist
+        _picklistItems.value = emptyList()
+        _processedRfidData.value = emptyList()
+        _filteredItems.value = emptyList()
+        
+        // Reset counter ke 0
+        totalRfidDetections = 0
+        _rfidDetectionCount.value = 0
+        
+        // Clear summary
+        _qtySummary.value = QtySummary(
+            totalQtyPl = 0,
+            totalQtyScan = 0,
+            remainingQty = 0,
+            scannedItems = 0,
+            completedItems = 0,
+            totalItems = 0,
+            progressPercentage = 0
+        )
+        _qtyStatusColors.value = emptyMap()
+        
+        // **PERBAIKAN KRITIS**: JANGAN hapus currentPicklistNumber, processedEpcPerPicklist, dan uniqueEpcPerPicklist
+        // karena kita akan reload picklist yang sama setelah clear
+        // Hanya hapus appliedEpcPerPicklist untuk reset session tracking
+        val currentPicklist = currentPicklistNumber
+        if (currentPicklist != null) {
+            appliedEpcPerPicklist.remove(currentPicklist)
+            Log.d("ScanViewModel", "🧹 Cleared applied EPC set untuk picklist: $currentPicklist (preserved currentPicklistNumber & EPC sets)")
+        }
+        
+        // Clear loading state
+        _isLoading.value = false
+        // Lint: avoid setting non-nullable LiveData to null
+        _errorMessage.value = ""
+        
+        Log.d("ScanViewModel", "✅ ViewModel cleared to initial state (preserved currentPicklistNumber: $currentPicklistNumber)")
     }
     
     /**
@@ -2455,10 +2606,9 @@ class ScanViewModel(application: Application) : AndroidViewModel(application) {
                             Log.d("ScanViewModel", "⏳ Waiting ${delayMs}ms for database synchronization...")
                             delay(delayMs)
                             
-                            // **OPTIMASI SINGLE BATCH**: Load picklist items dan processed EPC list dalam satu operasi
-                            val batchResult = repository.getPicklistDataBatch(currentPicklist)
-                            val databaseItems = batchResult.first
-                            val processedEpcList = batchResult.second
+                            // **LOCAL-FIRST FIX**: Load picklist items dan processed EPC list menggunakan EnhancedRepository
+                            val databaseItems = enhancedRepository.getPicklistItems(currentPicklist)
+                            val processedEpcList = enhancedRepository.getProcessedEpcList(currentPicklist)
                             
                             // **VERIFIKASI DATA**: Pastikan data yang di-load valid
                             if (databaseItems.isNotEmpty()) {
@@ -2585,10 +2735,9 @@ class ScanViewModel(application: Application) : AndroidViewModel(application) {
                             Log.d("ScanViewModel", "⏳ ROBUST Waiting ${delayMs}ms for database synchronization...")
                             delay(delayMs)
                             
-                            // **OPTIMASI SINGLE BATCH**: Load picklist items dan processed EPC list dalam satu operasi
-                            val batchResult = repository.getPicklistDataBatch(currentPicklist)
-                            val databaseItems = batchResult.first
-                            val processedEpcList = batchResult.second
+                            // **LOCAL-FIRST FIX**: Load picklist items dan processed EPC list menggunakan EnhancedRepository
+                            val databaseItems = enhancedRepository.getPicklistItems(currentPicklist)
+                            val processedEpcList = enhancedRepository.getProcessedEpcList(currentPicklist)
                             
                             // **VERIFIKASI DATA**: Pastikan data yang di-load valid
                             if (databaseItems.isNotEmpty()) {
@@ -2680,28 +2829,29 @@ class ScanViewModel(application: Application) : AndroidViewModel(application) {
      */
     fun clearRfidCollectionOnly() {
         Log.d("ScanViewModel", "🔥 Clearing RFID collection only (tanpa save)...")
-        
+        Log.d("ScanViewModel", "🔥 Clear called at: ${java.text.SimpleDateFormat("HH:mm:ss.SSS", java.util.Locale.getDefault()).format(java.util.Date())}")
+
         viewModelScope.launch {
             try {
                 _isLoading.value = true
                 lastClearTime = System.currentTimeMillis()
                 
-                // **PERBAIKAN KRITIS**: Hapus overscan data dari database terlebih dahulu
+                // **PERBAIKAN KRITIS**: Clear data scan hanya di aplikasi (TIDAK menghapus data di Supabase)
                 val picklistForCleanup = currentPicklistNumber
                 if (picklistForCleanup != null) {
-                    Log.d("ScanViewModel", "🧹 Removing overscan data from database for picklist: $picklistForCleanup")
+                    Log.d("ScanViewModel", "🧹 Clearing scan data display for picklist: $picklistForCleanup (NOT deleting from Supabase)")
                     try {
-                        val overscanRemoved = repository.removeOverscanDataForPicklist(picklistForCleanup)
-                        if (overscanRemoved) {
-                            Log.d("ScanViewModel", "✅ Overscan data successfully removed from database")
+                        val displayCleared = repository.removeAllScanDataForPicklist(picklistForCleanup)
+                        if (displayCleared) {
+                            Log.d("ScanViewModel", "✅ Scan data display successfully cleared (Supabase data preserved)")
                         } else {
-                            Log.w("ScanViewModel", "⚠️ Failed to remove some overscan data from database")
+                            Log.w("ScanViewModel", "⚠️ Failed to clear scan data display")
                         }
                     } catch (e: kotlinx.coroutines.CancellationException) {
-                        Log.d("ScanViewModel", "🔥 Overscan cleanup cancelled (normal behavior): ${e.message}")
+                        Log.d("ScanViewModel", "🔥 Scan data display clear cancelled (normal behavior): ${e.message}")
                         // Jangan re-throw cancellation, biarkan proses berlanjut
                     } catch (e: Exception) {
-                        Log.e("ScanViewModel", "❌ Error removing overscan data: ${e.message}", e)
+                        Log.e("ScanViewModel", "❌ Error clearing scan data display: ${e.message}", e)
                     }
                 }
                 
@@ -2717,56 +2867,24 @@ class ScanViewModel(application: Application) : AndroidViewModel(application) {
                 // removed retry queue & attempts
                 Log.d("ScanViewModel", "🧹 Cleared retry queue and attempts")
                 
-                // **PERBAIKAN BARU**: Clear processed EPC set untuk picklist saat ini saja
+                // **PERBAIKAN KRITIS**: JANGAN hapus processedEpcPerPicklist dan uniqueEpcPerPicklist
+                // karena data ini diperlukan untuk seeding RfidScanManager setelah clear
+                // Hanya hapus appliedEpcPerPicklist untuk reset session tracking
                 val currentPicklist = currentPicklistNumber
                 if (currentPicklist != null) {
-                    processedEpcPerPicklist.remove(currentPicklist)
-                    uniqueEpcPerPicklist.remove(currentPicklist)
+                    // **PERBAIKAN**: Jangan hapus processedEpcPerPicklist dan uniqueEpcPerPicklist
+                    // processedEpcPerPicklist.remove(currentPicklist)  // ❌ JANGAN HAPUS!
+                    // uniqueEpcPerPicklist.remove(currentPicklist)       // ❌ JANGAN HAPUS!
                     appliedEpcPerPicklist.remove(currentPicklist)
-                    Log.d("ScanViewModel", "🧹 Cleared all EPC sets untuk picklist: $currentPicklist (processed, unique, applied)")
+                    Log.d("ScanViewModel", "🧹 Cleared applied EPC set untuk picklist: $currentPicklist (preserved processed & unique sets)")
                 }
                 
-                // **CRITICAL FIX**: Reload data dari database untuk mengembalikan qtyScan ke nilai asli
-                if (currentPicklistNumber != null) {
-                    Log.d("ScanViewModel", "🔥 Reloading data from database for picklist: $currentPicklistNumber")
-                    
-                    // **OPTIMASI SINGLE BATCH**: Load picklist items dan processed EPC list dalam satu operasi
-                    val batchResult = repository.getPicklistDataBatch(currentPicklistNumber!!)
-                    val databaseItems = batchResult.first
-                    val processedEpcList = batchResult.second
-                    
-                    // Set data langsung ke UI
-                    _picklistItems.value = databaseItems
-                    
-                    // **OPTIMASI**: Process processed EPC list yang sudah di-load dalam batch
-                    if (processedEpcList.isNotEmpty()) {
-                        val epcSet = processedEpcList.toMutableSet()
-                        processedEpcPerPicklist[currentPicklistNumber!!] = epcSet
-                        
-                        // **PERBAIKAN KRITIS**: Seed uniqueEpcPerPicklist juga
-                        uniqueEpcPerPicklist[currentPicklistNumber!!] = epcSet
-                        Log.d("ScanViewModel", "🔥 Reloaded ${processedEpcList.size} processed EPCs for picklist: $currentPicklistNumber")
-                        Log.d("ScanViewModel", "🔥 Seeded uniqueEpcPerPicklist with ${epcSet.size} EPCs")
-                    }
-                    
-                    // **CRITICAL FIX**: Set RFID counter sesuai total qtyScan dari database
-                    val totalQtyScanFromDatabase = databaseItems.sumOf { it.qtyScan }
-                    
-                    // **PERBAIKAN KRITIS**: Set counter sesuai database value (setelah overscan dibersihkan)
-                    totalRfidDetections = totalQtyScanFromDatabase
-                    _rfidDetectionCount.value = totalQtyScanFromDatabase
-                    Log.d("ScanViewModel", "📊 RFID counter set to database value: $totalQtyScanFromDatabase (after overscan cleanup)")
-                    
-                    Log.d("ScanViewModel", "✅ Data reloaded from database - qtyScan dikembalikan ke nilai asli")
-                    Log.d("ScanViewModel", "✅ RFID counter dikembalikan ke ${totalQtyScanFromDatabase} (sesuai database)")
-                } else {
-                    Log.w("ScanViewModel", "⚠️ No current picklist number, cannot reload from database")
-                }
+                // **PERBAIKAN**: JANGAN reload data di sini karena akan di-load ulang oleh loadPicklistItems()
+                // Ini mencegah duplicate loading yang menyebabkan race condition
+                Log.d("ScanViewModel", "🔥 Clear completed - data akan di-reload oleh loadPicklistItems()")
                 
-                // Update UI setelah reload
-                updateFilteredItems()
-                updateQtySummary()
-                updateQtyStatusColors()
+                // **PERBAIKAN KRITIS**: JANGAN panggil clearToInitialState() karena akan menghapus data yang baru di-reload!
+                // clearToInitialState() // ❌ DIHAPUS - menyebabkan data hilang setelah reload
                 
                 Log.d("ScanViewModel", "✅ Clear RFID collection berhasil (tanpa save)")
                 
@@ -2894,10 +3012,9 @@ class ScanViewModel(application: Application) : AndroidViewModel(application) {
         
         viewModelScope.launch {
             try {
-                // Ambil data terbaru dari database
-                val batchResult = repository.getPicklistDataBatch(currentPicklist)
-                val databaseItems = batchResult.first
-                val processedEpcList = batchResult.second
+                // **LOCAL-FIRST FIX**: Ambil data terbaru dari database menggunakan EnhancedRepository
+                val databaseItems = enhancedRepository.getPicklistItems(currentPicklist)
+                val processedEpcList = enhancedRepository.getProcessedEpcList(currentPicklist)
                 
                 // Cek apakah ada perbedaan antara UI dan database
                 val currentItems = _picklistItems.value ?: emptyList()

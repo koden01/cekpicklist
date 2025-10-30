@@ -28,13 +28,22 @@ class PicklistAdapter : RecyclerView.Adapter<PicklistAdapter.ViewHolder>() {
     
     fun updateItems(newItems: List<PicklistItem>) {
         val oldSize = items.size
+        android.util.Log.d("PicklistAdapter", "🔥 updateItems: oldSize=$oldSize, newSize=${newItems.size}")
+        android.util.Log.d("PicklistAdapter", "🔥 New items preview:")
+        newItems.take(3).forEach { item ->
+            android.util.Log.d("PicklistAdapter", "🔥   - ${item.articleName} ${item.size}: qtyPl=${item.qtyPl}, qtyScan=${item.qtyScan}, status=${item.getQtyStatus()}")
+        }
+        
         items = newItems
         
         if (oldSize == 0) {
+            android.util.Log.d("PicklistAdapter", "🔥 notifyItemRangeInserted: 0 to ${newItems.size}")
             notifyItemRangeInserted(0, newItems.size)
         } else if (newItems.size == 0) {
+            android.util.Log.d("PicklistAdapter", "🔥 notifyItemRangeRemoved: 0 to $oldSize")
             notifyItemRangeRemoved(0, oldSize)
         } else {
+            android.util.Log.d("PicklistAdapter", "🔥 notifyDataSetChanged")
             notifyDataSetChanged() // Fallback for complex changes
         }
     }
@@ -47,6 +56,8 @@ class PicklistAdapter : RecyclerView.Adapter<PicklistAdapter.ViewHolder>() {
     
     override fun onBindViewHolder(holder: ViewHolder, position: Int) {
         val item = items[position]
+        android.util.Log.d("PicklistAdapter", "🔥 onBindViewHolder: position=$position, totalItems=${items.size}")
+        android.util.Log.d("PicklistAdapter", "🔥 Binding item: ${item.articleName} ${item.size}")
         holder.bind(item)
     }
     
@@ -66,6 +77,15 @@ class PicklistAdapter : RecyclerView.Adapter<PicklistAdapter.ViewHolder>() {
         private var revealDistance = 0f // Akan dihitung berdasarkan lebar container
         
         fun bind(item: PicklistItem) {
+            // **DEBUG**: Log detail binding
+            android.util.Log.d("PicklistAdapter", "🔥 === BINDING ITEM ===")
+            android.util.Log.d("PicklistAdapter", "🔥 Article: ${item.articleName}")
+            android.util.Log.d("PicklistAdapter", "🔥 Size: ${item.size}")
+            android.util.Log.d("PicklistAdapter", "🔥 qtyPl: ${item.qtyPl}")
+            android.util.Log.d("PicklistAdapter", "🔥 qtyScan: ${item.qtyScan}")
+            android.util.Log.d("PicklistAdapter", "🔥 Status: ${item.getQtyStatus()}")
+            android.util.Log.d("PicklistAdapter", "🔥 isComplete: ${item.isComplete()}")
+            
             tvArticleName.text = item.articleName
             tvSize.text = item.size
             tvQtyPl.text = item.qtyPl.toString()
@@ -125,6 +145,7 @@ class PicklistAdapter : RecyclerView.Adapter<PicklistAdapter.ViewHolder>() {
                     tvQtyScan.background = null
                     tvQtyScan.setTextColor(Color.RED)
                     android.util.Log.d("PicklistAdapter", "🔥 Set RED color untuk: ${item.articleName}")
+                    android.util.Log.d("PicklistAdapter", "🔥 RED item visibility: itemView=${itemView.visibility}, tvQtyScan=${tvQtyScan.visibility}")
                 }
                 QtyStatus.YELLOW -> {
                     // Show entire row untuk item yang overscan/non-picklist

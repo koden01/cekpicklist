@@ -32,34 +32,29 @@ class RelocationAdapter(
     override fun onBindViewHolder(holder: RelocationViewHolder, position: Int) {
         val item = items[position]
         
-        // Set data - article name, size, qty
-        holder.tvArticleName.text = item.articleName
-        holder.tvSize.text = item.size
-        holder.tvQty.text = item.qty.toString()
-        
-        // Tampilkan keterangan warehouse - tagStatus untuk SEMUA item invalid
-        if (!item.isValid) {
-            val warehouseTagStatus = "${item.warehouse} - ${item.tagStatus}"
-            holder.tvWarehouseTagStatus.text = warehouseTagStatus
-            holder.tvWarehouseTagStatus.visibility = View.VISIBLE
-        } else {
-            holder.tvWarehouseTagStatus.visibility = View.GONE
-        }
-        
-        // Set styling based on validity - Card putih dengan font color dan border berbeda
         if (item.isValid) {
-            // Valid item - font color hijau, border hijau
+            // VALID ITEM: Tampilkan semua detail artikel
+            holder.tvArticleName.text = item.articleName
+            holder.tvSize.text = item.size
+            holder.tvQty.text = item.qty.toString()
+            holder.tvWarehouseTagStatus.visibility = View.GONE
+            
+            // Valid item styling - font color hijau, border hijau
             holder.tvArticleName.setTextColor(ContextCompat.getColor(holder.itemView.context, R.color.success_color))
             holder.tvSize.setTextColor(ContextCompat.getColor(holder.itemView.context, R.color.success_color))
             holder.tvQty.setTextColor(ContextCompat.getColor(holder.itemView.context, R.color.success_color))
-            holder.tvWarehouseTagStatus.setTextColor(ContextCompat.getColor(holder.itemView.context, R.color.success_color))
             holder.cardView.strokeColor = ContextCompat.getColor(holder.itemView.context, R.color.success_color)
         } else {
-            // Invalid item - font color merah, border merah
+            // INVALID ITEM: Hanya tampilkan warehouse + status + qty
+            holder.tvArticleName.text = "${item.warehouse} - ${item.tagStatus}"
+            holder.tvSize.text = "" // Kosongkan size untuk invalid
+            holder.tvQty.text = item.qty.toString()
+            holder.tvWarehouseTagStatus.visibility = View.GONE // Tidak perlu field terpisah
+            
+            // Invalid item styling - font color merah, border merah
             holder.tvArticleName.setTextColor(ContextCompat.getColor(holder.itemView.context, R.color.error_color))
             holder.tvSize.setTextColor(ContextCompat.getColor(holder.itemView.context, R.color.error_color))
             holder.tvQty.setTextColor(ContextCompat.getColor(holder.itemView.context, R.color.error_color))
-            holder.tvWarehouseTagStatus.setTextColor(ContextCompat.getColor(holder.itemView.context, R.color.error_color))
             holder.cardView.strokeColor = ContextCompat.getColor(holder.itemView.context, R.color.error_color)
         }
     }

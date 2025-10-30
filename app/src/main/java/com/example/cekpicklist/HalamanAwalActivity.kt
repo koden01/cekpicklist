@@ -10,6 +10,7 @@ import androidx.appcompat.app.AppCompatActivity
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.lifecycleScope
 import androidx.recyclerview.widget.LinearLayoutManager
+import androidx.swiperefreshlayout.widget.SwipeRefreshLayout
 import kotlinx.coroutines.launch
 import com.example.cekpicklist.adapter.PicklistSelectionAdapter
 import com.example.cekpicklist.databinding.ActivityHalamanAwalBinding
@@ -21,16 +22,31 @@ import com.example.cekpicklist.viewmodel.ScanViewModel
 import com.example.cekpicklist.viewmodel.ScanViewModelFactory
 import com.example.cekpicklist.utils.LoadingAnimationHelper
 import com.example.cekpicklist.utils.UpdateChecker
+import com.example.cekpicklist.service.DailySyncService
+// Realtime removed
 
 class HalamanAwalActivity : AppCompatActivity() {
     
     private lateinit var binding: ActivityHalamanAwalBinding
     private lateinit var viewModel: ScanViewModel
     private lateinit var updateChecker: UpdateChecker
+    private lateinit var dailySyncService: DailySyncService
+    // Realtime removed
+    private val syncBroadcastReceiver = object : android.content.BroadcastReceiver() {
+        override fun onReceive(context: android.content.Context?, intent: android.content.Intent?) {
+            if (intent?.action == DailySyncService.ACTION_SYNC_COMPLETED) {
+                Logger.PicklistInput.d("SYNC_COMPLETED broadcast received - refreshing picklist statuses")
+                viewModel.refreshPicklistStatuses()
+            }
+        }
+    }
     
     // Dialog references for proper cleanup
     private var activeDialog: androidx.appcompat.app.AlertDialog? = null
     private var loadingDialog: androidx.appcompat.app.AlertDialog? = null
+    
+    // **FIX**: Simpan data status terbaru untuk digunakan saat modal dibuka
+    private var latestPicklistStatuses: List<PicklistStatus> = emptyList()
     
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -42,6 +58,15 @@ class HalamanAwalActivity : AppCompatActivity() {
         // Initialize ViewModel
         viewModel = ViewModelProvider(this, ScanViewModelFactory(application))[ScanViewModel::class.java]
         
+        // Initialize Daily Sync Service
+        dailySyncService = DailySyncService(this)
+        // Set interval dinamis: foreground 15s
+        dailySyncService.setIncrementalInterval(15_000L)
+        // Register broadcast receiver untuk update UI setelah sync
+        registerReceiver(syncBroadcastReceiver, android.content.IntentFilter(DailySyncService.ACTION_SYNC_COMPLETED))
+
+        // Realtime removed
+        
         // Initialize Update Checker
         updateChecker = UpdateChecker(this)
         
@@ -51,6 +76,10 @@ class HalamanAwalActivity : AppCompatActivity() {
         setupErrorObserver()
         setupCardClicks()
         setupRelocationCard()
+        setupRadarCard()
+        setupBarcodeScannerCard()
+        setupOutActivityCard()
+        setupReturCard()
         setupVersionDisplay()
         
         // Load picklists dengan optimasi
@@ -60,12 +89,53 @@ class HalamanAwalActivity : AppCompatActivity() {
         checkForUpdates()
     }
     
+    override fun onResume() {
+        super.onResume()
+        Logger.PicklistInput.d("onResume() called")
+        
+        // Refresh data saat kembali ke activity
+        viewModel.loadPicklistsOptimized()
+        
+        // Refresh picklist statuses when returning from picklist activity
+        // Ensure modal shows updated status after scanning operations
+        Logger.PicklistInput.d("Refreshing picklist statuses on resume (repository batch)")
+        viewModel.loadPicklistStatuses()
+        // Percepat interval saat foreground
+        dailySyncService.setIncrementalInterval(15_000L)
+        
+        // Realtime removed
+    }
+    
     private fun setupSwipeRefresh() {
         Logger.PicklistInput.d("setupSwipeRefresh() called")
         
         binding.swipeRefreshLayout.setOnRefreshListener {
-            Logger.PicklistInput.d("Swipe refresh triggered")
-            viewModel.loadPicklistsOptimized()
+            Logger.PicklistInput.d("Swipe refresh triggered - force full refresh")
+            
+            lifecycleScope.launch {
+                try {
+                    // **FORCE FULL REFRESH**: Force full sync tanpa local-first strategy
+                    val success = dailySyncService.forceFullRefresh()
+                    
+                    if (success) {
+                        Logger.PicklistInput.d("✅ Force full refresh completed successfully")
+                        ToastUtils.showHighToastWithCooldown(this@HalamanAwalActivity, "Data refreshed successfully!")
+                    } else {
+                        Logger.PicklistInput.d("❌ Force full refresh failed")
+                        ToastUtils.showHighToastWithCooldown(this@HalamanAwalActivity, "Refresh failed")
+                    }
+                    
+                    // Reload picklist data
+                    viewModel.loadPicklistsOptimized()
+                    
+                } catch (e: Exception) {
+                    Logger.PicklistInput.e("❌ Force full refresh failed: ${e.message}")
+                    ToastUtils.showHighToastWithCooldown(this@HalamanAwalActivity, "Refresh failed: ${e.message}")
+                } finally {
+                    // Stop refresh indicator
+                    binding.swipeRefreshLayout.isRefreshing = false
+                }
+            }
         }
     }
     
@@ -90,6 +160,8 @@ class HalamanAwalActivity : AppCompatActivity() {
             if (activeDialog?.isShowing == true) {
                 updateModalWithStatusData(statuses)
             }
+            // **FIX**: Simpan data status terbaru untuk digunakan saat modal dibuka
+            latestPicklistStatuses = statuses
         }
     }
     
@@ -105,7 +177,7 @@ class HalamanAwalActivity : AppCompatActivity() {
         
         if (adapter != null && statuses.isNotEmpty()) {
             Logger.PicklistInput.d("Updating modal adapter with new status data")
-            adapter.updatePicklists(statuses)
+            adapter.updatePicklists(sortPicklistStatuses(statuses))
             
             // Log status data untuk debug
             statuses.forEach { status ->
@@ -114,6 +186,24 @@ class HalamanAwalActivity : AppCompatActivity() {
         } else {
             Logger.PicklistInput.w("Cannot update modal: adapter=$adapter, statuses.size=${statuses.size}")
         }
+    }
+
+    /**
+     * Sort picklist statuses: newest first by numeric part of picklistNo, completed at bottom
+     */
+    private fun sortPicklistStatuses(input: List<PicklistStatus>): List<PicklistStatus> {
+        fun parseNumericKey(no: String): Long {
+            // Ambil semua digit sebagai satu angka untuk approx ordering (contoh: INSTANT SHOPEE 301025.0817)
+            val digits = no.filter { it.isDigit() }
+            return digits.toLongOrNull() ?: Long.MIN_VALUE
+        }
+        return input.sortedWith(
+            compareBy<PicklistStatus>
+            { it.scannedQty > 0 }                     // belum pernah scan (scannedQty==0) paling atas
+                .thenBy { it.remainingQty == 0 }      // yang selesai (remaining==0) di bawah
+                .thenByDescending { parseNumericKey(it.picklistNumber) } // terbaru ke lama dalam tiap grup
+                .thenBy { it.picklistNumber }
+        )
     }
     
     /**
@@ -168,6 +258,66 @@ class HalamanAwalActivity : AppCompatActivity() {
         startActivity(intent)
     }
     
+    private fun setupRadarCard() {
+        Logger.PicklistInput.d("setupRadarCard() called")
+        
+        binding.cardRadar.setOnClickListener {
+            Logger.PicklistInput.d("Location card clicked - navigating to LocationActivity")
+            navigateToLocation()
+        }
+    }
+    
+    private fun setupBarcodeScannerCard() {
+        Logger.PicklistInput.d("setupBarcodeScannerCard() called")
+        
+        binding.cardBarcodeScanner.setOnClickListener {
+            Logger.PicklistInput.d("Barcode Scanner card clicked - navigating to BarcodeScannerTabsActivity")
+            navigateToBarcodeScanner()
+        }
+    }
+    
+    private fun navigateToLocation() {
+        Logger.PicklistInput.d("Navigating to LocationDemoActivity")
+        val intent = Intent(this, LocationDemoActivity::class.java)
+        startActivity(intent)
+    }
+    
+    private fun navigateToBarcodeScanner() {
+        Logger.PicklistInput.d("Navigating to BarcodeScannerTabsActivity")
+        val intent = Intent(this, BarcodeScannerTabsActivity::class.java)
+        startActivity(intent)
+    }
+    
+    private fun setupOutActivityCard() {
+        Logger.PicklistInput.d("setupOutActivityCard() called")
+        
+        binding.cardOutActivity.setOnClickListener {
+            Logger.PicklistInput.d("Out Activity card clicked - navigating to OutActivity")
+            navigateToOutActivity()
+        }
+    }
+    
+    private fun navigateToOutActivity() {
+        Logger.PicklistInput.d("Navigating to OutActivity")
+        val intent = Intent(this, OutActivity::class.java)
+        startActivity(intent)
+    }
+    
+    private fun setupReturCard() {
+        Logger.PicklistInput.d("setupReturCard() called")
+        
+        binding.cardRetur.setOnClickListener {
+            Logger.PicklistInput.d("Retur card clicked - navigating to ReturActivity")
+            navigateToRetur()
+        }
+    }
+    
+    private fun navigateToRetur() {
+        Logger.PicklistInput.d("Navigating to ReturActivity")
+        val intent = Intent(this, ReturActivity::class.java)
+        startActivity(intent)
+    }
+    
     private fun setupVersionDisplay() {
         Logger.PicklistInput.d("setupVersionDisplay() called")
         
@@ -180,6 +330,8 @@ class HalamanAwalActivity : AppCompatActivity() {
             binding.tvVersion.text = "Version Unknown"
         }
     }
+    
+    
     
     /**
      * Check for app updates
@@ -213,6 +365,8 @@ class HalamanAwalActivity : AppCompatActivity() {
             return
         }
         
+        // Ensure latest data before showing modal
+        
         // Create simple modal dialog
         val dialogView = layoutInflater.inflate(R.layout.modal_picklist_selection, null)
         
@@ -221,79 +375,92 @@ class HalamanAwalActivity : AppCompatActivity() {
         val btnClose = dialogView.findViewById<android.view.View>(R.id.btnCloseModal)
         val etSearch = dialogView.findViewById<com.google.android.material.textfield.TextInputEditText>(R.id.etSearchPicklist)
         
-        // Get picklist statuses with actual scan data from ViewModel
-        val picklistStatuses = viewModel.picklistStatuses.value ?: emptyList()
-        Logger.PicklistInput.d("Modal opened - picklistStatuses.size: ${picklistStatuses.size}")
+        // **NEW FIX**: Refresh picklist statuses before showing modal to ensure latest data
+        Logger.PicklistInput.d("Refreshing picklist statuses before showing modal (repository batch)")
+        viewModel.refreshPicklistStatuses()
         
-        // Jika belum ada status data, buat default status
-        val finalStatuses = if (picklistStatuses.isEmpty()) {
-            Logger.PicklistInput.d("No status data available, using default statuses")
-            picklists.map { picklistNo ->
-                PicklistStatus(
-                    picklistNumber = picklistNo,
-                    isScanned = false,
-                    remainingQty = 0,
-                    totalQty = 0,
-                    scannedQty = 0
-                )
+        // **FIX**: Tunggu sebentar untuk memastikan refresh selesai
+        lifecycleScope.launch {
+            kotlinx.coroutines.delay(200) // 200ms delay untuk memastikan refresh selesai
+            
+            // **FIX**: Gunakan data status terbaru yang sudah disimpan
+            val picklistStatuses = latestPicklistStatuses.ifEmpty { 
+                viewModel.picklistStatuses.value ?: emptyList() 
             }
-        } else {
-            Logger.PicklistInput.d("Using actual status data")
-            picklistStatuses.forEach { status ->
-                Logger.PicklistInput.d("Status: ${status.picklistNumber} - scanned: ${status.isScanned}, total: ${status.totalQty}, scanned: ${status.scannedQty}")
-            }
-            picklistStatuses
-        }
-        
-        val adapter = PicklistSelectionAdapter(finalStatuses) { picklist ->
-            Logger.PicklistInput.d("Picklist selected from modal: $picklist")
-            // Tutup dialog terlebih dahulu sebelum navigasi agar tidak leak
-            try { activeDialog?.dismiss() } catch (_: Throwable) {}
-            activeDialog = null
-            navigateToMainActivity(picklist)
-        }
-
-        recyclerView.layoutManager = LinearLayoutManager(this)
-        recyclerView.adapter = adapter
-        adapter.updatePicklists(finalStatuses)
-        
-        // Setup close button
-        btnClose.setOnClickListener {
-            activeDialog?.dismiss()
-        }
-        
-        // Setup search functionality
-        etSearch.addTextChangedListener(object : TextWatcher {
-            override fun beforeTextChanged(s: CharSequence?, start: Int, count: Int, after: Int) {}
-            override fun onTextChanged(s: CharSequence?, start: Int, before: Int, count: Int) {}
-            override fun afterTextChanged(s: Editable?) {
-                val query = s.toString().trim()
-                val filteredList = if (query.isEmpty()) {
-                    finalStatuses
-                } else {
-                    finalStatuses.filter { it.picklistNumber.contains(query, ignoreCase = true) }
+            Logger.PicklistInput.d("Modal opened - picklistStatuses.size: ${picklistStatuses.size}")
+            
+            // Jika belum ada status data, buat default status
+            val finalStatuses = if (picklistStatuses.isEmpty()) {
+                Logger.PicklistInput.d("No status data available, using default statuses")
+                picklists.map { picklistNo ->
+                    PicklistStatus(
+                        picklistNumber = picklistNo,
+                        isScanned = false,
+                        remainingQty = 0,
+                        totalQty = 0,
+                        scannedQty = 0
+                    )
+                }.let { sortPicklistStatuses(it) }
+            } else {
+                Logger.PicklistInput.d("Using actual status data")
+                picklistStatuses.forEach { status ->
+                    Logger.PicklistInput.d("Status: ${status.picklistNumber} - scanned: ${status.isScanned}, total: ${status.totalQty}, scanned: ${status.scannedQty}")
                 }
-                adapter.updatePicklists(filteredList)
+                sortPicklistStatuses(picklistStatuses)
             }
-        })
-        
-        // Create and show dialog
-        activeDialog = androidx.appcompat.app.AlertDialog.Builder(this)
-            .setView(dialogView)
-            .setCancelable(true)
-            .setOnCancelListener {
-                // Dialog dibatalkan (back button atau tap outside)
+            
+            val adapter = PicklistSelectionAdapter(finalStatuses) { picklist ->
+                Logger.PicklistInput.d("Picklist selected from modal: $picklist")
+                Logger.PicklistInput.d("Active picklist set: $picklist")
+                
+                // Tutup dialog terlebih dahulu sebelum navigasi agar tidak leak
+                try { activeDialog?.dismiss() } catch (_: Throwable) {}
                 activeDialog = null
-                Logger.PicklistInput.d("Dialog cancelled by user")
+                navigateToMainActivity(picklist)
             }
-            .setOnDismissListener {
-                // Dialog ditutup
-                activeDialog = null
-                Logger.PicklistInput.d("Dialog dismissed")
+
+            recyclerView.layoutManager = LinearLayoutManager(this@HalamanAwalActivity)
+            recyclerView.adapter = adapter
+            adapter.updatePicklists(finalStatuses)
+            
+            // Setup close button
+            btnClose.setOnClickListener {
+                activeDialog?.dismiss()
             }
-            .create()
-        
-        activeDialog?.show()
+            
+            // Setup search functionality
+            etSearch.addTextChangedListener(object : TextWatcher {
+                override fun beforeTextChanged(s: CharSequence?, start: Int, count: Int, after: Int) {}
+                override fun onTextChanged(s: CharSequence?, start: Int, before: Int, count: Int) {}
+                override fun afterTextChanged(s: Editable?) {
+                    val query = s.toString().trim()
+                    val filteredList = if (query.isEmpty()) {
+                        finalStatuses
+                    } else {
+                        finalStatuses.filter { it.picklistNumber.contains(query, ignoreCase = true) }
+                    }
+                    adapter.updatePicklists(filteredList)
+                }
+            })
+            
+            // Create and show dialog
+            activeDialog = androidx.appcompat.app.AlertDialog.Builder(this@HalamanAwalActivity)
+                .setView(dialogView)
+                .setCancelable(true)
+                .setOnCancelListener {
+                    // Dialog dibatalkan (back button atau tap outside)
+                    activeDialog = null
+                    Logger.PicklistInput.d("Dialog cancelled by user")
+                }
+                .setOnDismissListener {
+                    // Dialog ditutup
+                    activeDialog = null
+                    Logger.PicklistInput.d("Dialog dismissed")
+                }
+                .create()
+            
+            activeDialog?.show()
+        }
     }
     
     // Legacy dialog methods removed - using RecyclerView instead
@@ -365,6 +532,9 @@ class HalamanAwalActivity : AppCompatActivity() {
         activeDialog = null
         try { loadingDialog?.dismiss() } catch (_: Throwable) {}
         loadingDialog = null
+        // Kembalikan interval ke default saat background (30s)
+        dailySyncService.setIncrementalInterval(30_000L)
+        // Activity goes background
         Logger.PicklistInput.d("onPause() called - dialogs dismissed")
     }
     
@@ -387,6 +557,9 @@ class HalamanAwalActivity : AppCompatActivity() {
         
         // Cancel any ongoing loading operations
         viewModel.cancelLoadingJobs()
+        try { unregisterReceiver(syncBroadcastReceiver) } catch (_: Throwable) {}
+        
+        // Realtime removed
         
         super.onDestroy()
         Logger.PicklistInput.d("onDestroy() called")

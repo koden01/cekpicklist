@@ -1,0 +1,103 @@
+OUT ACTIVITY FLOW DIAGRAM
+==========================
+
+1. Halaman Utama (HalamanAwalActivity)
+   └── Card "Out Activity" (baru ditambahkan)
+       └── Click → Navigate to OutActivity
+
+2. OutActivity.onCreate()
+   ├── Generate notrans (OUT01292025)
+   ├── Setup RecyclerView & Adapter
+   ├── Setup Button Click Handlers
+   └── Setup ViewModel Observers
+
+3. User Click "Scan" Button
+   ├── startScanning()
+   ├── startRfidScanning() [BaseRfidActivity]
+   └── ViewModel.startScanning()
+
+4. RFID Detection Flow
+   ├── handleRfidDetected(epc, rssi)
+   ├── viewModel.handleRfidDetected(epc)
+   ├── repository.lookupRfid(epc)
+   ├── API call to get product info
+   ├── addScannedItem() with product details
+   └── Update RecyclerView & Summary Cards
+
+5. User Click "Submit" Button
+   ├── performSubmit()
+   ├── viewModel.submitOutActivity(notrans)
+   ├── Convert OutActivityItem to PicklistScanEntity
+   ├── Save to Local Database (Room)
+   ├── Sync to Supabase
+   └── Show Success Message & Finish Activity
+
+6. Database Storage
+   ├── Local: picklist_scan table
+   │   ├── epc (PRIMARY KEY)
+   │   ├── no_picklist (notrans: OUT01292025)
+   │   ├── product_id, article_id, article_name
+   │   ├── size, created_at, notrans
+   │   └── Stored via PicklistScanDao
+   └── Remote: Supabase picklist_scan table
+       └── Synced via SupabaseService.savePicklistScan()
+
+NOTRANS GENERATION LOGIC
+========================
+Format: OUT{transaction_number}{date}
+
+1. getTransactionNumberForToday()
+   ├── Check SharedPreferences
+   ├── If same day: increment counter
+   ├── If new day: reset counter to 1
+   └── Save to SharedPreferences
+
+2. generateNotrans()
+   ├── Get today's date (DDMMYYYY)
+   ├── Get transaction number
+   └── Return "OUT{transaction_number}{date}"
+
+Example:
+- OUT01292025 = OUT + 01 + 292025
+- OUT02292025 = OUT + 02 + 292025 (next transaction same day)
+- OUT01292026 = OUT + 01 + 292026 (first transaction next day)
+
+UI COMPONENTS
+=============
+1. Header
+   ├── Back Button
+   ├── Title "Out Activity"
+   └── Notrans Display
+
+2. Scan Controls
+   ├── Scan/Stop Button
+   └── Clear All Button
+
+3. Summary Cards
+   ├── Total Scanned
+   └── Unique Items
+
+4. Scanned Items List
+   └── RecyclerView with OutActivityAdapter
+
+5. Submit Button
+   └── Enable/Disable based on items count
+
+ERROR HANDLING
+==============
+1. RFID Errors
+   ├── handleRfidError()
+   └── Show Toast Message
+
+2. Lookup Errors
+   ├── No product found
+   └── Show Error Message
+
+3. Submit Errors
+   ├── Database save failed
+   ├── Supabase sync failed
+   └── Show Error Message
+
+4. Network Errors
+   ├── API call failed
+   └── Show Error Message

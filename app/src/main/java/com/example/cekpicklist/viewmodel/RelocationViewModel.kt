@@ -344,7 +344,7 @@ class RelocationViewModel(application: Application) : AndroidViewModel(applicati
             Log.d("RelocationViewModel", "🔥 Total products from API: ${products.size}")
             Log.d("RelocationViewModel", "🔥 Grouped into ${groupedProducts.size} unique articles")
 
-            val items = groupedProducts.map { (key, productGroup) ->
+            val rawItems = groupedProducts.map { (key, productGroup) ->
                 val firstProduct = productGroup.first()
                 val isRegistered = firstProduct.articleName != "NA" && firstProduct.articleId != "NA"
                 val productWarehouse = firstProduct.warehouse?.trim()?.uppercase()
@@ -389,6 +389,8 @@ class RelocationViewModel(application: Application) : AndroidViewModel(applicati
                     isValid = isValid
                 )
             }
+            // **AGGREGATION**: Gabungkan INVALID per warehouse+tagStatus (sum qty, merge EPC)
+            val items = aggregateInvalidItems(rawItems)
 
             // **SORTING**: Invalid items (isValid = false) selalu di atas
             val sortedItems = items.sortedWith(compareBy<RelocationItem> {
@@ -497,12 +499,35 @@ class RelocationViewModel(application: Application) : AndroidViewModel(applicati
                 if (response.success) {
                     Log.d("RelocationViewModel", "🔥 Submit successful: ${validRfids.size} items updated")
                     _successMessage.value = response.message
+                    // Jangan clear data setelah submit agar bisa lookup ulang untuk perpindahan berikutnya
+                    // Biarkan scannedRfids, validRfids, dan _relocationItems tetap ada
                     
-                    // Clear semua data dan reset ke state awal setelah submit berhasil
-                    clearAllAndReset()
-                    
-                    // **PERBAIKAN KRITIS**: Clear data di RfidScanManager juga
-                    onRfidScanManagerClear?.invoke()
+                    // Setelah submit berhasil, alihkan konteks ke TARGET sebagai CURRENT dan lakukan lookup ulang
+                    try {
+                        // 1) Set current warehouse = target warehouse
+                        val targetWh = _selectedTargetWarehouse.value
+                        if (targetWh != null) {
+                            _selectedCurrentWarehouse.value = targetWh
+                            Log.d("RelocationViewModel", "🔄 Switched current warehouse to target: ${targetWh.warehouseName} (${targetWh.warehouseId})")
+                        } else {
+                            Log.w("RelocationViewModel", "⚠️ Target warehouse is null after submit - cannot switch current warehouse")
+                        }
+                        
+                        // 2) Set current tag status = target tag status
+                        val newStatusEnum = try { TagStatus.valueOf(tagStatus) } catch (t: Throwable) { null }
+                        if (newStatusEnum != null) {
+                            setSelectedTagStatus(newStatusEnum)
+                            Log.d("RelocationViewModel", "🔄 Switched current tag status to: ${newStatusEnum}")
+                        } else {
+                            Log.w("RelocationViewModel", "⚠️ Unable to parse target tag status: '$tagStatus'")
+                        }
+                        
+                        // 3) Lakukan lookup ulang menggunakan setting yang baru (CURRENT=TARGET)
+                        performLookupWithCurrentSettings()
+                        Log.d("RelocationViewModel", "🔄 Re-lookup triggered after submit with updated settings")
+                    } catch (t: Throwable) {
+                        Log.w("RelocationViewModel", "⚠️ Post-submit refresh failed: ${t.message}")
+                    }
                     
                 } else {
                     _errorMessage.value = response.message
@@ -799,7 +824,7 @@ class RelocationViewModel(application: Application) : AndroidViewModel(applicati
 				Log.d("RelocationViewModel", "🔎 GROUP '$key' -> EPCs=${set.size}")
 			}
 
-            val items = groupKeyToEpCs.map { (key, epcSet) ->
+            val rawItems = groupKeyToEpCs.map { (key, epcSet) ->
                 val first = groupKeyToFirstProduct[key]!!
                 val isRegistered = first.articleName != "NA" && first.articleId != "NA"
                 val fWarehouse = first.warehouse?.trim()?.uppercase()
@@ -851,6 +876,9 @@ class RelocationViewModel(application: Application) : AndroidViewModel(applicati
                     isValid = isValid
                 )
             }
+
+            // **AGGREGATION**: Gabungkan INVALID per warehouse+tagStatus (sum qty, merge EPC)
+            val items = aggregateInvalidItems(rawItems)
 
             // **SORTING**: Invalid items (isValid = false) selalu di atas
             val sorted = items.sortedWith(compareBy<RelocationItem> {
@@ -929,5 +957,41 @@ class RelocationViewModel(application: Application) : AndroidViewModel(applicati
         
         // Trigger lookup dengan parameter yang sudah dipilih
         lookupWithFinalizationWindow(tagStatus.name)
+    }
+
+    /**
+     * Gabungkan item INVALID (isValid=false) per kombinasi warehouse+tagStatus.
+     * - qty dijumlahkan
+     * - EPC digabung (join)
+     * - Field lain diambil dari item pertama (article diabaikan untuk invalid)
+     */
+    private fun aggregateInvalidItems(source: List<RelocationItem>): List<RelocationItem> {
+        if (source.isEmpty()) return source
+        val (invalids, valids) = source.partition { !it.isValid }
+        if (invalids.isEmpty()) return source
+        val grouped = invalids.groupBy { Pair((it.warehouse ?: "").trim().uppercase(), (it.tagStatus ?: "").trim().uppercase()) }
+        val mergedInvalids = grouped.map { (key, list) ->
+            val first = list.first()
+            val totalQty = list.sumOf { it.qty }
+            val mergedEpc = list.asSequence().flatMap { it.epc.split(',').asSequence() }.map { it.trim() }.filter { it.isNotEmpty() }.distinct().joinToString(",")
+            RelocationItem(
+                epc = mergedEpc,
+                articleId = "",
+                articleName = "",
+                size = "",
+                qty = totalQty,
+                productId = first.productId,
+                productName = first.productName,
+                brand = first.brand,
+                category = first.category,
+                subCategory = first.subCategory,
+                color = first.color,
+                gender = first.gender,
+                warehouse = first.warehouse,
+                tagStatus = first.tagStatus,
+                isValid = false
+            )
+        }
+        return mergedInvalids + valids
     }
 }

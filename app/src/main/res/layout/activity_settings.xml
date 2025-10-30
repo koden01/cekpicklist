@@ -1,19 +1,20 @@
 <?xml version="1.0" encoding="utf-8"?>
 <LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
     xmlns:app="http://schemas.android.com/apk/res-auto"
+    xmlns:tools="http://schemas.android.com/tools"
     android:layout_width="match_parent"
     android:layout_height="match_parent"
     android:orientation="vertical"
-    android:background="#E8F5E8">
+    android:background="#F9FAFB">
 
     <!-- Toolbar -->
     <androidx.appcompat.widget.Toolbar
         android:id="@+id/toolbar"
         android:layout_width="match_parent"
         android:layout_height="?attr/actionBarSize"
-        android:background="@drawable/bg_header_green"
-        android:elevation="4dp"
-        app:titleTextColor="@android:color/white" />
+        android:background="?attr/colorPrimary"
+        android:theme="@style/ThemeOverlay.AppCompat.Dark.ActionBar"
+        app:title="Settings" />
 
     <!-- Content -->
     <ScrollView
@@ -26,227 +27,214 @@
             android:layout_height="wrap_content"
             android:orientation="vertical">
 
-            <!-- Header Card dihilangkan -->
-
-            <!-- Power Level Card -->
+            <!-- RFID Power Settings -->
             <androidx.cardview.widget.CardView
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
                 android:layout_marginBottom="16dp"
-                app:cardCornerRadius="8dp"
+                app:cardCornerRadius="12dp"
                 app:cardElevation="4dp">
 
                 <LinearLayout
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
                     android:orientation="vertical"
-                    android:padding="20dp">
+                    android:padding="16dp">
 
-                    <TextView
-                        android:layout_width="match_parent"
-                        android:layout_height="wrap_content"
-                        android:text="Power Level"
-                        android:textSize="20sp"
-                        android:textStyle="bold"
-                        android:textColor="@android:color/black"
-                        android:layout_marginBottom="16dp"
-                        android:gravity="center" />
-
-                    <!-- Power Value Display -->
                     <LinearLayout
                         android:layout_width="match_parent"
                         android:layout_height="wrap_content"
                         android:orientation="horizontal"
-                        android:gravity="center"
-                        android:layout_marginBottom="8dp">
+                        android:gravity="center_vertical"
+                        android:layout_marginBottom="16dp">
 
-                        <TextView
-                            android:layout_width="wrap_content"
-                            android:layout_height="wrap_content"
-                            android:text="Power Level:"
-                            android:textSize="16sp"
-                            android:textColor="@android:color/black"
-                            android:gravity="center" />
+                        <ImageView
+                            android:layout_width="48dp"
+                            android:layout_height="48dp"
+                            android:src="@drawable/ic_rfid"
+                            android:contentDescription="RFID"
+                            android:background="@drawable/ic_background_blue"
+                            android:padding="12dp" />
 
-                        <TextView
-                            android:id="@+id/tvPowerValue"
-                            android:layout_width="wrap_content"
-                            android:layout_height="wrap_content"
-                            android:text="20"
-                            android:textSize="20sp"
-                            android:textStyle="bold"
-                            android:textColor="#4CAF50"
-                            android:layout_marginStart="8dp"
-                            android:gravity="center" />
-
-                    </LinearLayout>
-
-                    <!-- SeekBar -->
-                    <SeekBar
-                        android:id="@+id/seekBarPower"
-                        android:layout_width="match_parent"
-                        android:layout_height="wrap_content"
-                        android:layout_marginBottom="16dp"
-                        android:max="29"
-                        android:progress="19"
-                        android:progressTint="#4CAF50"
-                        android:thumbTint="#4CAF50" />
-
-                    <!-- Power Description -->
-                    <TextView
-                        android:id="@+id/tvPowerDescription"
-                        android:layout_width="match_parent"
-                        android:layout_height="wrap_content"
-                        android:text="Sedang - Jangkauan menengah, seimbang"
-                        android:textSize="14sp"
-                        android:textColor="@android:color/darker_gray"
-                        android:gravity="center"
-                        android:background="#E8F5E8"
-                        android:padding="12dp"
-                        android:layout_marginBottom="16dp" />
-
-                    <!-- Min/Max Labels -->
-                    <LinearLayout
-                        android:layout_width="match_parent"
-                        android:layout_height="wrap_content"
-                        android:orientation="horizontal">
-
-                        <TextView
+                        <LinearLayout
                             android:layout_width="0dp"
                             android:layout_height="wrap_content"
                             android:layout_weight="1"
+                            android:orientation="vertical"
+                            android:layout_marginStart="16dp">
+
+                            <TextView
+                                android:layout_width="wrap_content"
+                                android:layout_height="wrap_content"
+                                android:text="RFID Power Level"
+                                android:textSize="18sp"
+                                android:textStyle="bold"
+                                android:textColor="#374151" />
+
+                            <TextView
+                                android:layout_width="wrap_content"
+                                android:layout_height="wrap_content"
+                                android:text="Adjust RFID transmission power (1-30)"
+                                android:textSize="14sp"
+                                android:textColor="#6B7280"
+                                android:layout_marginTop="4dp" />
+
+                        </LinearLayout>
+
+                    </LinearLayout>
+
+                    <!-- Power Level SeekBar -->
+                    <LinearLayout
+                        android:layout_width="match_parent"
+                        android:layout_height="wrap_content"
+                        android:orientation="horizontal"
+                        android:gravity="center_vertical">
+
+                        <TextView
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content"
                             android:text="1"
                             android:textSize="14sp"
-                            android:textColor="@android:color/darker_gray"
-                            android:gravity="center" />
+                            android:textColor="#6B7280" />
 
-                        <TextView
+                        <SeekBar
+                            android:id="@+id/seekBarPowerLevel"
                             android:layout_width="0dp"
                             android:layout_height="wrap_content"
                             android:layout_weight="1"
+                            android:layout_marginHorizontal="16dp"
+                            android:max="30"
+                            android:min="1"
+                            android:progress="25" />
+
+                        <TextView
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content"
                             android:text="30"
                             android:textSize="14sp"
-                            android:textColor="@android:color/darker_gray"
-                            android:gravity="center" />
+                            android:textColor="#6B7280" />
 
                     </LinearLayout>
+
+                    <TextView
+                        android:id="@+id/tvPowerLevel"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:layout_gravity="center"
+                        android:layout_marginTop="8dp"
+                        android:text="Current: 25"
+                        android:textSize="16sp"
+                        android:textStyle="bold"
+                        android:textColor="#374151" />
 
                 </LinearLayout>
 
             </androidx.cardview.widget.CardView>
 
-            <!-- RSSI Threshold Card -->
+            <!-- RSSI Threshold Settings -->
             <androidx.cardview.widget.CardView
                 android:layout_width="match_parent"
                 android:layout_height="wrap_content"
                 android:layout_marginBottom="16dp"
-                app:cardCornerRadius="8dp"
+                app:cardCornerRadius="12dp"
                 app:cardElevation="4dp">
 
                 <LinearLayout
                     android:layout_width="match_parent"
                     android:layout_height="wrap_content"
                     android:orientation="vertical"
-                    android:padding="20dp">
+                    android:padding="16dp">
 
-                    <TextView
-                        android:layout_width="match_parent"
-                        android:layout_height="wrap_content"
-                        android:text="RSSI Threshold"
-                        android:textSize="20sp"
-                        android:textStyle="bold"
-                        android:textColor="@android:color/black"
-                        android:layout_marginBottom="16dp"
-                        android:gravity="center" />
-
-                    <!-- RSSI Value Display -->
                     <LinearLayout
                         android:layout_width="match_parent"
                         android:layout_height="wrap_content"
                         android:orientation="horizontal"
-                        android:gravity="center"
-                        android:layout_marginBottom="8dp">
+                        android:gravity="center_vertical"
+                        android:layout_marginBottom="16dp">
 
-                        <TextView
-                            android:layout_width="wrap_content"
-                            android:layout_height="wrap_content"
-                            android:text="RSSI Threshold:"
-                            android:textSize="16sp"
-                            android:textColor="@android:color/black"
-                            android:gravity="center" />
+                        <ImageView
+                            android:layout_width="48dp"
+                            android:layout_height="48dp"
+                            android:src="@drawable/ic_rfid"
+                            android:contentDescription="RSSI"
+                            android:background="@drawable/ic_background_green"
+                            android:padding="12dp" />
 
-                        <TextView
-                            android:id="@+id/tvRSSIValue"
-                            android:layout_width="wrap_content"
+                        <LinearLayout
+                            android:layout_width="0dp"
                             android:layout_height="wrap_content"
-                            android:text="-70 dBm"
-                            android:textSize="20sp"
-                            android:textStyle="bold"
-                            android:textColor="#8BC34A"
-                            android:layout_marginStart="8dp"
-                            android:gravity="center" />
+                            android:layout_weight="1"
+                            android:orientation="vertical"
+                            android:layout_marginStart="16dp">
+
+                            <TextView
+                                android:layout_width="wrap_content"
+                                android:layout_height="wrap_content"
+                                android:text="RSSI Threshold"
+                                android:textSize="18sp"
+                                android:textStyle="bold"
+                                android:textColor="#374151" />
+
+                            <TextView
+                                android:layout_width="wrap_content"
+                                android:layout_height="wrap_content"
+                                android:text="Filter weak RFID signals (-120 to 0 dBm)"
+                                android:textSize="14sp"
+                                android:textColor="#6B7280"
+                                android:layout_marginTop="4dp" />
+
+                        </LinearLayout>
 
                     </LinearLayout>
 
-                    <!-- RSSI SeekBar -->
-                    <SeekBar
-                        android:id="@+id/seekBarRSSI"
-                        android:layout_width="match_parent"
-                        android:layout_height="wrap_content"
-                        android:layout_marginBottom="16dp"
-                        android:max="70"
-                        android:progress="30"
-                        android:progressTint="#8BC34A"
-                        android:thumbTint="#8BC34A" />
-
-                    <!-- RSSI Description -->
-                    <TextView
-                        android:id="@+id/tvRSSIDescription"
-                        android:layout_width="match_parent"
-                        android:layout_height="wrap_content"
-                        android:text="Sedang - Tag dengan sinyal sedang ke atas"
-                        android:textSize="14sp"
-                        android:textColor="@android:color/darker_gray"
-                        android:gravity="center"
-                        android:background="#E8F5E8"
-                        android:padding="12dp"
-                        android:layout_marginBottom="16dp" />
-
-                    <!-- RSSI Debug Mode dihilangkan -->
-
-                    <!-- RSSI Min/Max Labels -->
+                    <!-- RSSI Threshold SeekBar -->
                     <LinearLayout
                         android:layout_width="match_parent"
                         android:layout_height="wrap_content"
-                        android:orientation="horizontal">
+                        android:orientation="horizontal"
+                        android:gravity="center_vertical">
 
                         <TextView
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content"
+                            android:text="-120"
+                            android:textSize="14sp"
+                            android:textColor="#6B7280" />
+
+                        <SeekBar
+                            android:id="@+id/seekBarRssiThreshold"
                             android:layout_width="0dp"
                             android:layout_height="wrap_content"
                             android:layout_weight="1"
-                            android:text="-100 dBm"
-                            android:textSize="14sp"
-                            android:textColor="@android:color/darker_gray"
-                            android:gravity="center" />
+                            android:layout_marginHorizontal="16dp"
+                            android:max="0"
+                            android:min="-120"
+                            android:progress="-55" />
 
                         <TextView
-                            android:layout_width="0dp"
+                            android:layout_width="wrap_content"
                             android:layout_height="wrap_content"
-                            android:layout_weight="1"
-                            android:text="-30 dBm"
+                            android:text="0"
                             android:textSize="14sp"
-                            android:textColor="@android:color/darker_gray"
-                            android:gravity="center" />
+                            android:textColor="#6B7280" />
 
                     </LinearLayout>
+
+                    <TextView
+                        android:id="@+id/tvRssiThreshold"
+                        android:layout_width="wrap_content"
+                        android:layout_height="wrap_content"
+                        android:layout_gravity="center"
+                        android:layout_marginTop="8dp"
+                        android:text="Current: -55 dBm"
+                        android:textSize="16sp"
+                        android:textStyle="bold"
+                        android:textColor="#374151" />
 
                 </LinearLayout>
 
             </androidx.cardview.widget.CardView>
 
-            <!-- Action Buttons dihilangkan -->
-
-            <!-- Info Card dihilangkan -->
 
         </LinearLayout>
 

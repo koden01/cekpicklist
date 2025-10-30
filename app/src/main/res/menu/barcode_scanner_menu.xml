@@ -1,0 +1,25 @@
+<?xml version="1.0" encoding="utf-8"?>
+<menu xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:app="http://schemas.android.com/apk/res-auto">
+
+    <item
+        android:id="@+id/action_scan_history"
+        android:icon="@drawable/ic_history"
+        android:title="Riwayat Scan"
+        app:showAsAction="ifRoom" />
+
+    <item
+        android:id="@+id/action_sound_settings"
+        android:icon="@drawable/ic_sound"
+        android:title="Sound Settings"
+        app:showAsAction="ifRoom" />
+
+    <item
+        android:id="@+id/action_settings"
+        android:icon="@drawable/ic_settings"
+        android:title="Pengaturan"
+        app:showAsAction="ifRoom" />
+
+</menu>
+
+

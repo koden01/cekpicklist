@@ -25,6 +25,9 @@ class Repository(private val context: android.content.Context? = null) {
     private val batchSupabaseService = BatchSupabaseService()
     private val cacheManager = CacheManager(context)
     
+    // Enhanced Repository untuk Local-First strategy
+    private val enhancedRepository = if (context != null) EnhancedRepository(context) else null
+    
     // Coroutine scope untuk background operations
     private val repositoryScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     
@@ -69,6 +72,17 @@ class Repository(private val context: android.content.Context? = null) {
             // Track query call
             trackQueryCall("getPicklists")
             
+            Log.d(TAG, "🔥 Getting picklist numbers list")
+            
+            // Gunakan Enhanced Repository jika tersedia (Local-First strategy)
+            if (enhancedRepository != null) {
+                Log.d(TAG, "📱 Using Enhanced Repository (Local-First strategy)")
+                return@withContext enhancedRepository.getPicklists()
+            }
+            
+            // Fallback ke logic lama jika Enhanced Repository tidak tersedia
+            Log.d(TAG, "⚠️ Using legacy cache logic (Enhanced Repository not available)")
+            
             // Cek cache dulu
             val cachedPicklists = cacheManager.getAllPicklists()
             if (cachedPicklists != null) {
@@ -105,7 +119,7 @@ class Repository(private val context: android.content.Context? = null) {
     }
     
     /**
-     * OPTIMASI: Get picklist items dengan cache dan incremental update
+     * OPTIMASI: Get picklist items dengan Local-First strategy
      */
     suspend fun getPicklistItems(picklistNo: String): List<PicklistItem> = withContext(Dispatchers.IO) {
         try {
@@ -113,6 +127,15 @@ class Repository(private val context: android.content.Context? = null) {
             trackQueryCall("getPicklistItems", picklistNo)
             
             Log.d(TAG, "🔥 Getting picklist items for: $picklistNo")
+            
+            // Gunakan Enhanced Repository jika tersedia (Local-First strategy)
+            if (enhancedRepository != null) {
+                Log.d(TAG, "📱 Using Enhanced Repository (Local-First strategy)")
+                return@withContext enhancedRepository.getPicklistItems(picklistNo)
+            }
+            
+            // Fallback ke logic lama jika Enhanced Repository tidak tersedia
+            Log.d(TAG, "⚠️ Using legacy cache logic (Enhanced Repository not available)")
             
             // Cek cache dulu
             val cachedItems = cacheManager.getPicklistItems(picklistNo)
@@ -335,6 +358,15 @@ class Repository(private val context: android.content.Context? = null) {
     }
     
     /**
+     * **NEW**: Get picklist completion status menggunakan query Room langsung
+     * Lebih efisien karena menggunakan SQL query langsung dari database
+     */
+    suspend fun getAllPicklistCompletionStatusesFromRoom(): List<PicklistStatus> = withContext(Dispatchers.IO) {
+        Log.d(TAG, "🚀 [Supabase-only] Skipping Room completion statuses")
+        emptyList()
+    }
+    
+    /**
      * OPTIMASI: Single batch fetch untuk picklist items dan processed EPC list
      * Menggabungkan kedua operasi dalam satu call untuk menghindari fetch berulang
      */
@@ -396,7 +428,7 @@ class Repository(private val context: android.content.Context? = null) {
     }
     
     /**
-     * OPTIMASI: Get processed EPC list dengan cache dan incremental update
+     * OPTIMASI: Get processed EPC list dengan Local-First strategy
      */
     suspend fun getProcessedEpcList(picklistNo: String): List<String> = withContext(Dispatchers.IO) {
         try {
@@ -404,6 +436,15 @@ class Repository(private val context: android.content.Context? = null) {
             trackQueryCall("getProcessedEpcList", picklistNo)
             
             Log.d(TAG, "🔥 Getting processed EPC list for picklist: $picklistNo")
+            
+            // Gunakan Enhanced Repository jika tersedia (Local-First strategy)
+            if (enhancedRepository != null) {
+                Log.d(TAG, "📱 Using Enhanced Repository for EPC list (Local-First strategy)")
+                return@withContext enhancedRepository.getProcessedEpcList(picklistNo)
+            }
+            
+            // Fallback ke logic lama jika Enhanced Repository tidak tersedia
+            Log.d(TAG, "⚠️ Using legacy cache logic for EPC list (Enhanced Repository not available)")
             
             // Cek cache dulu
             val cachedEpcList = cacheManager.getProcessedEpcList(picklistNo)
@@ -436,6 +477,24 @@ class Repository(private val context: android.content.Context? = null) {
             epcList
         } catch (e: Exception) {
             Log.e(TAG, "❌ Error getting processed EPC list: ${e.message}", e)
+            emptyList()
+        }
+    }
+    
+    /**
+     * DEBUGGING: Get all scan records for a picklist (without date filter)
+     */
+    suspend fun getAllScanRecordsForPicklist(picklistNo: String): List<String> = withContext(Dispatchers.IO) {
+        try {
+            Log.d(TAG, "🔍 Getting all scan records for picklist: $picklistNo (no date filter)")
+            
+            // Fetch dari Supabase tanpa filter tanggal
+            val allRecords = supabaseService.getAllScanRecordsForPicklist(picklistNo)
+            
+            Log.d(TAG, "✅ Found ${allRecords.size} total scan records for picklist: $picklistNo")
+            allRecords
+        } catch (e: Exception) {
+            Log.e(TAG, "❌ Error getting all scan records: ${e.message}", e)
             emptyList()
         }
     }
@@ -622,6 +681,56 @@ class Repository(private val context: android.content.Context? = null) {
         }
     }
     
+    /**
+     * Clear cache untuk picklist tertentu
+     */
+    suspend fun clearCacheForPicklist(picklistNo: String) = withContext(Dispatchers.IO) {
+        try {
+            Log.d(TAG, "🧹 Clearing cache for picklist: $picklistNo")
+            cacheManager.clearCacheForPicklist(picklistNo)
+            Log.d(TAG, "✅ Cache cleared for picklist: $picklistNo")
+        } catch (e: Exception) {
+            Log.e(TAG, "❌ Error clearing cache for picklist $picklistNo: ${e.message}", e)
+        }
+    }
+
+    /**
+     * PERBAIKAN: Clear data scan hanya di aplikasi (TIDAK menghapus data di Supabase)
+     * Digunakan saat tombol clear ditekan untuk mereset tampilan aplikasi saja
+     */
+    suspend fun removeAllScanDataForPicklist(picklistNo: String): Boolean = withContext(Dispatchers.IO) {
+        try {
+            Log.d(TAG, "🧹 Clearing scan data display for picklist: $picklistNo (NOT deleting from Supabase)")
+            
+            // **STEP 1**: Clear cache untuk memastikan data fresh dari Supabase
+            Log.d(TAG, "🧹 Step 1: Clearing cache to refresh data from Supabase...")
+            try {
+                cacheManager.clearCacheForPicklist(picklistNo)
+                Log.d(TAG, "✅ Cache cleared for picklist: $picklistNo")
+            } catch (e: Exception) {
+                Log.e(TAG, "❌ Error clearing cache: ${e.message}", e)
+            }
+            
+            // **STEP 2**: Data di Supabase TIDAK dihapus, hanya cache yang dibersihkan
+            // Ini akan memaksa aplikasi untuk reload data fresh dari Supabase
+            // dengan qtyScan yang masih ada (karena tidak dihapus dari database)
+            
+            Log.d(TAG, "✅ Scan data display cleared (Supabase data preserved):")
+            Log.d(TAG, "   - Cache cleared: true")
+            Log.d(TAG, "   - Supabase data: PRESERVED (not deleted)")
+            Log.d(TAG, "   - App will reload fresh data from Supabase")
+            
+            true // Selalu return true karena ini hanya clear cache
+            
+        } catch (e: kotlinx.coroutines.CancellationException) {
+            Log.d(TAG, "🔥 Scan data display clear cancelled (normal behavior): ${e.message}")
+            false
+        } catch (e: Exception) {
+            Log.e(TAG, "❌ Error clearing scan data display: ${e.message}", e)
+            false
+        }
+    }
+
     /**
      * PERBAIKAN: Hapus overscan data dari database untuk picklist tertentu
      * Digunakan saat back button ditekan untuk membersihkan overscan

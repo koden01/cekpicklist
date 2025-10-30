@@ -1,0 +1,145 @@
+<?xml version="1.0" encoding="utf-8"?>
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:layout_width="match_parent"
+    android:layout_height="wrap_content"
+    android:orientation="horizontal"
+    android:padding="12dp"
+    android:background="?android:attr/selectableItemBackground"
+    android:clickable="true"
+    android:focusable="true">
+
+    <!-- Resi Number -->
+    <TextView
+        android:id="@+id/tvResi"
+        android:layout_width="0dp"
+        android:layout_height="wrap_content"
+        android:layout_weight="1.5"
+        android:text="JNE123456789"
+        android:textSize="12sp"
+        android:textStyle="bold"
+        android:textColor="#374151"
+        android:maxLines="1"
+        android:ellipsize="end" />
+
+    <!-- Order Number -->
+    <TextView
+        android:id="@+id/tvOrderNo"
+        android:layout_width="0dp"
+        android:layout_height="wrap_content"
+        android:layout_weight="1"
+        android:text="ORD001"
+        android:textSize="12sp"
+        android:textColor="#6B7280"
+        android:maxLines="1"
+        android:ellipsize="end" />
+
+    <!-- Channel Sales -->
+    <TextView
+        android:id="@+id/tvChannelSales"
+        android:layout_width="0dp"
+        android:layout_height="wrap_content"
+        android:layout_weight="1"
+        android:text="Online"
+        android:textSize="12sp"
+        android:textColor="#6B7280"
+        android:maxLines="1"
+        android:ellipsize="end" />
+
+    <!-- Courier Name -->
+    <TextView
+        android:id="@+id/tvCourierName"
+        android:layout_width="0dp"
+        android:layout_height="wrap_content"
+        android:layout_weight="1"
+        android:text="JNE"
+        android:textSize="12sp"
+        android:textColor="#6B7280"
+        android:maxLines="1"
+        android:ellipsize="end" />
+
+    <!-- Created -->
+    <TextView
+        android:id="@+id/tvCreated"
+        android:layout_width="0dp"
+        android:layout_height="wrap_content"
+        android:layout_weight="1.2"
+        android:text="2024-01-15 10:30"
+        android:textSize="12sp"
+        android:textColor="#6B7280"
+        android:maxLines="1"
+        android:ellipsize="end" />
+
+    <!-- Date Trans -->
+    <TextView
+        android:id="@+id/tvDateTrans"
+        android:layout_width="0dp"
+        android:layout_height="wrap_content"
+        android:layout_weight="1"
+        android:text="2024-01-15"
+        android:textSize="12sp"
+        android:textColor="#6B7280"
+        android:maxLines="1"
+        android:ellipsize="end" />
+
+    <!-- Flag -->
+    <TextView
+        android:id="@+id/tvFlag"
+        android:layout_width="0dp"
+        android:layout_height="wrap_content"
+        android:layout_weight="0.8"
+        android:text="NO"
+        android:textSize="12sp"
+        android:textStyle="bold"
+        android:textColor="#F59E0B"
+        android:maxLines="1"
+        android:ellipsize="end" />
+
+    <!-- CEKFU -->
+    <TextView
+        android:id="@+id/tvCekfu"
+        android:layout_width="0dp"
+        android:layout_height="wrap_content"
+        android:layout_weight="0.8"
+        android:text="Tidak"
+        android:textSize="12sp"
+        android:textColor="#6B7280"
+        android:maxLines="1"
+        android:ellipsize="end" />
+
+    <!-- No Karung -->
+    <TextView
+        android:id="@+id/tvNoKarung"
+        android:layout_width="0dp"
+        android:layout_height="wrap_content"
+        android:layout_weight="0.8"
+        android:text="1"
+        android:textSize="12sp"
+        android:textColor="#6B7280"
+        android:maxLines="1"
+        android:ellipsize="end" />
+
+    <!-- Schedule -->
+    <TextView
+        android:id="@+id/tvSchedule"
+        android:layout_width="0dp"
+        android:layout_height="wrap_content"
+        android:layout_weight="1"
+        android:text="ontime"
+        android:textSize="12sp"
+        android:textColor="#10B981"
+        android:maxLines="1"
+        android:ellipsize="end" />
+
+    <!-- Keterangan -->
+    <TextView
+        android:id="@+id/tvKeterangan"
+        android:layout_width="0dp"
+        android:layout_height="wrap_content"
+        android:layout_weight="1.2"
+        android:text="Belum dikirim"
+        android:textSize="12sp"
+        android:textColor="#6B7280"
+        android:maxLines="1"
+        android:ellipsize="end" />
+
+</LinearLayout>

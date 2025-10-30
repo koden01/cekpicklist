@@ -786,6 +786,24 @@ class CacheManager(private val context: Context? = null) {
     }
     
     /**
+     * Clear cache untuk picklist tertentu
+     */
+    suspend fun clearCacheForPicklist(picklistNo: String) = cacheMutex.withLock {
+        Log.d(TAG, "🧹 Clearing cache for picklist: $picklistNo")
+        
+        // Clear picklist items cache
+        picklistItemsCache.remove(picklistNo)
+        
+        // Clear processed EPC cache
+        processedEpcCache.remove(picklistNo)
+        
+        // Clear picklist status cache
+        picklistStatusCache.remove(picklistNo)
+        
+        Log.d(TAG, "✅ Cache cleared for picklist: $picklistNo")
+    }
+
+    /**
      * Clear expired entries
      */
     suspend fun clearExpiredEntries() = cacheMutex.withLock {

@@ -168,14 +168,9 @@ class RelocationActivity : BaseRfidActivity() {
     }
     
     private fun setupObservers() {
-        // Set callback untuk clear RfidScanManager setelah submit berhasil
+        // Jangan clear EPC list setelah submit; biarkan untuk relokasi ulang
         viewModel.setOnRfidScanManagerClear {
-            try {
-                rfidScanManager.clearAllData()
-                Log.d(TAG, "🔥 RfidScanManager data cleared after successful submit")
-            } catch (t: Throwable) {
-                Log.w(TAG, "⚠️ Failed to clear RfidScanManager data: ${t.message}")
-            }
+            Log.d(TAG, "ℹ️ Submit completed - keeping EPC list for further relocation lookups")
         }
         
         // RFID Detection Count - Hanya update UI, tidak auto lookup
@@ -208,6 +203,8 @@ class RelocationActivity : BaseRfidActivity() {
         viewModel.selectedCurrentWarehouse.observe(this, Observer { warehouse ->
             if (warehouse != null) {
                 Log.d(TAG, "🔥 Current warehouse changed to: ${warehouse.warehouseName}")
+                // Sinkronkan UI dropdown current location
+                try { binding.actvCurrentLocation.setText(warehouse.warehouseName, false) } catch (_: Throwable) {}
                 try {
                     val localResults = rfidScanManager.getAllLookupResults()
                     viewModel.applyLookupResults(localResults)
@@ -228,6 +225,13 @@ class RelocationActivity : BaseRfidActivity() {
         viewModel.selectedTagStatus.observe(this, Observer { tagStatus ->
             if (tagStatus != null) {
                 Log.d(TAG, "🔥 Tag status changed to: $tagStatus")
+                // Sinkronkan UI radio group current tag status
+                try {
+                    when (tagStatus) {
+                        TagStatus.TAGGED -> binding.rgTagStatus.check(R.id.rbTagged)
+                        TagStatus.MASTER -> binding.rgTagStatus.check(R.id.rbMaster)
+                    }
+                } catch (_: Throwable) {}
                 try {
                     val localResults = rfidScanManager.getAllLookupResults()
                     viewModel.applyLookupResults(localResults)
@@ -477,7 +481,7 @@ class RelocationActivity : BaseRfidActivity() {
         // Hanya update counter untuk UI
         val isNew = viewModel.addRfid(epc)
         if (isNew) {
-            super.playBeepSound()
+            // **PERBAIKAN**: Jangan panggil playBeepSound() lagi karena sudah dipanggil di RfidScanManager
             Log.d(TAG, "🔥 RFID detected (UNIQUE): $epc (RSSI=$rssi)")
         } else {
             Log.d(TAG, "ℹ️ RFID detected (DUPLICATE): $epc (RSSI=$rssi)")
@@ -684,6 +688,13 @@ class RelocationActivity : BaseRfidActivity() {
     override fun onDestroy() {
         super.onDestroy()
         stopRfidScanning()
+        // Clear EPC list saat keluar dari RelocationActivity
+        try {
+            rfidScanManager.clearAllData()
+            Log.d(TAG, "🧹 EPC list cleared on RelocationActivity destroy")
+        } catch (t: Throwable) {
+            Log.w(TAG, "⚠️ Failed to clear EPC list on destroy: ${t.message}")
+        }
         
         // handled by BaseRfidActivity cleanup
     }
@@ -772,7 +783,7 @@ class RelocationActivity : BaseRfidActivity() {
      */
     private fun getRSSIThreshold(): Int {
         val sharedPrefs = getSharedPreferences("RFIDSettings", MODE_PRIVATE)
-        return sharedPrefs.getInt("rssi_threshold", -70)
+        return sharedPrefs.getInt("rssi_threshold", -55)
     }
     
     /**
@@ -780,7 +791,7 @@ class RelocationActivity : BaseRfidActivity() {
      */
     private fun getPowerLevel(): Int {
         val sharedPrefs = getSharedPreferences("RFIDSettings", MODE_PRIVATE)
-        return sharedPrefs.getInt("power_level", 20)
+        return sharedPrefs.getInt("power_level", 25)
     }
     
     /**
@@ -803,8 +814,8 @@ class RelocationActivity : BaseRfidActivity() {
     private fun verifyRfidSettings() {
         try {
             val sharedPreferences = getSharedPreferences("RFIDSettings", MODE_PRIVATE)
-            val savedPowerLevel = sharedPreferences.getInt("power_level", 20)
-            val savedRssiThreshold = sharedPreferences.getInt("rssi_threshold", -70)
+            val savedPowerLevel = sharedPreferences.getInt("power_level", 25)
+            val savedRssiThreshold = sharedPreferences.getInt("rssi_threshold", -55)
             val currentSettings = rfidScanManager.getSettings()
             
             Log.d(TAG, "🔥 === RFID SETTINGS VERIFICATION ===")
@@ -813,7 +824,7 @@ class RelocationActivity : BaseRfidActivity() {
             Log.d(TAG, "🔥 RfidScanManager - Power Level: ${currentSettings.powerLevel}")
             Log.d(TAG, "🔥 RfidScanManager - RSSI Threshold: ${currentSettings.rssiThreshold}")
             Log.d(TAG, "🔥 RfidScanManager - Duplicate Removal: ${currentSettings.duplicateRemovalEnabled}")
-            Log.d(TAG, "🔥 RfidScanManager - Grace Period: ${currentSettings.gracePeriodMs}ms")
+            // **GRACE PERIOD REMOVED**: Tidak perlu log grace period
             
             if (currentSettings.powerLevel != savedPowerLevel) {
                 Log.w(TAG, "⚠️ WARNING: Power level mismatch! SharedPrefs: $savedPowerLevel, RfidScanManager: ${currentSettings.powerLevel}")

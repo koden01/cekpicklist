@@ -1,0 +1,132 @@
+LAYOUT TAB INPUT BARCODE SCANNER
+=====================================
+
+┌─────────────────────────────────────────────────────────────┐
+│                    TOOLBAR (Blue)                          │
+│                 "Input Data Resi"                          │
+└─────────────────────────────────────────────────────────────┘
+
+┌─────────────────────────────────────────────────────────────┐
+│                    SCROLL VIEW                             │
+│                                                             │
+│  ┌─────────────────────────────────────────────────────┐   │
+│  │              MAIN CARD (Blue Gradient)               │   │
+│  │                                                      │   │
+│  │  ┌─────────────────────────────────────────────┐    │   │
+│  │  │            TITLE: "Input Data Resi"         │    │   │
+│  │  └─────────────────────────────────────────────┘    │   │
+│  │                                                      │   │
+│  │  ┌─────────────────────────────────────────────┐    │   │
+│  │  │              COUNT DISPLAY                  │    │   │
+│  │  │              (Large Number)                 │    │   │
+│  │  └─────────────────────────────────────────────┘    │   │
+│  │                                                      │   │
+│  │  ┌─────────────────────────────────────────────┐    │   │
+│  │  │         EXPEDITION INFO TEXT                │    │   │
+│  │  │         "Pilih Expedisi"                    │    │   │
+│  │  └─────────────────────────────────────────────┘    │   │
+│  │                                                      │   │
+│  │  ┌─────────────────────────────────────────────┐    │   │
+│  │  │         SUMMARY INFO TEXT                   │    │   │
+│  │  │         "Total: ... - Scan: ... - Sisa: ..."│    │   │
+│  │  └─────────────────────────────────────────────┘    │   │
+│  │                                                      │   │
+│  │  ┌─────────────────────────────────────────────┐    │   │
+│  │  │              FORM GRID                      │    │   │
+│  │  │                                              │    │   │
+│  │  │  ┌─────────────────┐  ┌─────────────────┐   │    │   │
+│  │  │  │   EXPEDISI      │  │   NO KARUNG     │   │    │   │
+│  │  │  │   SPINNER       │  │   SPINNER       │   │    │   │
+│  │  │  └─────────────────┘  └─────────────────┘   │    │   │
+│  │  │                                              │    │   │
+│  │  │  ┌─────────────────────────────────────┐    │    │   │
+│  │  │  │         SCAN RESI INPUT             │    │    │   │
+│  │  │  │         (EditText + ProgressBar)    │    │    │   │
+│  │  │  └─────────────────────────────────────┘    │    │   │
+│  │  └─────────────────────────────────────────────┘    │   │
+│  └─────────────────────────────────────────────────────┘   │
+│                                                             │
+│  ┌─────────────────────────────────────────────────────┐   │
+│  │              STATUS CARD (White)                    │   │
+│  │                                                      │   │
+│  │  ┌─────────────────────────────────────────────┐    │   │
+│  │  │         "Status Scanner"                    │    │   │
+│  │  │                                              │    │   │
+│  │  │  Scanner: Built-in Scanner                   │    │   │
+│  │  │  Status: Siap                                │    │   │
+│  │  │  Trigger: Tombol Fisik                       │    │   │
+│  │  └─────────────────────────────────────────────┘    │   │
+│  └─────────────────────────────────────────────────────┘   │
+│                                                             │
+│  ┌─────────────────────────────────────────────────────┐   │
+│  │              ACTION BUTTONS                        │   │
+│  │                                                      │   │
+│  │  "💡 Tekan tombol trigger fisik untuk scan"         │   │
+│  │                                                      │   │
+│  │  ┌─────────────────┐  ┌─────────────────┐           │   │
+│  │  │ Aktifkan Scanner│  │   Nonaktifkan   │           │   │
+│  │  │    (Blue)       │  │   (Gray)        │           │   │
+│  │  └─────────────────┘  └─────────────────┘           │   │
+│  └─────────────────────────────────────────────────────┘   │
+└─────────────────────────────────────────────────────────────┘
+
+ELEMEN UTAMA:
+=============
+
+1. TOOLBAR (Blue Background)
+   - Title: "Input Data Resi"
+   - Height: ActionBar size
+
+2. MAIN CARD (Blue Gradient Background)
+   - Title: "Input Data Resi" (White text, 24sp, Bold)
+   - Count Display: Large number (White text, 48sp, Bold)
+   - Expedition Info: "Pilih Expedisi" (White text, 18sp)
+   - Summary Info: "Total: ... - Scan: ... - Sisa: ..." (White text, 14sp, 80% opacity)
+
+3. FORM GRID (Inside Main Card)
+   - Row 1: Expedition Spinner + Karung Spinner (Side by side)
+   - Row 2: Scan Resi Input (EditText + ProgressBar)
+
+4. STATUS CARD (White Background)
+   - Title: "Status Scanner" (16sp, Bold, Gray)
+   - Scanner: "Built-in Scanner" (Green)
+   - Status: "Siap" (Green)
+   - Trigger: "Tombol Fisik" (Blue)
+
+5. ACTION BUTTONS
+   - Hint text: "💡 Tekan tombol trigger fisik untuk scan"
+   - Button 1: "Aktifkan Scanner" (Blue background)
+   - Button 2: "Nonaktifkan" (Gray background)
+
+SPINNER ELEMENTS:
+================
+- Expedition Spinner: spinnerExpedition
+- Karung Spinner: spinnerKarung
+- Background: @drawable/select_background
+- Height: 48dp
+- Text: 16sp, Dark gray (#1F2937)
+- Padding: 12dp
+
+INPUT ELEMENTS:
+===============
+- Scan Resi EditText: etScanResi
+- Background: @drawable/input_background
+- Height: 64dp
+- Text: 24sp, Dark gray (#1F2937)
+- Hint: "Scan nomor resi"
+- ProgressBar: progressBar (24dp, initially hidden)
+
+STATUS ELEMENTS:
+================
+- Scanner Status: tvScannerStatus
+- Scan Status: tvScanStatus
+- Count Display: tvCount
+- Expedition Info: tvExpeditionInfo
+- Summary Info: tvSummaryInfo
+
+BUTTONS:
+========
+- Start Scan: btnStartScan (Blue background)
+- Stop Scan: btnStopScan (Gray background)
+- Both: 48dp height, 16sp text, Bold
+

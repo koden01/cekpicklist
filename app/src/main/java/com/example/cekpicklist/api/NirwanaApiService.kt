@@ -30,12 +30,12 @@ class NirwanaApiService {
         private const val TAG_PRODUCTS_ENDPOINT = "/tag/products"
         
         // Timeout settings (dinaikkan agar lebih toleran terhadap jaringan lambat)
-        private const val CONNECT_TIMEOUT = 30000 // 30 seconds
-        private const val READ_TIMEOUT = 45000 // 45 seconds
+        private const val CONNECT_TIMEOUT = 15000 // 15 seconds (dikurangi untuk responsivitas)
+        private const val READ_TIMEOUT = 20000 // 20 seconds (dikurangi untuk responsivitas)
 
         // Retry settings untuk error jaringan
-        private const val MAX_RETRY_ATTEMPTS = 4
-        private const val BASE_BACKOFF_MS = 1000L
+        private const val MAX_RETRY_ATTEMPTS = 3 // Dikurangi untuk menghindari delay lama
+        private const val BASE_BACKOFF_MS = 2000L // Dinaikkan untuk spacing yang lebih baik
         
         // Verbose logging flags to reduce logcat noise
         private const val VERBOSE_LOGS = false
@@ -43,15 +43,17 @@ class NirwanaApiService {
 
         // **PERBAIKAN BARU**: Gson instance untuk parsing JSON
         private val gson = Gson()
+
+        // Global single-flight auth state (shared across service instances)
+        private val globalAuthMutex = Mutex()
+        private var globalAuthToken: String? = null
+        private var globalTokenExpiryTime: Long = 0L
     }
-    
-    private val authMutex = Mutex()
 
     private var baseUrl: String = DEFAULT_BASE_URL
     private var username: String = "nirwana_rfid"
     private var password: String = "YNCTD7Zw6yR2KePyq5mZXV8AMJGmwjOQ"
-    private var authToken: String? = null
-    private var tokenExpiryTime: Long = 0
+    // Token now shared via companion object
     
     init {
         loadConfiguration()
@@ -87,7 +89,7 @@ class NirwanaApiService {
      * Authenticate dengan API Nirwana dan dapatkan token
      */
     private suspend fun authenticate(): Boolean = withContext(Dispatchers.IO) {
-        authMutex.withLock {
+        globalAuthMutex.withLock {
             if (isTokenValid()) return@withLock true
             var attempt = 0
             val authUrl = "$baseUrl$AUTH_ENDPOINT"
@@ -138,8 +140,8 @@ class NirwanaApiService {
                         val tokenRegex = "\"access_token\"\\s*:\\s*\"([^\"]+)\"".toRegex()
                         val tokenMatch = tokenRegex.find(response)
                         if (tokenMatch != null) {
-                            authToken = tokenMatch.groupValues[1]
-                            tokenExpiryTime = System.currentTimeMillis() + (3600 * 1000)
+                            globalAuthToken = tokenMatch.groupValues[1]
+                            globalTokenExpiryTime = System.currentTimeMillis() + (3600 * 1000)
                             Log.d(TAG, "✅ Authentication successful")
                             Log.d(TAG, "🔥 Token expires in: 3600s")
                             return@withLock true
@@ -172,7 +174,7 @@ class NirwanaApiService {
      * Cek apakah token masih valid
      */
     private fun isTokenValid(): Boolean {
-        return authToken != null && System.currentTimeMillis() < tokenExpiryTime
+        return globalAuthToken != null && System.currentTimeMillis() < globalTokenExpiryTime
     }
     
     /**
@@ -184,7 +186,7 @@ class NirwanaApiService {
                 return null
             }
         }
-        return "Bearer $authToken"
+        return "Bearer $globalAuthToken"
     }
     
     /**

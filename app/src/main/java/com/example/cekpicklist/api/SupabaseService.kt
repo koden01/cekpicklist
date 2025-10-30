@@ -22,11 +22,34 @@ class SupabaseService {
     private val supabaseKey = SupabaseConfig.SUPABASE_ANON_KEY
     
     /**
+     * Helper function untuk setup HttpURLConnection dengan timeout
+     */
+    private fun setupConnection(url: URL): HttpURLConnection {
+        val connection = url.openConnection() as HttpURLConnection
+        connection.connectTimeout = 30000 // 30 detik connection timeout
+        connection.readTimeout = 45000 // 45 detik read timeout
+        return connection
+    }
+    
+    /**
      * Mendapatkan tanggal hari ini dalam format ISO 8601 untuk filter Supabase
+     * **PERBAIKAN**: Gunakan UTC timezone untuk konsistensi dengan Supabase
      */
     private fun getTodayDate(): String {
-        val today = java.time.LocalDate.now()
-        return today.toString() // Format: YYYY-MM-DD
+        val utcNow = java.time.Instant.now().atZone(java.time.ZoneOffset.UTC)
+        val today = utcNow.toLocalDate()
+        return today.toString() // Format: YYYY-MM-DD (UTC)
+    }
+    
+    /**
+     * Mendapatkan tanggal kemarin dalam format ISO 8601 untuk filter Supabase
+     * **PERBAIKAN**: Gunakan UTC timezone untuk konsistensi dengan Supabase
+     * Digunakan untuk clear operations yang membutuhkan data yang lebih fleksibel
+     */
+    private fun getYesterdayDate(): String {
+        val utcNow = java.time.Instant.now().atZone(java.time.ZoneOffset.UTC)
+        val yesterday = utcNow.toLocalDate().minusDays(1)
+        return yesterday.toString() // Format: YYYY-MM-DD (UTC)
     }
     
     suspend fun getPicklists(): List<String> = withContext(Dispatchers.IO) {
@@ -46,7 +69,7 @@ class SupabaseService {
                 Log.d("SupabaseService", "🔥 Picklist Pagination Query URL (offset=$offset, limit=$limit): $queryUrl")
                 
                 val url = URL(queryUrl)
-                val connection = url.openConnection() as HttpURLConnection
+                val connection = setupConnection(url)
                 
                 connection.requestMethod = "GET"
                 connection.setRequestProperty("apikey", supabaseKey)
@@ -122,7 +145,7 @@ class SupabaseService {
             Log.d("SupabaseService", "🚀 BATCH Query URL: $queryUrl")
             
             val url = URL(queryUrl)
-            val connection = url.openConnection() as HttpURLConnection
+            val connection = setupConnection(url)
             
             connection.requestMethod = "GET"
             connection.setRequestProperty("apikey", supabaseKey)
@@ -275,7 +298,7 @@ class SupabaseService {
             val queryUrl = "$supabaseUrl/rest/v1/picklist_scan?no_picklist=in.($picklistNumbersStr)&created_at=gte.$todayDate&select=no_picklist,article_id,size,epc,created_at&order=created_at.asc&limit=10000"
             
             val url = URL(queryUrl)
-            val connection = url.openConnection() as HttpURLConnection
+            val connection = setupConnection(url)
             
             connection.requestMethod = "GET"
             connection.setRequestProperty("apikey", supabaseKey)
@@ -341,7 +364,7 @@ class SupabaseService {
                 Log.d("SupabaseService", "🔥 Pagination Query URL (offset=$offset, limit=$limit): $queryUrl")
                 
                 val url = URL(queryUrl)
-                val connection = url.openConnection() as HttpURLConnection
+                val connection = setupConnection(url)
                 
                 connection.requestMethod = "GET"
                 connection.setRequestProperty("apikey", supabaseKey)
@@ -503,11 +526,15 @@ class SupabaseService {
         try {
             Log.d("SupabaseService", "🔥 Getting processed EPC list for picklist: $picklistNo")
             
+            val todayDate = getTodayDate()
+            Log.d("SupabaseService", "📅 Filtering processed EPC data from today: $todayDate")
+            
             val encodedPicklistNo = URLEncoder.encode(picklistNo, "UTF-8")
+            // **PERBAIKAN**: Gunakan filter yang lebih longgar untuk debugging
             val selectUrl = "$supabaseUrl/rest/v1/picklist_scan?no_picklist=eq.$encodedPicklistNo&select=epc"
             
             val url = URL(selectUrl)
-            val connection = url.openConnection() as HttpURLConnection
+            val connection = setupConnection(url)
             
             connection.requestMethod = "GET"
             connection.setRequestProperty("apikey", supabaseKey)
@@ -516,10 +543,12 @@ class SupabaseService {
             
             val responseCode = connection.responseCode
             Log.d("SupabaseService", "📦 Processed EPC list response code: $responseCode")
+            Log.d("SupabaseService", "📦 Processed EPC list query URL: $selectUrl")
             
             if (responseCode == 200) {
                 val response = connection.inputStream.bufferedReader().use { it.readText() }
                 Log.d("SupabaseService", "📦 Processed EPC list response length: ${response.length}")
+                Log.d("SupabaseService", "📦 Processed EPC list raw response: $response")
                 
                 // Parse JSON response untuk mendapatkan list EPC
                 val epcList = mutableListOf<String>()
@@ -538,15 +567,108 @@ class SupabaseService {
                 Log.d("SupabaseService", "✅ Found ${epcList.size} processed EPCs for picklist: $picklistNo")
                 if (epcList.isNotEmpty()) {
                     Log.d("SupabaseService", "🔥 Processed EPCs: ${epcList.joinToString(", ")}")
+                } else {
+                    Log.w("SupabaseService", "⚠️ No processed EPCs found in database for picklist: $picklistNo")
+                    Log.w("SupabaseService", "⚠️ This could mean: 1) No EPCs were ever scanned for this picklist, or 2) Database query returned empty result")
+                    
+                    // **PERBAIKAN BARU**: Cek apakah ada data scan untuk picklist ini (tanpa filter tanggal)
+                    try {
+                        Log.d("SupabaseService", "🔍 Checking if there are any scan records for this picklist (without date filter)...")
+                        val checkUrl = "$supabaseUrl/rest/v1/picklist_scan?no_picklist=eq.$encodedPicklistNo&select=epc,created_at&limit=5"
+                        val checkConnection = URL(checkUrl).openConnection() as HttpURLConnection
+                        checkConnection.requestMethod = "GET"
+                        checkConnection.setRequestProperty("apikey", supabaseKey)
+                        checkConnection.setRequestProperty("Authorization", "Bearer $supabaseKey")
+                        checkConnection.setRequestProperty("Accept", "application/json")
+                        
+                        val checkResponseCode = checkConnection.responseCode
+                        if (checkResponseCode == 200) {
+                            val checkResponse = checkConnection.inputStream.bufferedReader().use { it.readText() }
+                            Log.d("SupabaseService", "🔍 Check response (no date filter): $checkResponse")
+                            
+                            if (checkResponse != "[]") {
+                                Log.w("SupabaseService", "⚠️ Found scan records without date filter - this suggests the date filter is too restrictive")
+                                Log.w("SupabaseService", "⚠️ Today's date filter: $todayDate might be excluding valid data")
+                            } else {
+                                Log.w("SupabaseService", "⚠️ No scan records found even without date filter - picklist truly has no scanned EPCs")
+                            }
+                        } else {
+                            Log.e("SupabaseService", "❌ Check query failed with code: $checkResponseCode")
+                        }
+                    } catch (e: Exception) {
+                        Log.e("SupabaseService", "❌ Error in check query: ${e.message}", e)
+                    }
+                }
+
+                epcList
+            } else {
+                Log.e("SupabaseService", "❌ Failed to get processed EPC list: HTTP $responseCode")
+                val errorResponse = connection.errorStream?.bufferedReader()?.use { it.readText() } ?: "No error message"
+                Log.e("SupabaseService", "❌ Error response: $errorResponse")
+                return@withContext emptyList()
+            }
+        } catch (e: Exception) {
+            Log.e("SupabaseService", "❌ Error getting processed EPC list: ${e.message}", e)
+            emptyList()
+        }
+    }
+    
+    /**
+     * DEBUGGING: Get all scan records for a picklist (without date filter)
+     */
+    suspend fun getAllScanRecordsForPicklist(picklistNo: String): List<String> = withContext(Dispatchers.IO) {
+        try {
+            Log.d("SupabaseService", "🔍 Getting all scan records for picklist: $picklistNo (no date filter)")
+            
+            val encodedPicklistNo = URLEncoder.encode(picklistNo, "UTF-8")
+            val selectUrl = "$supabaseUrl/rest/v1/picklist_scan?no_picklist=eq.$encodedPicklistNo&select=epc"
+            
+            val url = URL(selectUrl)
+            val connection = setupConnection(url)
+            
+            connection.requestMethod = "GET"
+            connection.setRequestProperty("apikey", supabaseKey)
+            connection.setRequestProperty("Authorization", "Bearer $supabaseKey")
+            connection.setRequestProperty("Accept", "application/json")
+            
+            val responseCode = connection.responseCode
+            Log.d("SupabaseService", "📦 All scan records response code: $responseCode")
+            Log.d("SupabaseService", "📦 All scan records query URL: $selectUrl")
+            
+            if (responseCode == 200) {
+                val response = connection.inputStream.bufferedReader().use { it.readText() }
+                Log.d("SupabaseService", "📦 All scan records response length: ${response.length}")
+                Log.d("SupabaseService", "📦 All scan records raw response: $response")
+                
+                // Parse JSON response untuk mendapatkan list EPC
+                val epcList = mutableListOf<String>()
+                try {
+                    val jsonArray = org.json.JSONArray(response)
+                    for (i in 0 until jsonArray.length()) {
+                        val jsonObject = jsonArray.getJSONObject(i)
+                        val epc = jsonObject.getString("epc")
+                        epcList.add(epc)
+                    }
+                } catch (e: Exception) {
+                    Log.e("SupabaseService", "❌ Error parsing all scan records: ${e.message}", e)
+                }
+                
+                Log.d("SupabaseService", "✅ Found ${epcList.size} total scan records for picklist: $picklistNo")
+                if (epcList.isNotEmpty()) {
+                    Log.d("SupabaseService", "🔥 All scan record EPCs: ${epcList.joinToString(", ")}")
+                } else {
+                    Log.w("SupabaseService", "⚠️ No scan records found for picklist: $picklistNo")
                 }
                 
                 epcList
             } else {
-                Log.e("SupabaseService", "❌ Error getting processed EPC list: HTTP $responseCode")
-                emptyList()
+                Log.e("SupabaseService", "❌ Failed to get all scan records: HTTP $responseCode")
+                val errorResponse = connection.errorStream?.bufferedReader()?.use { it.readText() } ?: "No error message"
+                Log.e("SupabaseService", "❌ Error response: $errorResponse")
+                return@withContext emptyList()
             }
         } catch (e: Exception) {
-            Log.e("SupabaseService", "❌ Error getting processed EPC list: ${e.message}", e)
+            Log.e("SupabaseService", "❌ Error getting all scan records: ${e.message}", e)
             emptyList()
         }
     }
@@ -571,7 +693,7 @@ class SupabaseService {
             Log.d("SupabaseService", "🔍 Batch check URL: $checkUrl")
             
             val url = URL(checkUrl)
-            val connection = url.openConnection() as HttpURLConnection
+            val connection = setupConnection(url)
             
             connection.requestMethod = "GET"
             connection.setRequestProperty("apikey", supabaseKey)
@@ -682,7 +804,7 @@ class SupabaseService {
         }
     }
     
-    suspend fun savePicklistScan(picklistNo: String, articleId: String, epc: String, productId: String, articleName: String = "", size: String = ""): Boolean = withContext(Dispatchers.IO) {
+    suspend fun savePicklistScan(picklistNo: String, articleId: String, epc: String, productId: String, articleName: String = "", size: String = "", notrans: String? = null): Boolean = withContext(Dispatchers.IO) {
         try {
             Log.d("SupabaseService", "🔥 Saving picklist scan: $picklistNo, $articleId, $epc")
             
@@ -699,7 +821,9 @@ class SupabaseService {
                     "article_id": "$articleId",
                     "article_name": "$articleName",
                     "size": "$size",
-                    "epc": "$epc"
+                    "epc": "$epc",
+                    "notrans": ${if (notrans != null) "\"$notrans\"" else "null"},
+                    "created_at": "${getCurrentTimestamp()}"
                 }
             """.trimIndent()
             
@@ -758,7 +882,7 @@ class SupabaseService {
                 Log.d("SupabaseService", "📦 Scan Pagination Query URL (offset=$offset, limit=$limit): $queryUrl")
                 
                 val url = URL(queryUrl)
-                val connection = url.openConnection() as HttpURLConnection
+                val connection = setupConnection(url)
                 
                 connection.requestMethod = "GET"
                 connection.setRequestProperty("apikey", supabaseKey)
@@ -976,14 +1100,54 @@ class SupabaseService {
     }
     
     /**
-     * Get current timestamp in ISO format
+     * Get current timestamp in ISO format (UTC)
      */
     private fun getCurrentTimestamp(): String {
-        val formatter = java.text.SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss.SSS'Z'", java.util.Locale.getDefault())
-        formatter.timeZone = java.util.TimeZone.getTimeZone("UTC")
-        return formatter.format(java.util.Date())
+        return java.time.Instant.now().toString() // ISO 8601 format in UTC
     }
     
+    /**
+     * PERBAIKAN: Hapus SEMUA data scan dari tabel picklist_scan untuk picklist tertentu
+     * @param picklistNo Nomor picklist
+     * @return true jika berhasil, false jika gagal
+     */
+    suspend fun deleteAllScanRecordsForPicklist(picklistNo: String): Boolean = withContext(Dispatchers.IO) {
+        try {
+            Log.d("SupabaseService", "🧹 Deleting ALL scan records for picklist: $picklistNo")
+            
+            val encodedPicklistNo = URLEncoder.encode(picklistNo, "UTF-8")
+            val deleteUrl = "$supabaseUrl/rest/v1/picklist_scan?no_picklist=eq.$encodedPicklistNo"
+            
+            Log.d("SupabaseService", "🔥 Delete all scan records URL: $deleteUrl")
+            
+            val url = URL(deleteUrl)
+            val connection = url.openConnection() as HttpURLConnection
+            
+            connection.requestMethod = "DELETE"
+            connection.setRequestProperty("apikey", supabaseKey)
+            connection.setRequestProperty("Authorization", "Bearer $supabaseKey")
+            connection.setRequestProperty("Prefer", "return=minimal")
+            
+            val responseCode = connection.responseCode
+            Log.d("SupabaseService", "🔥 Delete all scan records response code: $responseCode")
+            
+            val success = responseCode == HttpURLConnection.HTTP_OK || responseCode == HttpURLConnection.HTTP_NO_CONTENT
+            
+            if (success) {
+                Log.d("SupabaseService", "✅ All scan records deleted for picklist: $picklistNo")
+            } else {
+                val errorMessage = connection.errorStream?.bufferedReader()?.readText() ?: "Unknown error"
+                Log.e("SupabaseService", "❌ Failed to delete all scan records: $responseCode - $errorMessage")
+            }
+            
+            success
+            
+        } catch (e: Exception) {
+            Log.e("SupabaseService", "❌ Error deleting all scan records: ${e.message}", e)
+            false
+        }
+    }
+
     /**
      * PERBAIKAN: Reset qtyScan untuk item picklist tertentu (untuk cleanup overscan)
      * @param picklistNo Nomor picklist

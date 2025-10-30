@@ -159,7 +159,9 @@ com.example.cekpicklist/
 ├── 📱 Activities
 │   ├── MainActivity.kt                 # Halaman utama scanning RFID
 │   ├── PicklistInputActivity.kt        # Input/selection nomor picklist
-│   └── SettingsActivity.kt             # Konfigurasi aplikasi
+│   ├── SettingsActivity.kt             # Konfigurasi aplikasi
+│   ├── RelocationActivity.kt           # Relocation RFID items
+│   └── RadarActivity.kt                # Radar location tracking
 ├── 📋 Adapters
 │   ├── PicklistAdapter.kt              # Adapter untuk list picklist items
 │   └── PicklistSelectionAdapter.kt    # Adapter untuk dialog selection
@@ -173,7 +175,8 @@ com.example.cekpicklist/
 ├── 📊 Data Models
 │   ├── PicklistItem.kt                 # Model item picklist
 │   ├── PicklistStatus.kt               # Status picklist
-│   └── ScanResult.kt                   # Hasil scanning RFID
+│   ├── ScanResult.kt                   # Hasil scanning RFID
+│   └── RadarLocationEntity.kt          # Model lokasi radar
 ├── 🏪 Repository
 │   └── Repository.kt                   # Data access layer
 ├── 🔧 Utils
@@ -181,7 +184,12 @@ com.example.cekpicklist/
 │   └── ToastUtils.kt                   # Toast notifications
 ├── 🧠 ViewModel
 │   ├── ScanViewModel.kt                # ViewModel untuk scanning
-│   └── ScanViewModelFactory.kt         # Factory untuk ViewModel
+│   ├── ScanViewModelFactory.kt         # Factory untuk ViewModel
+│   └── RadarViewModel.kt               # ViewModel untuk radar location
+├── 🎯 Custom Views
+│   ├── RadarView.kt                    # Main radar component
+│   ├── RadarBackgroundView.kt          # Radar background animation
+│   └── RadarPanelView.kt               # Radar tag display panel
 └── 🚀 Application
     └── CekPicklistApplication.kt       # Application class
 ```
@@ -303,12 +311,21 @@ CREATE TABLE picklist_scan (
 - **Valid Data Only**: Hanya data yang valid (qty scan ≤ qty PL) yang akan disimpan ke Supabase
 - **User Confirmation**: Dialog konfirmasi ditampilkan sebelum keluar dari scanning
 
+### **9. Radar Location System**
+- **Radar Visualization**: Custom radar view dengan animasi scan berputar
+- **Tag Positioning**: Menampilkan RFID tags sebagai titik berdasarkan angle dan distance
+- **Target Tracking**: Highlight target EPC dengan warna kuning untuk tracking
+- **Compass Integration**: Rotasi radar berdasarkan kompas device untuk orientasi
+- **Power Control**: Kontrol daya RFID reader khusus untuk radar location
+- **Real-time Updates**: Update posisi tag secara real-time dari RFID reader
+- **Session-based**: Power control hanya aktif saat radar berjalan
+
 #### **Contoh Skenario Back Button:**
 - **Article A**: qty PL = 5, qty scan = 7 → **7 RFID DIBUANG** (overscan)
 - **Article B**: qty PL = 5, qty scan = 4 → **4 RFID DISIMPAN** (valid)
 - **Article C**: qty PL = 0, qty scan = 3 → **3 RFID DIBUANG** (non-picklist)
 
-### **9. Auto-Update System dengan Download & Install Otomatis**
+### **10. Auto-Update System dengan Download & Install Otomatis**
 - **GitHub Integration**: Cek versi terbaru dari GitHub releases API
 - **Smart Interval**: Update check minimal 1 hari sekali untuk menghindari spam
 - **Version Comparison**: Bandingkan versi current vs latest dengan format major.minor.patch
@@ -715,8 +732,10 @@ git push --dry-run origin main
 12. **Overscan Cleanup System** ✅
 13. **Clear Button Functionality** ✅
 14. **WindowLeaked Error Prevention** ✅
+15. **Radar Location System** ✅
+16. **Relocation System** ✅
 
-### **🔧 Recent Fixes & Improvements (v4.3.4)**
+### **🔧 Recent Fixes & Improvements (v5.0.1)**
 
 #### **Overscan Cleanup System**
 - **Database Integration**: Implementasi `removeOverscanDataForPicklist()` untuk membersihkan data overscan dari database
@@ -740,11 +759,40 @@ git push --dry-run origin main
 - **Cache Management**: Improved cache invalidation dan refresh
 - **Memory Optimization**: Better memory management untuk large datasets
 
+#### **Radar Location System (NEW)**
+- **Custom Radar Views**: Implementasi RadarView, RadarBackgroundView, dan RadarPanelView
+- **Animation System**: Smooth radar scan animation dengan coroutines
+- **Tag Visualization**: Menampilkan RFID tags sebagai titik dengan warna berbeda
+- **Power Control**: Independent power control untuk radar location
+- **Mock Data Removal**: Siap untuk integrasi RFID reader yang sesungguhnya
+- **Compass Integration**: Rotasi radar berdasarkan kompas device
+- **Real-time Updates**: LiveData untuk update posisi tag secara real-time
+
+#### **Power Control Comparison:**
+
+| Feature | Settings Power Control | Radar Power Control |
+|---------|----------------------|-------------------|
+| **Range** | 1-30 | 0-10 |
+| **Default** | 25 | 5 |
+| **Purpose** | RFID Scanning Umum | Radar Location Tracking |
+| **Storage** | SharedPreferences | Session Only |
+| **Scope** | Global App Settings | Radar Activity Only |
+| **API Call** | `mReader.setPower()` | `mReader.setDynamicDistance()` |
+| **Persistence** | ✅ Saved | ❌ Not Saved |
+| **Auto-Apply** | ✅ Real-time | ✅ Real-time |
+
+**Key Differences:**
+- **Settings Power**: Untuk scanning RFID biasa, disimpan permanen
+- **Radar Power**: Untuk radar location, hanya aktif saat radar berjalan
+- **Different APIs**: Settings menggunakan `setPower()`, Radar menggunakan `setDynamicDistance()`
+- **Independent**: Kedua power control tidak saling mempengaruhi
+
 ### **🚀 Future Enhancements**
 - **Unit Testing**: Implementasi testing framework
 - **Performance Monitoring**: Analytics dan crash reporting
 - **Offline Mode**: Enhanced offline capabilities
 - **Multi-language**: Internationalization support
+- **Real RFID Integration**: Integrasi dengan RFID reader untuk radar location
 
 ---
 
@@ -766,12 +814,15 @@ Aplikasi **Cek Picklist** siap untuk production dengan:
 
 ---
 
-**Version**: 5.0.1 (Version Code: 14)  
-**Last Updated**: 2025-10-10  
+**Version**: 5.1.1 (Version Code: 16)  
+**Last Updated**: 2025-10-30  
 **Platform**: Android 11+ (API 30+)  
 **Auto Versioning**: ✅ Enabled dengan PowerShell Scripts  
 **Status**: ✅ Production Ready  
 **Latest Tag**: v5.0.1
+
+
+
 
 
 

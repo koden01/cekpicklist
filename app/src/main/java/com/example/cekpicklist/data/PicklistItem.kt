@@ -13,6 +13,7 @@ data class PicklistItem(
     val qtyScan: Int = 0, // scanned quantity, default 0
     val scan: Boolean = false, // status scan dari Supabase (true/false)
     val createdAt: String? = null, // created_at dari Supabase
+    val notrans: String? = null, // notrans dari Supabase
     val warehouse: String? = null, // warehouse untuk item NA
     val tagStatus: String? = null, // tag_status untuk item NA
     val lastUpdated: Long = System.currentTimeMillis() // timestamp untuk cache incremental update

@@ -1,7 +1,7 @@
 ﻿plugins {
     alias(libs.plugins.android.application)
     alias(libs.plugins.kotlin.android)
-    // id("kotlin-kapt") // Disabled sementara untuk Room Database
+    // id("kotlin-kapt") // Removed: Room Database no longer used
 }
 
 android {
@@ -22,8 +22,8 @@ android {
         applicationId = "com.example.cekpicklist"
         minSdk = 30
         targetSdk = 35
-        versionCode = 14
-        versionName = "5.0.1"
+        versionCode = 16
+        versionName = "5.1.1"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         
@@ -74,6 +74,7 @@ android {
     }
     buildFeatures {
         viewBinding = true
+        dataBinding = true
     }
 }
 
@@ -108,13 +109,47 @@ dependencies {
     implementation("androidx.media3:media3-ui:1.2.0")
     implementation("androidx.media3:media3-common:1.2.0")
     
-    // Room Database untuk cache persistence - DISABLED sementara
-    // implementation("androidx.room:room-runtime:2.6.1")
-    // implementation("androidx.room:room-ktx:2.6.1")
+    // Room removed (Supabase-only mode)
+    
+    // WorkManager untuk background sync
+    implementation("androidx.work:work-runtime-ktx:2.9.0")
     
     // RFID SDK
     implementation(files("libs/DeviceAPI_ver20250209_release.aar"))
+    
+    // Additional JAR files from demo
+    implementation(files("libs/jxl.jar"))
+    implementation(files("libs/poi-3.12-android-a.jar"))
+    implementation(files("libs/poi-ooxml-schemas-3.12-20150511-a.jar"))
+    implementation(files("libs/xUtils-2.5.5.jar"))
+    
+    // Supabase Realtime (WebSocket) - minimal client
+    // Supabase-kt v3 via BOM + modules (compatible with io.github.jan.supabase.* packages)
+    implementation(platform("io.github.jan-tennert.supabase:bom:3.0.1"))
+    // Realtime removed
+    implementation("io.github.jan-tennert.supabase:postgrest-kt")
+    implementation("io.github.jan-tennert.supabase:auth-kt")
+    // Ktor HTTP client (gunakan BOM agar versi konsisten dengan engine & plugin)
+    implementation(platform("io.ktor:ktor-bom:2.3.8"))
+    implementation("io.ktor:ktor-client-core")
+    // Gunakan engine Android agar dependensi plugin timeout terikut pasti
+    implementation("io.ktor:ktor-client-android")
+    implementation("io.ktor:ktor-client-logging")
+    implementation("io.ktor:ktor-client-content-negotiation")
+    implementation("io.ktor:ktor-serialization-kotlinx-json")
+    implementation("io.ktor:ktor-client-encoding")
+    // Optional: SLF4J binding to silence warnings on Android
+    implementation("org.slf4j:slf4j-android:1.7.36")
+
+    // Built-in Barcode Scanning (Hardware Scanner) - Using local AAR
+    // implementation("com.rscja.deviceapi:deviceapi:1.0.0") // Not available in Maven
+    
+    // Camera Scanning removed - Hardware scanner only
+    // implementation("com.journeyapps:zxing-android-embedded:4.3.0")
+    // implementation("com.google.zxing:core:3.5.2")
 }
+
+
 
 
 

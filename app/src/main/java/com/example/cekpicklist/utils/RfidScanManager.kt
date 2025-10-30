@@ -11,6 +11,8 @@ import com.rscja.deviceapi.entity.UHFTAGInfo
 import com.rscja.deviceapi.entity.InventoryParameter
 import com.rscja.deviceapi.exception.ConfigurationException
 import com.rscja.deviceapi.interfaces.IUHFInventoryCallback
+// Radar-specific imports removed after migrating to simple locating feature
+import com.rscja.deviceapi.interfaces.IUHF
 import com.example.cekpicklist.api.NirwanaApiService
 
 /**
@@ -29,6 +31,8 @@ class RfidScanManager(
 	private var isGraceActive: Boolean = false
 	private var settings: RfidScanSettings = RfidScanSettings()
 	private var reader: RFIDWithUHFUART? = null
+	
+	// RFID reader initialization is handled in initializeReaderSafely() below
 
 	private var onRfidDetected: ((String, Int) -> Unit)? = null
 	private var onScanStateChanged: ((Boolean) -> Unit)? = null
@@ -45,9 +49,16 @@ class RfidScanManager(
     // Menyimpan hasil lookup per EPC dalam bentuk JSON (agar tidak coupling dengan layer API)
     private val epcToProduct: HashMap<String, NirwanaApiService.ProductInfo> = hashMapOf()
     
+    // Track picklist yang sudah di-seed untuk mencegah duplicate seeding
+    private var seededPicklistNumber: String? = null
+    
     // Lookup processing
     private val inFlightEpcs = mutableSetOf<String>()
     private val lookupExecutor = java.util.concurrent.Executors.newSingleThreadExecutor()
+
+	private var lastIgnoredLogTimeMs: Long = 0
+	private var ignoredLogCounter: Int = 0
+	private val ignoredLogIntervalMs: Long = 1000 // log aggregation window
 
 	init {
 		initializeReaderSafely()
@@ -105,6 +116,8 @@ class RfidScanManager(
 		isGraceActive = false
 		onScanStateChanged?.invoke(false)
 		stopInventorySafely()
+		// Unregister callback to prevent post-stop spam
+		try { reader?.setInventoryCallback(null) } catch (_: Throwable) {}
 		Log.d(tag, "🔥 Scanning stopped")
 		return true
 	}
@@ -114,25 +127,12 @@ class RfidScanManager(
 		isScanningInternal = false
 		onScanStateChanged?.invoke(false)
 		stopInventorySafely()
-		return if (settings.gracePeriodMs <= 0L) {
-			isGraceActive = false
-			// **NEW**: Trigger lookup saat stop (tanpa grace period)
-			triggerLookupForAllUniqueRfids()
-			onGracePeriodCompleted?.invoke()
-			Log.d(tag, "🔥 Scanning stopped (no grace period)")
-			true
-		} else {
-			isGraceActive = true
-			Log.d(tag, "🔥 Scanning stopped with grace period ${settings.gracePeriodMs}ms")
-			activity.window?.decorView?.postDelayed({
-				isGraceActive = false
-				// **NEW**: Trigger lookup saat grace period selesai
-				triggerLookupForAllUniqueRfids()
-				onGracePeriodCompleted?.invoke()
-                Log.d(tag, "🔥 Grace period completed (rfids=${epcIndexMap.size})")
-			}, settings.gracePeriodMs)
-			true
-		}
+		// **GRACE PERIOD REMOVED**: Langsung trigger lookup tanpa delay
+		isGraceActive = false
+		triggerLookupForAllUniqueRfids()
+		onGracePeriodCompleted?.invoke()
+		Log.d(tag, "🔥 Scanning stopped (grace period removed)")
+		return true
 	}
 
 
@@ -194,20 +194,21 @@ fun playBeepSound() {
 	fun refreshSettingsFromSharedPreferences() {
 		try {
 			val sharedPreferences = activity.getSharedPreferences("RFIDSettings", android.content.Context.MODE_PRIVATE)
-			val powerLevel = sharedPreferences.getInt("power_level", 20)
-			val rssiThreshold = sharedPreferences.getInt("rssi_threshold", -70)
-			val gracePeriod = sharedPreferences.getLong("grace_period", 0L)
+			val powerLevel = sharedPreferences.getInt("power_level", 25)
+			val rssiThreshold = sharedPreferences.getInt("rssi_threshold", -55)
+			
+			// **GRACE PERIOD REMOVED**: Tidak perlu baca grace_period dari SharedPreferences
 			
 			Log.d(tag, "🔥 === REFRESHING SETTINGS FROM SHAREDPREFERENCES ===")
 			Log.d(tag, "🔥 Raw SharedPreferences values:")
 			Log.d(tag, "🔥   - power_level: $powerLevel")
 			Log.d(tag, "🔥   - rssi_threshold: $rssiThreshold")
-			Log.d(tag, "🔥   - grace_period: $gracePeriod")
+			// **GRACE PERIOD REMOVED**: Tidak perlu log grace_period
 			
 			val newSettings = RfidScanSettings(
 				powerLevel = powerLevel,
 				duplicateRemovalEnabled = true, // Always enabled
-				gracePeriodMs = gracePeriod,
+				gracePeriodMs = 0L, // **GRACE PERIOD REMOVED**: Selalu 0
 				rssiThreshold = rssiThreshold
 			)
 			
@@ -217,6 +218,15 @@ fun playBeepSound() {
 		} catch (e: Exception) {
 			Log.e(tag, "❌ Error refreshing settings from SharedPreferences: ${e.message}", e)
 		}
+	}
+
+	/**
+	 * Force refresh settings from SharedPreferences
+	 * This method can be called from SettingsActivity when settings change
+	 */
+	fun forceRefreshSettings() {
+		Log.d(tag, "🔄 Force refreshing settings from SettingsActivity...")
+		refreshSettingsFromSharedPreferences()
 	}
 	
 	/**
@@ -257,6 +267,7 @@ fun playBeepSound() {
         epcList.clear()
         epcToProduct.clear()  // **PERBAIKAN KRITIS**: Clear lookup cache juga
         inFlightEpcs.clear()
+        seededPicklistNumber = null  // **PERBAIKAN BARU**: Reset seeded picklist
         onDataCleared?.invoke()
         
         Log.d(tag, "🔥 All data cleared: EPCs=$beforeEpcCount, Products=$beforeProductCount")
@@ -285,7 +296,7 @@ fun playBeepSound() {
      * Seed RfidScanManager dengan data EPC dari database
      * Dipanggil saat load picklist yang sudah pernah di-scan
      */
-    fun seedWithDatabaseEpcs(epcList: List<String>) {
+    fun seedWithDatabaseEpcs(epcList: List<String>, picklistNumber: String? = null) {
         Log.d(tag, "🔥 Seeding RfidScanManager with ${epcList.size} EPCs from database")
         
         // Seed epcIndexMap dan epcList
@@ -294,6 +305,12 @@ fun playBeepSound() {
                 epcIndexMap[epc] = index
                 this.epcList.add(epc)
             }
+        }
+        
+        // **PERBAIKAN BARU**: Track picklist yang sudah di-seed
+        if (picklistNumber != null) {
+            seededPicklistNumber = picklistNumber
+            Log.d(tag, "🔥 Marked picklist $picklistNumber as seeded")
         }
         
         Log.d(tag, "✅ Seeded RfidScanManager: ${epcIndexMap.size} EPCs in manager (no placeholder cache)")
@@ -363,6 +380,11 @@ fun playBeepSound() {
     fun getAllUniqueRfids(): List<String> = epcList.toList()
 
     fun getUniqueRfidCount(): Int = epcIndexMap.size
+    
+    /**
+     * Get picklist number that was last seeded
+     */
+    fun getSeededPicklistNumber(): String? = seededPicklistNumber
     
     /**
      * Trigger lookup untuk semua RFID unik yang tersimpan
@@ -541,8 +563,17 @@ fun playBeepSound() {
         lookupExecutor.execute {
             try {
                 val service = NirwanaApiService()
-                val products = kotlinx.coroutines.runBlocking { 
-                    service.batchLookupRfidList(epcsToLookup) 
+                // **PERBAIKAN**: Gunakan coroutine scope yang independen untuk menghindari cancellation
+                val products = try {
+                    kotlinx.coroutines.runBlocking(kotlinx.coroutines.Dispatchers.IO + kotlinx.coroutines.SupervisorJob()) { 
+                        service.batchLookupRfidList(epcsToLookup) 
+                    }
+                } catch (e: kotlinx.coroutines.CancellationException) {
+                    Log.w(tag, "⚠️ Batch lookup cancelled, returning empty list: ${e.message}")
+                    emptyList()
+                } catch (e: Exception) {
+                    Log.e(tag, "❌ Error in batch lookup: ${e.message}", e)
+                    emptyList()
                 }
                 
                 // Process results
@@ -556,25 +587,49 @@ fun playBeepSound() {
                 // Store lookup results
                 putLookupResults(resultMap)
                 
-                // Handle EPCs that were not found
+                // Handle EPCs that were not found atau API tidak tersedia
                 epcsToLookup.forEach { epc ->
                     if (!resultMap.containsKey(epc)) {
-                        epcToProduct[epc] =                         NirwanaApiService.ProductInfo(
-                            productId = "",
-                            productName = "NOT_FOUND",
-                            articleId = "",
-                            articleName = "NOT_FOUND",
-                            brand = "",
-                            category = "",
-                            subCategory = "",
-                            color = "",
-                            gender = "",
-                            size = "",
-                            warehouse = "",
-                            tagStatus = "",
-                            qty = 0,
-                            rfidList = listOf(epc)
-                        )
+                        // **PERBAIKAN**: Jika API tidak tersedia, gunakan fallback logic
+                        val fallbackProductInfo = if (products.isEmpty() && epcsToLookup.size > 0) {
+                            // API tidak tersedia, gunakan fallback
+                            Log.w(tag, "⚠️ API Nirwana tidak tersedia, menggunakan fallback untuk EPC: $epc")
+                            NirwanaApiService.ProductInfo(
+                                productId = "FALLBACK_${epc.takeLast(4)}",
+                                productName = "API_UNAVAILABLE",
+                                articleId = "FALLBACK_${epc.takeLast(4)}",
+                                articleName = "API_UNAVAILABLE",
+                                brand = "",
+                                category = "",
+                                subCategory = "",
+                                color = "",
+                                gender = "",
+                                size = "",
+                                warehouse = "",
+                                tagStatus = "API_UNAVAILABLE",
+                                qty = 1,
+                                rfidList = listOf(epc)
+                            )
+                        } else {
+                            // API tersedia tapi EPC tidak ditemukan
+                            NirwanaApiService.ProductInfo(
+                                productId = "",
+                                productName = "NOT_FOUND",
+                                articleId = "",
+                                articleName = "NOT_FOUND",
+                                brand = "",
+                                category = "",
+                                subCategory = "",
+                                color = "",
+                                gender = "",
+                                size = "",
+                                warehouse = "",
+                                tagStatus = "",
+                                qty = 0,
+                                rfidList = listOf(epc)
+                            )
+                        }
+                        epcToProduct[epc] = fallbackProductInfo
                     }
                 }
                 
@@ -627,8 +682,17 @@ fun playBeepSound() {
                 Log.d(tag, "🔥 Starting lookup for EPC: $epc")
                 
                 val service = NirwanaApiService()
-                val products = kotlinx.coroutines.runBlocking { 
-                    service.batchLookupRfidList(listOf(epc)) 
+                // **PERBAIKAN**: Gunakan coroutine scope yang independen untuk menghindari cancellation
+                val products = try {
+                    kotlinx.coroutines.runBlocking(kotlinx.coroutines.Dispatchers.IO + kotlinx.coroutines.SupervisorJob()) { 
+                        service.batchLookupRfidList(listOf(epc)) 
+                    }
+                } catch (e: kotlinx.coroutines.CancellationException) {
+                    Log.w(tag, "⚠️ Single lookup cancelled for EPC $epc: ${e.message}")
+                    emptyList()
+                } catch (e: Exception) {
+                    Log.e(tag, "❌ Error in single lookup for EPC $epc: ${e.message}", e)
+                    emptyList()
                 }
                 
                 if (products.isNotEmpty()) {
@@ -709,7 +773,18 @@ fun playBeepSound() {
                 override fun callback(uhfTagInfo: UHFTAGInfo) {
 					// Ignore any callbacks when not actively scanning or during grace period
 					if (!isScanningInternal || isGraceActive) {
-						Log.d(tag, "ℹ️ Callback ignored (scanning=$isScanningInternal, grace=$isGraceActive)")
+						// rate-limit this log: aggregate within 1s window
+						val now = System.currentTimeMillis()
+						if (lastIgnoredLogTimeMs == 0L || now - lastIgnoredLogTimeMs > ignoredLogIntervalMs) {
+							if (ignoredLogCounter > 0) {
+								Log.d(tag, "ℹ️ Callback ignored aggregated: $ignoredLogCounter")
+								ignoredLogCounter = 0
+							}
+							lastIgnoredLogTimeMs = now
+							Log.v(tag, "ℹ️ Callback ignored (scanning=$isScanningInternal, grace=$isGraceActive)")
+						} else {
+							ignoredLogCounter++
+						}
 						return
 					}
                     val epc = try { uhfTagInfo.getEPC() } catch (t: Throwable) { "" }
@@ -741,14 +816,15 @@ fun playBeepSound() {
 	private fun initializeSettingsFromSharedPreferences() {
 		try {
 			val sharedPreferences = activity.getSharedPreferences("RFIDSettings", android.content.Context.MODE_PRIVATE)
-			val powerLevel = sharedPreferences.getInt("power_level", 20)
-			val rssiThreshold = sharedPreferences.getInt("rssi_threshold", -70)
-			val gracePeriod = sharedPreferences.getLong("grace_period", 0L)
+			val powerLevel = sharedPreferences.getInt("power_level", 25)
+			val rssiThreshold = sharedPreferences.getInt("rssi_threshold", -55)
+			
+			// **GRACE PERIOD REMOVED**: Tidak perlu baca grace_period dari SharedPreferences
 			
 			settings = RfidScanSettings(
 				powerLevel = powerLevel,
 				duplicateRemovalEnabled = true, // Always enabled
-				gracePeriodMs = gracePeriod,
+				gracePeriodMs = 0L, // **GRACE PERIOD REMOVED**: Selalu 0
 				rssiThreshold = rssiThreshold
 			)
 			
@@ -827,7 +903,7 @@ fun playBeepSound() {
             Log.d(tag, "🔥 Power Level: ${settings.powerLevel}")
             Log.d(tag, "🔥 RSSI Threshold: ${settings.rssiThreshold}")
             Log.d(tag, "🔥 Duplicate Removal: ${settings.duplicateRemovalEnabled}")
-            Log.d(tag, "🔥 Grace Period: ${settings.gracePeriodMs}ms")
+            // **GRACE PERIOD REMOVED**: Tidak perlu log grace period
             
             // **VERIFIKASI HARDWARE**: Coba baca power level dari hardware
             try {
@@ -869,6 +945,354 @@ fun playBeepSound() {
 			reader?.stopInventory()
 		} catch (t: Throwable) {
 			Log.w(tag, "⚠️ stopInventory failed: ${t.message}")
+		}
+		// flush aggregated ignored logs if any
+		if (ignoredLogCounter > 0) {
+			Log.d(tag, "ℹ️ Callback ignored aggregated: $ignoredLogCounter events during stop window")
+			ignoredLogCounter = 0
+			lastIgnoredLogTimeMs = 0
+		}
+	}
+	
+	/**
+	 * Start radar location scanning
+	 */
+	fun startRadarLocation(
+		targetEpc: String,
+		callback: Any
+	): Boolean {
+		return try {
+			Log.d(tag, "🔥 Starting radar location for EPC: $targetEpc")
+			
+			if (reader == null) {
+				Log.e(tag, "❌ RFID reader not initialized")
+				Log.e(tag, "   Reader instance is null - need to initialize first")
+				return false
+			}
+			
+			// **CRITICAL**: Stop any ongoing scanning before starting radar location
+			if (isScanningInternal) {
+				Log.d(tag, "🛑 Stopping ongoing scanning before radar location...")
+				stopInventorySafely()
+				isScanningInternal = false
+				onScanStateChanged?.invoke(false)
+				Log.d(tag, "✅ Normal scanning stopped for radar location")
+			}
+			
+			// **CRITICAL**: Try to set hardware to radar mode
+			Log.d(tag, "📡 Attempting to set hardware to radar mode...")
+			try {
+				// Try to stop any existing radar location first
+				reader!!.stopRadarLocation()
+				Log.d(tag, "📡 Stopped any existing radar location")
+			} catch (e: Exception) {
+				Log.w(tag, "⚠️ Could not stop existing radar location: ${e.message}")
+			}
+			
+			// Try to set power to maximum for radar
+			try {
+				reader!!.setPower(30) // Max power
+				Log.d(tag, "📡 Set power to maximum (30) for radar")
+			} catch (e: Exception) {
+				Log.w(tag, "⚠️ Could not set power: ${e.message}")
+			}
+			
+			// Try to set dynamic distance to maximum
+			try {
+				reader!!.setDynamicDistance(5) // Min distance = max range
+				Log.d(tag, "📡 Set dynamic distance to maximum (5)")
+			} catch (e: Exception) {
+				Log.w(tag, "⚠️ Could not set dynamic distance: ${e.message}")
+			}
+			
+			// Try to set EPC mode again
+			try {
+				reader!!.setEPCMode()
+				Log.d(tag, "📡 Set EPC mode for radar")
+			} catch (e: Exception) {
+				Log.w(tag, "⚠️ Could not set EPC mode: ${e.message}")
+			}
+			
+			// Try to reset hardware state
+			try {
+				reader!!.free()
+				Thread.sleep(100) // Small delay
+				reader!!.init(context)
+				Log.d(tag, "📡 Hardware reset and re-initialized for radar")
+			} catch (e: Exception) {
+				Log.w(tag, "⚠️ Could not reset hardware: ${e.message}")
+			}
+			
+			// Try to set power again after reset
+			try {
+				reader!!.setPower(30)
+				Log.d(tag, "📡 Power set to 30 after reset")
+			} catch (e: Exception) {
+				Log.w(tag, "⚠️ Could not set power after reset: ${e.message}")
+			}
+			
+			// Try to set dynamic distance again after reset
+			try {
+				reader!!.setDynamicDistance(5)
+				Log.d(tag, "📡 Dynamic distance set to 5 after reset")
+			} catch (e: Exception) {
+				Log.w(tag, "⚠️ Could not set dynamic distance after reset: ${e.message}")
+			}
+			
+			// Try to set EPC mode again after reset
+			try {
+				reader!!.setEPCMode()
+				Log.d(tag, "📡 EPC mode set after reset")
+			} catch (e: Exception) {
+				Log.w(tag, "⚠️ Could not set EPC mode after reset: ${e.message}")
+			}
+			
+			// Reader is already initialized in init block, no need to check connection separately
+			Log.d(tag, "📡 Reader is ready (already initialized)")
+			
+			// Validate EPC format
+			Log.d(tag, "📡 Validating EPC format...")
+			Log.d(tag, "   - EPC length: ${targetEpc.length}")
+			Log.d(tag, "   - EPC is hex: ${targetEpc.matches(Regex("[0-9A-Fa-f]+"))}")
+			
+			// Try different EPC lengths if needed
+			val processedEpc = if (targetEpc.length % 2 == 1) {
+				// Add leading zero if odd length
+				"0$targetEpc"
+			} else {
+				targetEpc
+			}
+			
+			Log.d(tag, "📡 Calling reader.startRadarLocation() with parameters:")
+			Log.d(tag, "   - Context: $context")
+			Log.d(tag, "   - Target EPC: $processedEpc (original: $targetEpc)")
+			Log.d(tag, "   - Bank: ${IUHF.Bank_EPC}")
+			Log.d(tag, "   - Length: 32")
+			
+			var result = reader!!.startRadarLocation(
+				context,
+				processedEpc,
+				IUHF.Bank_EPC,
+				32,
+				/* removed radar callback */ null
+			)
+			
+			Log.d(tag, "📡 reader.startRadarLocation() returned: $result")
+			
+			// If failed, try with different parameters
+			if (!result) {
+				Log.d(tag, "📡 Trying alternative parameters...")
+				
+				// Try with different length
+				result = reader!!.startRadarLocation(
+					context,
+					processedEpc,
+					IUHF.Bank_EPC,
+					16,
+					/* removed radar callback */ null
+				)
+				Log.d(tag, "📡 Alternative length 16 returned: $result")
+				
+				// If still failed, try with different bank
+				if (!result) {
+					result = reader!!.startRadarLocation(
+						context,
+						processedEpc,
+						IUHF.Bank_TID,
+						16,
+						/* removed radar callback */ null
+					)
+					Log.d(tag, "📡 Alternative bank TID returned: $result")
+				}
+			}
+			
+			if (result) {
+				Log.d(tag, "✅ Radar location started successfully")
+			} else {
+				Log.e(tag, "❌ Failed to start radar location with all attempts")
+				Log.e(tag, "   This usually means:")
+				Log.e(tag, "   - Hardware not properly initialized")
+				Log.e(tag, "   - Invalid EPC format")
+				Log.e(tag, "   - Hardware busy with other operations")
+				Log.e(tag, "   - Insufficient permissions")
+				Log.e(tag, "   - Hardware doesn't support radar location mode")
+			}
+			
+			result
+		} catch (e: Exception) {
+			Log.e(tag, "❌ Error starting radar location: ${e.message}", e)
+			Log.e(tag, "   Exception type: ${e.javaClass.simpleName}")
+			false
+		}
+	}
+	
+	/**
+	 * Stop radar location scanning
+	 */
+fun stopRadarLocation(): Boolean {
+		return try {
+			Log.d(tag, "🔥 Stopping radar location")
+			
+			if (reader == null) {
+				Log.e(tag, "❌ RFID reader not initialized")
+				return false
+			}
+			
+			val result = try { reader!!.stopRadarLocation() } catch (e: Exception) { false }
+			
+			if (result) {
+				Log.d(tag, "✅ Radar location stopped successfully")
+			} else {
+				Log.e(tag, "❌ Failed to stop radar location")
+			}
+			
+			result
+		} catch (e: Exception) {
+			Log.e(tag, "❌ Error stopping radar location: ${e.message}", e)
+			false
+		}
+	}
+	
+	/**
+	 * Set dynamic distance (power) for location
+	 * Note: Dynamic distance is different from power level
+	 * - Dynamic distance: Controls location range (5=min distance=max range, 30=max distance=min range)
+	 * - Power level: Controls transmission power for scanning
+	 */
+	fun setDynamicDistance(power: Int): Boolean {
+		return try {
+			Log.d(tag, "🔥 Setting dynamic distance to: $power")
+			
+			if (reader == null) {
+				Log.e(tag, "❌ RFID reader not initialized")
+				return false
+			}
+			
+			// For location, we only need to set dynamic distance, not power level
+			val result = reader!!.setDynamicDistance(power)
+			
+			if (result) {
+				Log.d(tag, "✅ Dynamic distance set successfully")
+				Log.d(tag, "📊 Location range: ${if (power <= 10) "MAXIMUM" else if (power <= 20) "MEDIUM" else "MINIMUM"}")
+			} else {
+				Log.e(tag, "❌ Failed to set dynamic distance")
+			}
+			
+			result
+		} catch (e: Exception) {
+			Log.e(tag, "❌ Error setting dynamic distance: ${e.message}", e)
+			false
+		}
+	}
+	
+	/**
+	 * Start location scanning (simple distance measurement)
+	 * @param targetEpc Target EPC to locate
+	 * @param callback Callback for location updates
+	 * @return true if started successfully
+	 */
+	fun startLocation(
+		targetEpc: String,
+		callback: com.rscja.deviceapi.interfaces.IUHFLocationCallback
+	): Boolean {
+		return try {
+			Log.d(tag, "🎯 Starting location for EPC: $targetEpc")
+			
+			if (reader == null) {
+				Log.e(tag, "❌ RFID reader not initialized")
+				return false
+			}
+			
+			// Process EPC format
+			val processedEpc = if (targetEpc.length % 2 == 0) {
+				targetEpc
+			} else {
+				"0$targetEpc"
+			}
+			
+			// Set default dynamic distance (power) before starting location
+			// Note: Dynamic distance 5 = minimum distance = maximum range
+			Log.d(tag, "🎯 Setting default dynamic distance to 5...")
+			try {
+				reader!!.setDynamicDistance(5)
+				Log.d(tag, "✅ Default dynamic distance set to 5 (maximum range)")
+			} catch (e: Exception) {
+				Log.w(tag, "⚠️ Could not set default dynamic distance: ${e.message}")
+			}
+			
+			Log.d(tag, "🎯 Calling reader.startLocation() with parameters:")
+			Log.d(tag, "   - Context: $context")
+			Log.d(tag, "   - Target EPC: $processedEpc (original: $targetEpc)")
+			Log.d(tag, "   - Bank: ${com.rscja.deviceapi.interfaces.IUHF.Bank_EPC}")
+			Log.d(tag, "   - Length: 32")
+			
+			val result = reader!!.startLocation(
+				context,
+				processedEpc,
+				com.rscja.deviceapi.interfaces.IUHF.Bank_EPC,
+				32,
+				callback
+			)
+			
+			Log.d(tag, "🎯 reader.startLocation() returned: $result")
+			
+			if (result) {
+				Log.d(tag, "✅ Location started successfully")
+			} else {
+				Log.e(tag, "❌ Failed to start location")
+				Log.e(tag, "   Possible causes:")
+				Log.e(tag, "   - RFID hardware not connected")
+				Log.e(tag, "   - Invalid EPC format")
+				Log.e(tag, "   - Hardware not initialized properly")
+			}
+			
+			result
+		} catch (e: Exception) {
+			Log.e(tag, "❌ Error starting location: ${e.message}", e)
+			false
+		}
+	}
+	
+	/**
+	 * Stop location scanning
+	 * @return true if stopped successfully
+	 */
+	fun stopLocation(): Boolean {
+		return try {
+			Log.d(tag, "🎯 Stopping location")
+			
+			if (reader == null) {
+				Log.e(tag, "❌ RFID reader not initialized")
+				return false
+			}
+			
+			val result = reader!!.stopLocation()
+			
+			if (result) {
+				Log.d(tag, "✅ Location stopped successfully")
+			} else {
+				Log.e(tag, "❌ Failed to stop location")
+			}
+			
+			result
+		} catch (e: Exception) {
+			Log.e(tag, "❌ Error stopping location: ${e.message}", e)
+			false
+		}
+	}
+	
+	/**
+	 * Release RFID reader resources
+	 */
+	fun release() {
+		try {
+			if (reader != null) {
+				reader!!.free()
+				Log.d(tag, "✅ RFID Reader freed successfully")
+			}
+			reader = null
+		} catch (e: Exception) {
+			Log.e(tag, "❌ Error releasing RFID Reader: ${e.message}", e)
 		}
 	}
 }

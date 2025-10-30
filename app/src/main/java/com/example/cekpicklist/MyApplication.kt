@@ -4,6 +4,7 @@ import android.app.Application
 import android.util.Log
 import com.example.cekpicklist.cache.CacheWarmingService
 import com.example.cekpicklist.cache.CacheManager
+import com.example.cekpicklist.sync.SyncManager
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -16,6 +17,7 @@ class MyApplication : Application() {
     
     private lateinit var cacheWarmingService: CacheWarmingService
     private lateinit var cacheManager: CacheManager
+    private lateinit var syncManager: SyncManager
     
     companion object {
         private const val TAG = "MyApplication"
@@ -32,11 +34,17 @@ class MyApplication : Application() {
         // Initialize cache warming service
         cacheWarmingService = CacheWarmingService(this)
         
+        // Initialize sync manager
+        syncManager = SyncManager(this)
+        
         // Start cache warming
         startCacheWarming()
         
         // Load cache dari database
         loadCacheFromDatabase()
+        
+        // Start background sync
+        startBackgroundSync()
         
         Log.d(TAG, "✅ Application initialized successfully")
     }
@@ -77,9 +85,31 @@ class MyApplication : Application() {
     }
     
     /**
+     * Start background sync service
+     */
+    private fun startBackgroundSync() {
+        CoroutineScope(SupervisorJob() + Dispatchers.IO).launch {
+            try {
+                Log.d(TAG, "🔄 Starting background sync service...")
+                syncManager.schedulePeriodicSync()
+                Log.d(TAG, "✅ Background sync service started")
+            } catch (e: Exception) {
+                Log.e(TAG, "❌ Error starting background sync service: ${e.message}", e)
+            }
+        }
+    }
+    
+    /**
      * Get cache manager instance
      */
     fun getCacheManager(): CacheManager {
         return cacheManager
+    }
+    
+    /**
+     * Get sync manager instance
+     */
+    fun getSyncManager(): SyncManager {
+        return syncManager
     }
 }
