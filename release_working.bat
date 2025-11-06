@@ -210,7 +210,7 @@ if %errorlevel% neq 0 (
     echo.
     echo 🔍 Build errors (last 30 lines):
     echo =======================================
-    powershell -Command "Get-Content build_log.txt -Tail 30"
+    powershell -Command Get-Content build_log.txt -Tail 30
     echo =======================================
     echo.
     echo 📄 Full build log saved to: build_log.txt
@@ -383,28 +383,41 @@ echo.
 echo 📦 Step 7: Create GitHub Release...
 echo.
 
-REM Check if GitHub CLI is installed
+REM Check if GitHub CLI is installed (with PATH refresh fallback)
 where gh >nul 2>&1
 if %errorlevel% neq 0 (
-    echo ⚠️ GitHub CLI not found - Skipping GitHub Release creation
-    echo.
-    echo 💡 To enable automated GitHub Release:
-    echo    • Install GitHub CLI: winget install --id GitHub.cli
-    echo    • Or manually create release at: https://github.com/koden01/cekpicklist/releases/new
-    echo.
-    goto skip_github_release
+    REM Try to refresh PATH and check again (for freshly installed gh CLI)
+    powershell -Command "$env:Path = [System.Environment]::GetEnvironmentVariable('Path','Machine') + ';' + [System.Environment]::GetEnvironmentVariable('Path','User'); $null = Get-Command gh -ErrorAction Stop; exit 0" >nul 2>&1
+    if %errorlevel% neq 0 (
+        echo ⚠️ GitHub CLI not found - Skipping GitHub Release creation
+        echo.
+        echo 💡 To enable automated GitHub Release:
+        echo    • Install GitHub CLI: winget install --id GitHub.cli
+        echo    • Restart PowerShell/Terminal after installation
+        echo    • Or manually create release at: https://github.com/koden01/cekpicklist/releases/new
+        echo.
+        goto skip_github_release
+    ) else (
+        echo ℹ️ GitHub CLI found after PATH refresh
+    )
 )
 
 echo ✅ GitHub CLI found
 echo.
 
-REM Check if already authenticated
+REM Check if already authenticated (refresh PATH first if needed)
+where gh >nul 2>&1
+if %errorlevel% neq 0 (
+    powershell -Command "$env:Path = [System.Environment]::GetEnvironmentVariable('Path','Machine') + ';' + [System.Environment]::GetEnvironmentVariable('Path','User')" >nul 2>&1
+)
+
 gh auth status >nul 2>&1
 if %errorlevel% neq 0 (
     echo ⚠️ Not authenticated with GitHub - Skipping GitHub Release creation
     echo.
     echo 💡 To authenticate:
     echo    • Run: gh auth login
+    echo    • Or run: .\install_github_cli.bat (will guide through auth)
     echo.
     goto skip_github_release
 )
