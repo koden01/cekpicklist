@@ -378,7 +378,124 @@ if %errorlevel% neq 0 (
 echo.
 echo ✅ Push to remote completed
 
-REM Step 7: Summary
+REM Step 7: Create GitHub Release
+echo.
+echo 📦 Step 7: Create GitHub Release...
+echo.
+
+REM Check if GitHub CLI is installed
+where gh >nul 2>&1
+if %errorlevel% neq 0 (
+    echo ⚠️ GitHub CLI not found - Skipping GitHub Release creation
+    echo.
+    echo 💡 To enable automated GitHub Release:
+    echo    • Install GitHub CLI: winget install --id GitHub.cli
+    echo    • Or manually create release at: https://github.com/koden01/cekpicklist/releases/new
+    echo.
+    goto skip_github_release
+)
+
+echo ✅ GitHub CLI found
+echo.
+
+REM Check if already authenticated
+gh auth status >nul 2>&1
+if %errorlevel% neq 0 (
+    echo ⚠️ Not authenticated with GitHub - Skipping GitHub Release creation
+    echo.
+    echo 💡 To authenticate:
+    echo    • Run: gh auth login
+    echo.
+    goto skip_github_release
+)
+
+echo ✅ Authenticated with GitHub
+echo.
+
+REM Check if release already exists
+echo 🔍 Checking if release v%new_version% already exists...
+gh release view "v%new_version%" >nul 2>&1
+if %errorlevel% equ 0 (
+    echo ⚠️ Release v%new_version% already exists!
+    echo.
+    set /p overwrite_release="Delete and recreate release? (y/N): "
+    if /i "%overwrite_release%"=="Y" (
+        echo Deleting existing release...
+        gh release delete "v%new_version%" --yes
+        if %errorlevel% neq 0 (
+            echo ❌ Failed to delete existing release
+            goto skip_github_release
+        )
+        echo ✅ Deleted existing release
+    ) else (
+        echo Skipping GitHub Release creation
+        goto skip_github_release
+    )
+)
+
+echo.
+echo 📦 Creating GitHub Release v%new_version%...
+echo.
+
+REM Create release notes
+set "release_title=v%new_version%"
+if not "%release_notes%"=="" (
+    set "release_title=v%new_version% - %release_notes%"
+)
+
+REM Create release notes file
+echo ## 🎉 Release v%new_version% > release_notes_temp.md
+echo. >> release_notes_temp.md
+echo ### 📝 Release Notes >> release_notes_temp.md
+echo. >> release_notes_temp.md
+echo %release_notes% >> release_notes_temp.md
+echo. >> release_notes_temp.md
+echo ### 📱 Download ^& Install >> release_notes_temp.md
+echo. >> release_notes_temp.md
+echo Download APK file below and install directly on your device. >> release_notes_temp.md
+echo. >> release_notes_temp.md
+echo ### 🔄 Auto Update >> release_notes_temp.md
+echo. >> release_notes_temp.md
+echo The app will automatically detect this update and offer direct download ^& install from within the app! >> release_notes_temp.md
+echo. >> release_notes_temp.md
+echo ### 📊 Build Information >> release_notes_temp.md
+echo. >> release_notes_temp.md
+echo - **Version Name**: %new_version% >> release_notes_temp.md
+echo - **Build Date**: %date% %time% >> release_notes_temp.md
+echo - **Branch**: %current_branch% >> release_notes_temp.md
+echo. >> release_notes_temp.md
+echo --- >> release_notes_temp.md
+echo. >> release_notes_temp.md
+echo **Full Changelog**: https://github.com/koden01/cekpicklist/compare/v5.1.4...v%new_version% >> release_notes_temp.md
+
+REM Create release with APK
+gh release create "v%new_version%" "CekPicklist-v%new_version%-release.apk" ^
+    --title "%release_title%" ^
+    --notes-file release_notes_temp.md ^
+    --latest
+
+if %errorlevel% equ 0 (
+    echo.
+    echo ✅ GitHub Release created successfully!
+    echo.
+    echo 🔗 View release: https://github.com/koden01/cekpicklist/releases/tag/v%new_version%
+    echo 📥 Download URL: https://github.com/koden01/cekpicklist/releases/download/v%new_version%/CekPicklist-v%new_version%-release.apk
+    echo.
+    echo 🔄 Auto-update in app will now work!
+    echo.
+) else (
+    echo ❌ Failed to create GitHub Release
+    echo.
+    echo 💡 You can create it manually:
+    echo    • Go to: https://github.com/koden01/cekpicklist/releases/new
+    echo    • Tag: v%new_version%
+    echo    • Upload: CekPicklist-v%new_version%-release.apk
+    echo.
+)
+
+:skip_github_release
+
+REM Step 8: Summary
 echo.
 echo ========================================================================
 echo 🎉 RELEASE COMPLETED SUCCESSFULLY!
@@ -398,6 +515,18 @@ echo    • Branch: %current_branch%
 echo    • Pushed to: origin/%current_branch%
 echo    • README: Updated with version %new_version%
 echo.
+echo 📦 GitHub Release:
+where gh >nul 2>&1
+if %errorlevel% equ 0 (
+    echo    • Status: Created automatically ✅
+    echo    • URL: https://github.com/koden01/cekpicklist/releases/tag/v%new_version%
+    echo    • Auto-update: Ready ✅
+) else (
+    echo    • Status: Manual creation needed ⚠️
+    echo    • URL: https://github.com/koden01/cekpicklist/releases/new
+    echo    • Note: Auto-update won't work until release is created
+)
+echo.
 echo 📂 Files Generated:
 echo    • CekPicklist-v%new_version%-release.apk (in project root)
 echo    • build_log.txt (build details)
@@ -405,7 +534,7 @@ echo.
 echo 🔗 Next Steps:
 echo    • Install APK on device for testing
 echo    • Verify changes on GitHub repository
-echo    • Create GitHub release if needed
+echo    • Test auto-update from previous version
 echo    • Distribute APK to users
 echo.
 echo ========================================================================
@@ -420,6 +549,7 @@ echo.
 REM Cleanup temporary files
 echo 🧹 Cleaning up temporary files...
 del version.txt 2>nul
+del release_notes_temp.md 2>nul
 
 REM Ask if user wants to keep build log
 set /p keep_log="Keep build_log.txt for reference? (Y/N, default: N): "
