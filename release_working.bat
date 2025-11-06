@@ -197,12 +197,14 @@ if %errorlevel% neq 0 (
 )
 
 echo.
-echo 🔨 Building release APK (this may take a few minutes)...
-echo 📝 Build log will be saved to build_log.txt
+echo 🔨 Building release APK...
+echo ⏰ This will take 3-5 minutes, please wait...
+echo 📝 Build progress will be shown below:
+echo ========================================
 echo.
 
-REM Build APK dengan redirect output untuk debugging
-call .\gradlew.bat assembleRelease -x test --no-daemon > build_log.txt 2>&1
+REM Build APK - Show progress di console
+call .\gradlew.bat assembleRelease -x test
 
 REM Check build result
 if %errorlevel% neq 0 (
@@ -456,36 +458,35 @@ if not "%release_notes%"=="" (
     set "release_title=v%new_version% - %release_notes%"
 )
 
-REM Create release notes file
-echo ## 🎉 Release v%new_version% > release_notes_temp.md
-echo. >> release_notes_temp.md
-echo ### 📝 Release Notes >> release_notes_temp.md
-echo. >> release_notes_temp.md
-echo %release_notes% >> release_notes_temp.md
-echo. >> release_notes_temp.md
-echo ### 📱 Download ^& Install >> release_notes_temp.md
-echo. >> release_notes_temp.md
-echo Download APK file below and install directly on your device. >> release_notes_temp.md
-echo. >> release_notes_temp.md
-echo ### 🔄 Auto Update >> release_notes_temp.md
-echo. >> release_notes_temp.md
-echo The app will automatically detect this update and offer direct download ^& install from within the app! >> release_notes_temp.md
-echo. >> release_notes_temp.md
-echo ### 📊 Build Information >> release_notes_temp.md
-echo. >> release_notes_temp.md
-echo - **Version Name**: %new_version% >> release_notes_temp.md
-echo - **Build Date**: %date% %time% >> release_notes_temp.md
-echo - **Branch**: %current_branch% >> release_notes_temp.md
-echo. >> release_notes_temp.md
-echo --- >> release_notes_temp.md
-echo. >> release_notes_temp.md
-echo **Full Changelog**: https://github.com/koden01/cekpicklist/compare/v5.1.4...v%new_version% >> release_notes_temp.md
+REM Create release notes using PowerShell (safer untuk special characters)
+powershell -Command "$notes = @'^
+## 🎉 Release v%new_version%^
+
+### 📝 Release Notes^
+
+%release_notes%^
+
+### 📱 Download & Install^
+
+Download APK file below and install directly on your device.^
+
+### 🔄 Auto Update^
+
+The app will automatically detect this update and offer direct download & install from within the app!^
+
+### 📊 Build Information^
+
+- Version Name: %new_version%^
+- Build Date: %date% %time%^
+- Branch: %current_branch%^
+
+---^
+
+Full Changelog: https://github.com/koden01/cekpicklist/compare/v5.1.4...v%new_version%^
+'@; $notes | Out-File -FilePath 'release_notes_temp.md' -Encoding UTF8"
 
 REM Create release with APK
-gh release create "v%new_version%" "CekPicklist-v%new_version%-release.apk" ^
-    --title "%release_title%" ^
-    --notes-file release_notes_temp.md ^
-    --latest
+gh release create "v%new_version%" "CekPicklist-v%new_version%-release.apk" --title "%release_title%" --notes-file release_notes_temp.md --latest
 
 if %errorlevel% equ 0 (
     echo.
