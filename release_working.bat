@@ -135,13 +135,13 @@ powershell.exe -ExecutionPolicy Bypass -NoProfile -Command ".\simple_version.ps1
 if %errorlevel% neq 0 (
     echo ❌ Versioning failed!
     echo.
-    echo 🔍 Debug information:
-    echo    • PowerShell execution policy: 
+    echo 🔍 Debug information
+    echo    • PowerShell execution policy = 
     powershell.exe -Command "Get-ExecutionPolicy"
-    echo    • Current directory: %CD%
-    echo    • Script exists: 
+    echo    • Current directory = %CD%
+    echo    • Script exists = 
     if exist "simple_version.ps1" (echo YES) else (echo NO)
-    echo    • Build.gradle.kts exists: 
+    echo    • Build.gradle.kts exists = 
     if exist "app\build.gradle.kts" (echo YES) else (echo NO)
     pause
     exit /b 1
@@ -164,12 +164,12 @@ powershell.exe -ExecutionPolicy Bypass -NoProfile -Command ".\update_readme.ps1 
 if %errorlevel% neq 0 (
     echo ❌ README update failed!
     echo.
-    echo 🔍 Debug information:
-    echo    • README.md exists: 
+    echo 🔍 Debug information
+    echo    • README.md exists = 
     if exist "README.md" (echo YES) else (echo NO)
-    echo    • Update script exists: 
+    echo    • Update script exists = 
     if exist "update_readme.ps1" (echo YES) else (echo NO)
-    echo    • Version parameter: %new_version%
+    echo    • Version parameter = %new_version%
     pause
     exit /b 1
 )
@@ -180,9 +180,9 @@ echo 🔨 Step 3: Building APK...
 REM Check if gradlew exists
 if not exist "gradlew.bat" (
     echo ❌ gradlew.bat not found!
-    echo 🔍 Debug information:
-    echo    • Current directory: %CD%
-    echo    • Files in directory:
+    echo 🔍 Debug information
+    echo    • Current directory = %CD%
+    echo    • Files in directory =
     dir /b
     pause
     exit /b 1
@@ -210,17 +210,12 @@ REM Check build result
 if %errorlevel% neq 0 (
     echo ❌ Build failed!
     echo.
-    echo 🔍 Build errors (last 30 lines):
-    echo =======================================
-    powershell -Command Get-Content build_log.txt -Tail 30
-    echo =======================================
-    echo.
-    echo 📄 Full build log saved to: build_log.txt
-    echo.
-    echo 💡 Common fixes:
+    echo 🔍 Common fixes
     echo    • Check for missing imports in Kotlin files
-    echo    • Run: .\gradlew.bat clean assembleRelease --stacktrace
+    echo    • Run gradlew.bat clean assembleRelease --stacktrace
     echo    • Check Android SDK is properly configured
+    echo    • Close Android Studio and stop Gradle daemons
+    echo    • Delete app\build folder and try again
     echo.
     pause
     exit /b 1
@@ -234,15 +229,15 @@ echo 📱 Step 4: Packaging APK...
 REM Check if APK exists
 if not exist "app\build\outputs\apk\release\app-release.apk" (
     echo ❌ APK file not found!
-    echo 🔍 Debug information:
-    echo    • Expected path: app\build\outputs\apk\release\app-release.apk
-    echo    • Build outputs directory exists: 
+    echo 🔍 Debug information
+    echo    • Expected path = app\build\outputs\apk\release\app-release.apk
+    echo    • Build outputs directory exists = 
     if exist "app\build\outputs" (echo YES) else (echo NO)
-    echo    • APK directory exists: 
+    echo    • APK directory exists = 
     if exist "app\build\outputs\apk" (echo YES) else (echo NO)
-    echo    • Release directory exists: 
+    echo    • Release directory exists = 
     if exist "app\build\outputs\apk\release" (echo YES) else (echo NO)
-    echo    • Files in release directory:
+    echo    • Files in release directory =
     if exist "app\build\outputs\apk\release" dir "app\build\outputs\apk\release"
     pause
     exit /b 1
@@ -252,11 +247,10 @@ copy "app\build\outputs\apk\release\app-release.apk" "CekPicklist-v%new_version%
 
 if %errorlevel% neq 0 (
     echo ❌ APK packaging failed!
-    echo 🔍 Debug information:
-    echo    • Source file exists: 
+    echo 🔍 Debug information
+    echo    • Source file exists = 
     if exist "app\build\outputs\apk\release\app-release.apk" (echo YES) else (echo NO)
-    echo    • Target directory writable: 
-    echo %CD%
+    echo    • Target directory = %CD%
     pause
     exit /b 1
 )
@@ -345,15 +339,15 @@ if %errorlevel% neq 0 (
         if %errorlevel% neq 0 (
             echo ❌ All push attempts failed!
             echo.
-            echo 🔍 Debug information:
-            echo    • Current branch: %current_branch%
-            echo    • Remote branches:
+            echo 🔍 Debug information
+            echo    • Current branch = %current_branch%
+            echo    • Remote branches =
             git branch -r
             echo.
-            echo 💡 Possible fixes:
+            echo 💡 Possible fixes
             echo    • Check your Git authentication
             echo    • Verify remote repository is accessible
-            echo    • Try manually: git push origin %current_branch%
+            echo    • Try manually - git push origin %current_branch%
             echo.
             pause
             exit /b 1
@@ -393,10 +387,10 @@ if %errorlevel% neq 0 (
     if %errorlevel% neq 0 (
         echo ⚠️ GitHub CLI not found - Skipping GitHub Release creation
         echo.
-        echo 💡 To enable automated GitHub Release:
-        echo    • Install GitHub CLI: winget install --id GitHub.cli
-        echo    • Restart PowerShell/Terminal after installation
-        echo    • Or manually create release at: https://github.com/koden01/cekpicklist/releases/new
+    echo 💡 To enable automated GitHub Release
+    echo    • Install GitHub CLI - winget install --id GitHub.cli
+    echo    • Restart PowerShell/Terminal after installation
+    echo    • Or manually create release at GitHub releases page
         echo.
         goto skip_github_release
     ) else (
@@ -417,9 +411,9 @@ gh auth status >nul 2>&1
 if %errorlevel% neq 0 (
     echo ⚠️ Not authenticated with GitHub - Skipping GitHub Release creation
     echo.
-    echo 💡 To authenticate:
-    echo    • Run: gh auth login
-    echo    • Or run: .\install_github_cli.bat (will guide through auth)
+    echo 💡 To authenticate
+    echo    • Run gh auth login
+    echo    • Or run install_github_cli.bat (will guide through auth)
     echo.
     goto skip_github_release
 )
@@ -500,10 +494,10 @@ if %errorlevel% equ 0 (
 ) else (
     echo ❌ Failed to create GitHub Release
     echo.
-    echo 💡 You can create it manually:
-    echo    • Go to: https://github.com/koden01/cekpicklist/releases/new
-    echo    • Tag: v%new_version%
-    echo    • Upload: CekPicklist-v%new_version%-release.apk
+    echo 💡 You can create it manually
+    echo    • Go to https://github.com/koden01/cekpicklist/releases/new
+    echo    • Tag = v%new_version%
+    echo    • Upload = CekPicklist-v%new_version%-release.apk
     echo.
 )
 
@@ -515,37 +509,36 @@ echo ========================================================================
 echo 🎉 RELEASE COMPLETED SUCCESSFULLY!
 echo ========================================================================
 echo.
-echo 📱 APK Information:
-echo    • File: CekPicklist-v%new_version%-release.apk
-echo    • Version: %new_version%
-echo    • Build Date: %date% %time%
+echo 📱 APK Information
+echo    • File = CekPicklist-v%new_version%-release.apk
+echo    • Version = %new_version%
+echo    • Build Date = %date% %time%
 for %%A in ("CekPicklist-v%new_version%-release.apk") do set apk_size=%%~zA
-echo    • File Size: %apk_size% bytes
+echo    • File Size = %apk_size% bytes
 echo.
-echo 📝 Git Information:
-echo    • Commit Message: 🚀 Release v%new_version% %release_notes%
-echo    • Tag: v%new_version%
-echo    • Branch: %current_branch%
-echo    • Pushed to: origin/%current_branch%
-echo    • README: Updated with version %new_version%
+echo 📝 Git Information
+echo    • Commit Message = Release v%new_version% %release_notes%
+echo    • Tag = v%new_version%
+echo    • Branch = %current_branch%
+echo    • Pushed to = origin/%current_branch%
+echo    • README = Updated with version %new_version%
 echo.
-echo 📦 GitHub Release:
+echo 📦 GitHub Release
 where gh >nul 2>&1
 if %errorlevel% equ 0 (
-    echo    • Status: Created automatically ✅
-    echo    • URL: https://github.com/koden01/cekpicklist/releases/tag/v%new_version%
-    echo    • Auto-update: Ready ✅
+    echo    • Status = Created automatically ✅
+    echo    • URL = https://github.com/koden01/cekpicklist/releases/tag/v%new_version%
+    echo    • Auto-update = Ready ✅
 ) else (
-    echo    • Status: Manual creation needed ⚠️
-    echo    • URL: https://github.com/koden01/cekpicklist/releases/new
-    echo    • Note: Auto-update won't work until release is created
+    echo    • Status = Manual creation needed ⚠️
+    echo    • URL = https://github.com/koden01/cekpicklist/releases/new
+    echo    • Note = Auto-update won't work until release is created
 )
 echo.
-echo 📂 Files Generated:
+echo 📂 Files Generated
 echo    • CekPicklist-v%new_version%-release.apk (in project root)
-echo    • build_log.txt (build details)
 echo.
-echo 🔗 Next Steps:
+echo 🔗 Next Steps
 echo    • Install APK on device for testing
 echo    • Verify changes on GitHub repository
 echo    • Test auto-update from previous version
