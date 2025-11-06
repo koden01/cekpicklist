@@ -22,6 +22,8 @@ import com.example.cekpicklist.utils.BarcodeToastManager
 import com.example.cekpicklist.validation.ExpedisiValidator
 import com.example.cekpicklist.api.BarcodeExpedisiService
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
 import android.util.Log
 
 class BarcodeInputFragment : Fragment() {
