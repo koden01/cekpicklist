@@ -1107,7 +1107,7 @@ class BarcodeScannerViewModel(application: Application) : AndroidViewModel(appli
             
             Log.d(TAG, "  - Total records matching (today + expedition='$expedition'): $total")
             
-            // Scan: dari cache tbl_resi hari ini dengan Keterangan = expedition
+            // Scan: dari cache tbl_resi hari ini dengan Keterangan = expedition DAN schedule = "ontime"
             val resiRecords = enhancedRepository.getBarcodeResiRecords()
             val scanned = resiRecords.count { rec ->
                 val dateOk = try {
@@ -1117,7 +1117,9 @@ class BarcodeScannerViewModel(application: Application) : AndroidViewModel(appli
                         java.time.LocalDate.parse(datePart) == todayDate
                     }
                 } catch (_: Exception) { false }
-                dateOk && rec.Keterangan == expedition
+                // **PERBAIKAN**: Filter HANYA schedule="ontime"
+                val isOntime = rec.schedule?.lowercase() == "ontime"
+                dateOk && rec.Keterangan == expedition && isOntime
             }
             
             // **FALLBACK**: Jika cache tidak ada data hari ini, fetch langsung dari Supabase
@@ -1145,8 +1147,8 @@ class BarcodeScannerViewModel(application: Application) : AndroidViewModel(appli
             
             Log.d(TAG, "📊 ========== Summary Calculation FINAL ==========")
             Log.d(TAG, "📊 Expedition: '$expedition'")
-            Log.d(TAG, "📊   - TOTAL resi (couriername='$expedition', today): $finalTotal")
-            Log.d(TAG, "📊   - SCANNED resi (Keterangan='$expedition', today): $scanned")
+            Log.d(TAG, "📊   - TOTAL resi (couriername='$expedition', today, flag=NO): $finalTotal")
+            Log.d(TAG, "📊   - SCANNED resi (Keterangan='$expedition', today, schedule=ontime): $scanned")
             Log.d(TAG, "📊   - REMAINING (Total - Scanned): $remaining")
             Log.d(TAG, "📊   - Calculation: $finalTotal - $scanned = $remaining")
             Log.d(TAG, "📊 ================================================")
