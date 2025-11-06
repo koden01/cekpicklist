@@ -181,11 +181,26 @@ class Repository(private val context: android.content.Context? = null) {
     /**
      * OPTIMASI: Batch get picklist items untuk multiple picklists
      */
-    suspend fun getPicklistItemsBatch(picklistNumbers: List<String>): Map<String, List<PicklistItem>> = withContext(Dispatchers.IO) {
+    suspend fun getPicklistItemsBatch(picklistNumbers: List<String>, forceRefresh: Boolean = false): Map<String, List<PicklistItem>> = withContext(Dispatchers.IO) {
         try {
-            Log.d(TAG, "🚀 BATCH Getting picklist items for ${picklistNumbers.size} picklists")
+            Log.d(TAG, "🚀 BATCH Getting picklist items for ${picklistNumbers.size} picklists (forceRefresh=$forceRefresh)")
             
-            // Cek cache untuk setiap picklist
+            // **PERBAIKAN**: Jika forceRefresh, skip cache check dan langsung fetch dari Supabase
+            if (forceRefresh) {
+                Log.d(TAG, "🔄 Force refresh: Fetching all picklists from Supabase...")
+                val batchResults = supabaseService.getPicklistItemsBatch(picklistNumbers)
+                
+                // Simpan hasil batch ke cache
+                batchResults.forEach { (picklistNo, items) ->
+                    cacheManager.setPicklistItems(picklistNo, items)
+                    Log.d(TAG, "💾 Cached fresh items for $picklistNo: ${items.size} items")
+                }
+                
+                Log.d(TAG, "🚀 BATCH Successfully processed ${batchResults.size} picklists (fresh from Supabase)")
+                return@withContext batchResults
+            }
+            
+            // Cek cache untuk setiap picklist (hanya jika tidak force refresh)
             val cachedResults = mutableMapOf<String, List<PicklistItem>>()
             val uncachedPicklists = mutableListOf<String>()
             
@@ -287,8 +302,15 @@ class Repository(private val context: android.content.Context? = null) {
         try {
             Log.d(TAG, "🚀 BATCH Calculating completion statuses for ${picklistNumbers.size} picklists")
             
-            // Gunakan batch processing untuk mendapatkan semua items sekaligus
-            val batchResults = getPicklistItemsBatch(picklistNumbers)
+            // **PERBAIKAN**: Force refresh cache items untuk memastikan qtyScan selalu terbaru
+            // Invalidate cache items terlebih dahulu untuk memastikan data fresh dari Supabase
+            picklistNumbers.forEach { picklistNo ->
+                cacheManager.invalidatePicklist(picklistNo)
+                Log.d(TAG, "🔄 Invalidated cache for $picklistNo before status calculation")
+            }
+            
+            // Gunakan batch processing untuk mendapatkan semua items sekaligus (force refresh untuk data fresh)
+            val batchResults = getPicklistItemsBatch(picklistNumbers, forceRefresh = true)
             
             val statuses = mutableListOf<PicklistStatus>()
             
@@ -299,6 +321,20 @@ class Repository(private val context: android.content.Context? = null) {
                         val scannedQty = items.sumOf { it.qtyScan }
                         val remainingQty = if (scannedQty >= totalQty) 0 else totalQty - scannedQty
                         val isScanned = scannedQty > 0
+                        
+                        // **DEBUG**: Log detail untuk troubleshooting
+                        Log.d(TAG, "📊 Status calculation for $picklistNumber:")
+                        Log.d(TAG, "📊   Items count: ${items.size}")
+                        Log.d(TAG, "📊   Total qty: $totalQty")
+                        Log.d(TAG, "📊   Scanned qty: $scannedQty")
+                        Log.d(TAG, "📊   Items with qtyScan > 0: ${items.count { it.qtyScan > 0 }}")
+                        if (scannedQty == 0 && items.any { it.qtyScan > 0 }.not()) {
+                            Log.w(TAG, "⚠️ WARNING: $picklistNumber has items but all qtyScan = 0")
+                            // Log sample items untuk debugging
+                            items.take(3).forEach { item ->
+                                Log.w(TAG, "⚠️   Sample item: ${item.articleName} ${item.size} - qtyPl=${item.qtyPl}, qtyScan=${item.qtyScan}")
+                            }
+                        }
                         
                         val status = PicklistStatus(
                             picklistNumber = picklistNumber,

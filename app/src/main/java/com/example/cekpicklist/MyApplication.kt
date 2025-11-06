@@ -4,6 +4,7 @@ import android.app.Application
 import android.util.Log
 import com.example.cekpicklist.cache.CacheWarmingService
 import com.example.cekpicklist.cache.CacheManager
+import com.example.cekpicklist.cache.BarcodeCacheManager
 import com.example.cekpicklist.sync.SyncManager
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -30,6 +31,9 @@ class MyApplication : Application() {
         
         // Initialize cache manager dengan context
         cacheManager = CacheManager(this)
+        
+        // Initialize BarcodeCacheManager untuk persistent storage (15 jam)
+        BarcodeCacheManager.init(this)
         
         // Initialize cache warming service
         cacheWarmingService = CacheWarmingService(this)

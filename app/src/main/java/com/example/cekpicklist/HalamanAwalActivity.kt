@@ -262,7 +262,7 @@ class HalamanAwalActivity : AppCompatActivity() {
         Logger.PicklistInput.d("setupRadarCard() called")
         
         binding.cardRadar.setOnClickListener {
-            Logger.PicklistInput.d("Location card clicked - navigating to LocationActivity")
+            Logger.PicklistInput.d("Location card clicked - navigating to LocationDemoActivity")
             navigateToLocation()
         }
     }

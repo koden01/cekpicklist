@@ -34,13 +34,13 @@
                 android:layout_height="16dp"
                 android:src="@drawable/ic_plus"
                 android:layout_marginEnd="8dp"
-                android:tint="@android:color/white" />
+                android:tint="@color/navbar_icon_tint" />
 
             <TextView
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
                 android:text="Input"
-                android:textColor="@android:color/white"
+                android:textColor="@color/navbar_text_color"
                 android:textSize="14sp"
                 android:textStyle="bold" />
 
@@ -64,13 +64,13 @@
                 android:layout_height="16dp"
                 android:src="@drawable/ic_dashboard"
                 android:layout_marginEnd="8dp"
-                android:tint="@android:color/white" />
+                android:tint="@color/navbar_icon_tint" />
 
             <TextView
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
                 android:text="Dashboard"
-                android:textColor="@android:color/white"
+                android:textColor="@color/navbar_text_color"
                 android:textSize="14sp"
                 android:textStyle="bold" />
 
@@ -94,13 +94,13 @@
                 android:layout_height="16dp"
                 android:src="@drawable/ic_history"
                 android:layout_marginEnd="8dp"
-                android:tint="@android:color/white" />
+                android:tint="@color/navbar_icon_tint" />
 
             <TextView
                 android:layout_width="wrap_content"
                 android:layout_height="wrap_content"
                 android:text="History"
-                android:textColor="@android:color/white"
+                android:textColor="@color/navbar_text_color"
                 android:textSize="14sp"
                 android:textStyle="bold" />
 

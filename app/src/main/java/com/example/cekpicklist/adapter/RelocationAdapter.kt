@@ -12,7 +12,8 @@ import com.example.cekpicklist.data.RelocationItem
 import com.google.android.material.card.MaterialCardView
 
 class RelocationAdapter(
-    private var items: List<RelocationItem> = emptyList()
+    private var items: List<RelocationItem> = emptyList(),
+    private val onItemClick: (RelocationItem) -> Unit = {}
 ) : RecyclerView.Adapter<RelocationAdapter.RelocationViewHolder>() {
 
     class RelocationViewHolder(itemView: View) : RecyclerView.ViewHolder(itemView) {
@@ -57,6 +58,7 @@ class RelocationAdapter(
             holder.tvQty.setTextColor(ContextCompat.getColor(holder.itemView.context, R.color.error_color))
             holder.cardView.strokeColor = ContextCompat.getColor(holder.itemView.context, R.color.error_color)
         }
+        holder.itemView.setOnClickListener { onItemClick(item) }
     }
 
     override fun getItemCount(): Int = items.size
@@ -78,5 +80,9 @@ class RelocationAdapter(
         Log.d("RelocationAdapter", "🔥 === END ADAPTER ITEMS ===")
         
         notifyDataSetChanged()
+    }
+    
+    fun getItemAt(position: Int): RelocationItem? {
+        return if (position in 0 until itemCount) items[position] else null
     }
 }

@@ -58,28 +58,40 @@ class CacheWarmingService(private val application: Application) {
         try {
             Log.d(TAG, "🔥 Warming frequently used data...")
             
-            // 1. Warm semua picklist numbers
-            val picklists = repository.getPicklists()
-            Log.d(TAG, "✅ Warmed picklists: ${picklists.size} items")
+            // 1. Warm semua picklist numbers dengan error handling yang lebih baik
+            val picklists = try {
+                repository.getPicklists()
+            } catch (e: Exception) {
+                Log.w(TAG, "⚠️ Failed to fetch picklists during cache warming: ${e.message}")
+                Log.d(TAG, "ℹ️ Continuing with cached data if available")
+                emptyList()
+            }
             
-            // 2. Warm picklist yang sering digunakan (ambil 3 pertama)
-            val frequentPicklists = picklists.take(3)
-            frequentPicklists.forEach { picklistNo ->
-                try {
-                    // Warm picklist items
-                    repository.getPicklistItems(picklistNo)
-                    Log.d(TAG, "✅ Warmed picklist items: $picklistNo")
-                    
-                    // Warm processed EPC list
-                    repository.getProcessedEpcList(picklistNo)
-                    Log.d(TAG, "✅ Warmed processed EPC list: $picklistNo")
-                    
-                    // Rate limiting
-                    delay(100)
-                    
-                } catch (e: Exception) {
-                    Log.w(TAG, "⚠️ Failed to warm $picklistNo: ${e.message}")
+            if (picklists.isNotEmpty()) {
+                Log.d(TAG, "✅ Warmed picklists: ${picklists.size} items")
+                
+                // 2. Warm picklist yang sering digunakan (ambil 3 pertama)
+                val frequentPicklists = picklists.take(3)
+                frequentPicklists.forEach { picklistNo ->
+                    try {
+                        // Warm picklist items
+                        repository.getPicklistItems(picklistNo)
+                        Log.d(TAG, "✅ Warmed picklist items: $picklistNo")
+                        
+                        // Warm processed EPC list
+                        repository.getProcessedEpcList(picklistNo)
+                        Log.d(TAG, "✅ Warmed processed EPC list: $picklistNo")
+                        
+                        // Rate limiting
+                        delay(100)
+                        
+                    } catch (e: Exception) {
+                        Log.w(TAG, "⚠️ Failed to warm $picklistNo: ${e.message}")
+                        // Continue dengan picklist berikutnya meskipun ada error
+                    }
                 }
+            } else {
+                Log.d(TAG, "ℹ️ No picklists available for warming (may use cached data)")
             }
             
             // 3. Warm picklist statuses (skip karena method tidak tersedia)
@@ -89,7 +101,9 @@ class CacheWarmingService(private val application: Application) {
             Log.d(TAG, "🎉 Cache warming completed successfully")
             
         } catch (e: Exception) {
+            // Catch-all untuk error yang tidak terduga, tetapi tidak crash service
             Log.e(TAG, "❌ Error warming frequently used data: ${e.message}", e)
+            Log.d(TAG, "ℹ️ Cache warming service will continue to operate with available data")
         }
     }
     
@@ -127,20 +141,30 @@ class CacheWarmingService(private val application: Application) {
             if (stats.expiredCount > 0 || stats.staleCount > 0) {
                 Log.d(TAG, "🔄 Warming expired/stale data...")
                 
-                // Refresh data yang expired
-                val picklists = repository.getPicklists()
-                picklists.take(2).forEach { picklistNo ->
-                    try {
-                        repository.getPicklistItems(picklistNo)
-                        delay(50)
-                    } catch (e: Exception) {
-                        Log.w(TAG, "⚠️ Failed to refresh $picklistNo: ${e.message}")
+                // Refresh data yang expired dengan error handling
+                val picklists = try {
+                    repository.getPicklists()
+                } catch (e: Exception) {
+                    Log.w(TAG, "⚠️ Failed to fetch picklists during idle warming: ${e.message}")
+                    emptyList()
+                }
+                
+                if (picklists.isNotEmpty()) {
+                    picklists.take(2).forEach { picklistNo ->
+                        try {
+                            repository.getPicklistItems(picklistNo)
+                            delay(50)
+                        } catch (e: Exception) {
+                            Log.w(TAG, "⚠️ Failed to refresh $picklistNo: ${e.message}")
+                            // Continue dengan picklist berikutnya
+                        }
                     }
                 }
             }
             
         } catch (e: Exception) {
             Log.e(TAG, "❌ Error in idle data warming: ${e.message}", e)
+            // Don't throw - allow idle warming to continue next cycle
         }
     }
     

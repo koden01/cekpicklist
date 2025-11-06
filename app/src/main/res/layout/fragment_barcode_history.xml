@@ -21,34 +21,6 @@
             android:orientation="vertical"
             android:padding="16dp">
 
-            <!-- Date Range Filter -->
-            <LinearLayout
-                android:layout_width="match_parent"
-                android:layout_height="wrap_content"
-                android:orientation="horizontal"
-                android:layout_marginBottom="12dp">
-
-                <TextView
-                    android:layout_width="wrap_content"
-                    android:layout_height="wrap_content"
-                    android:text="📅 Filter Tanggal:"
-                    android:textColor="#374151"
-                    android:textSize="14sp"
-                    android:textStyle="bold"
-                    android:layout_marginEnd="8dp" />
-
-                <Button
-                    android:id="@+id/btnDateRange"
-                    android:layout_width="0dp"
-                    android:layout_height="36dp"
-                    android:layout_weight="1"
-                    android:text="Hari ini"
-                    android:textSize="12sp"
-                    android:background="@drawable/button_secondary"
-                    android:textColor="#374151" />
-
-            </LinearLayout>
-
             <!-- Search Filter -->
             <LinearLayout
                 android:layout_width="match_parent"
@@ -62,7 +34,7 @@
                     android:layout_weight="1"
                     android:background="@drawable/input_background"
                     android:padding="8dp"
-                    android:hint="Cari resi, expedisi..."
+                    android:hint="Cari resi, expedisi, karung, status, atau waktu..."
                     android:textSize="12sp"
                     android:imeOptions="actionSearch" />
 

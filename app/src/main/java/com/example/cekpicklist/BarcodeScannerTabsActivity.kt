@@ -1,6 +1,9 @@
 package com.example.cekpicklist
 
 import android.content.Context
+import android.content.BroadcastReceiver
+import android.content.Intent
+import android.content.IntentFilter
 import android.os.Bundle
 import android.util.Log
 import android.view.KeyEvent
@@ -12,10 +15,10 @@ import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.lifecycleScope
 import androidx.swiperefreshlayout.widget.SwipeRefreshLayout
 import com.example.cekpicklist.adapter.BarcodeViewPagerAdapter
-import com.example.cekpicklist.utils.BuiltInBarcodeManager
 import com.example.cekpicklist.utils.BarcodeAudioManager
 import com.example.cekpicklist.viewmodel.BarcodeScannerViewModel
 import com.example.cekpicklist.fragment.BarcodeSoundSettingsFragment
+import com.example.cekpicklist.cache.BarcodeCacheManager
 import com.google.android.material.tabs.TabLayout
 import com.google.android.material.tabs.TabLayoutMediator
 import androidx.viewpager2.widget.ViewPager2
@@ -31,8 +34,12 @@ class BarcodeScannerTabsActivity : AppCompatActivity() {
     }
 
     private lateinit var viewModel: BarcodeScannerViewModel
-    private lateinit var builtInBarcodeManager: BuiltInBarcodeManager
     private lateinit var audioManager: BarcodeAudioManager
+    
+    // Getter untuk audio manager (dapat digunakan oleh Fragment)
+    fun getAudioManager(): BarcodeAudioManager {
+        return audioManager
+    }
     private lateinit var viewPager: ViewPager2
     private lateinit var tabLayout: TabLayout
     private lateinit var viewPagerAdapter: BarcodeViewPagerAdapter
@@ -44,7 +51,13 @@ class BarcodeScannerTabsActivity : AppCompatActivity() {
     private lateinit var contentFrame: View
     private lateinit var swipeRefreshLayout: SwipeRefreshLayout
 
-    private var isScanning = false
+    private var scannerBroadcastReceiver: BroadcastReceiver? = null
+    private val useBroadcastInput: Boolean = true
+    private val isBroadcastEnabled: Boolean = true
+    // One-shot latch: izinkan SATU broadcast setelah KeyUp 293, lalu reset
+    @Volatile private var allowNextBroadcast: Boolean = false
+    private var lastAutoRefreshMs: Long = 0L
+    private val AUTO_REFRESH_INTERVAL_MS = 30_000L
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -53,10 +66,81 @@ class BarcodeScannerTabsActivity : AppCompatActivity() {
         setupToolbar()
         setupViewModel()
         setupAudioManager()
-        setupBuiltInBarcodeManager()
+        setupScannerBroadcast()
         setupNavbar()
         
         Log.d(TAG, "📱 BarcodeScannerTabsActivity created")
+    }
+
+    /**
+     * Setup dynamic BroadcastReceiver untuk menerima hasil scan dari scanner
+     * Action: com.scanner.broadcast
+     * Extra key: "data"
+     */
+    private fun setupScannerBroadcast() {
+        scannerBroadcastReceiver = object : BroadcastReceiver() {
+            override fun onReceive(context: Context?, intent: Intent?) {
+                if (intent?.action == "com.scanner.broadcast") {
+                    val barcode = intent.getStringExtra("data")?.trim().orEmpty()
+                    if (barcode.isNotEmpty()) {
+                        if (allowNextBroadcast) {
+                            Log.d(TAG, "📡 Broadcast scan received (one-shot latch): $barcode")
+                            allowNextBroadcast = false
+                            viewModel.processScannedBarcode(barcode)
+                        } else {
+                            Log.d(TAG, "⚠️ Broadcast ignored (latch not set)")
+                        }
+                    } else {
+                        Log.w(TAG, "⚠️ Broadcast received without 'data' extra")
+                    }
+                }
+            }
+        }
+    }
+
+    override fun onResume() {
+        super.onResume()
+        // Register broadcast receiver
+        if (isBroadcastEnabled && scannerBroadcastReceiver != null) {
+            val filter = IntentFilter("com.scanner.broadcast")
+            registerReceiver(scannerBroadcastReceiver, filter)
+            Log.d(TAG, "✅ Scanner broadcast receiver registered")
+        }
+
+        // **OPTIMASI**: Auto-refresh ringan saat kembali ke Activity (debounce 30 detik)
+        // Hanya refresh jika cache expired, tidak perlu force refresh jika cache masih valid
+        val now = System.currentTimeMillis()
+        val cacheStillValid = BarcodeCacheManager.isResiCacheValid() && 
+                             BarcodeCacheManager.isExpedisiCacheValid() &&
+                             BarcodeCacheManager.getAllResiRecords().isNotEmpty() &&
+                             BarcodeCacheManager.getAllExpedisiRecords().isNotEmpty()
+        
+        if (now - lastAutoRefreshMs > AUTO_REFRESH_INTERVAL_MS && !cacheStillValid) {
+            lastAutoRefreshMs = now
+            lifecycleScope.launch {
+                try {
+                    Log.d(TAG, "🔄 Auto-refresh onResume (cache expired)")
+                    viewModel.forceRefreshData()
+                } catch (e: Exception) {
+                    Log.w(TAG, "⚠️ Auto-refresh failed: ${e.message}")
+                }
+            }
+        } else if (cacheStillValid) {
+            Log.d(TAG, "⚡ Cache still valid, skipping auto-refresh onResume")
+        }
+    }
+
+    override fun onPause() {
+        super.onPause()
+        // Unregister broadcast receiver
+        if (isBroadcastEnabled && scannerBroadcastReceiver != null) {
+            try {
+                unregisterReceiver(scannerBroadcastReceiver)
+                Log.d(TAG, "🛑 Scanner broadcast receiver unregistered")
+            } catch (e: Exception) {
+                Log.w(TAG, "⚠️ Error unregistering receiver: ${e.message}")
+            }
+        }
     }
 
     private fun setupToolbar() {
@@ -71,13 +155,18 @@ class BarcodeScannerTabsActivity : AppCompatActivity() {
         // Initialize background sync
         viewModel.initializeBackgroundSync()
         
+        // Initialize expedisi validator (PENTING: untuk validasi NOT_FOUND)
+        viewModel.initializeExpedisiValidator(this)
+        
         Log.d(TAG, "✅ ViewModel initialized")
     }
     
     private fun setupAudioManager() {
+        // **PERBAIKAN**: Inisialisasi audio manager di Activity (bukan di Fragment)
+        // Audio manager harus ready SEBELUM scan terjadi, jadi diinisialisasi saat Activity dibuka
         audioManager = BarcodeAudioManager(this)
         audioManager.initAudio()
-        Log.d(TAG, "🔊 Audio manager initialized")
+        Log.d(TAG, "🔊 Audio manager initialized at Activity onCreate (ready before first scan)")
     }
 
     private fun setupNavbar() {
@@ -92,9 +181,16 @@ class BarcodeScannerTabsActivity : AppCompatActivity() {
         setupSwipeRefresh()
         
         // Set click listeners for navbar items
-        navInput.setOnClickListener { switchToTab(0) }
-        navDashboard.setOnClickListener { switchToTab(1) }
-        navHistory.setOnClickListener { switchToTab(2) }
+        navInput.setOnClickListener { 
+            Log.d(TAG, "🔍 NavInput clicked - switching to tab 0")
+            switchToTab(0) 
+        }
+        // Dashboard tab dihapus, arahkan tab kedua ke History
+        navDashboard.visibility = View.GONE
+        navHistory.setOnClickListener { 
+            Log.d(TAG, "🔍 NavHistory clicked - switching to tab 1")
+            switchToTab(1) 
+        }
         
         // Set initial selection
         switchToTab(0)
@@ -147,121 +243,120 @@ class BarcodeScannerTabsActivity : AppCompatActivity() {
         }
     }
 
+    private var currentTabPosition = -1  // Track current tab to prevent unnecessary switches
+    
     private fun switchToTab(position: Int) {
+        // Skip jika sudah di tab yang sama
+        if (currentTabPosition == position) {
+            Log.d(TAG, "⚠️ Already on tab $position, skipping switch")
+            return
+        }
+        
+        // Log stack trace untuk debug (dapat di-disable jika tidak diperlukan)
+        if (currentTabPosition != -1) {  // Jangan log saat initial setup
+            Log.d(TAG, "🔄 switchToTab($position) called from:")
+            Log.d(TAG, "📋 Stack trace: ${Thread.currentThread().stackTrace.take(5).joinToString("\n") { it.toString() }}")
+        }
+        
+        currentTabPosition = position
+        
         // Update navbar selection (like web app)
-        navInput.isSelected = (position == 0)
-        navDashboard.isSelected = (position == 1)
-        navHistory.isSelected = (position == 2)
+        val inputSelected = (position == 0)
+        val historySelected = (position == 1)
+        
+        navInput.isSelected = inputSelected
+        navDashboard.isSelected = false
+        navHistory.isSelected = historySelected
+        
+        // Update text dan icon color secara programmatic
+        // Input tab
+        val inputText = navInput.getChildAt(1) as? android.widget.TextView
+        val inputIcon = navInput.getChildAt(0) as? android.widget.ImageView
+        val inputColor = if (inputSelected) android.graphics.Color.parseColor("#4CAF50") else android.graphics.Color.WHITE
+        inputText?.setTextColor(inputColor)
+        inputIcon?.setColorFilter(inputColor)
+        
+        // History tab
+        val historyText = navHistory.getChildAt(1) as? android.widget.TextView
+        val historyIcon = navHistory.getChildAt(0) as? android.widget.ImageView
+        val historyColor = if (historySelected) android.graphics.Color.parseColor("#4CAF50") else android.graphics.Color.WHITE
+        historyText?.setTextColor(historyColor)
+        historyIcon?.setColorFilter(historyColor)
+        
+        // Dashboard tab (hidden, tetap putih)
+        val dashboardText = navDashboard.getChildAt(1) as? android.widget.TextView
+        val dashboardIcon = navDashboard.getChildAt(0) as? android.widget.ImageView
+        dashboardText?.setTextColor(android.graphics.Color.WHITE)
+        dashboardIcon?.setColorFilter(android.graphics.Color.WHITE)
+        
+        // Refresh drawable state untuk background
+        navInput.refreshDrawableState()
+        navDashboard.refreshDrawableState()
+        navHistory.refreshDrawableState()
         
         // Switch fragment
         when (position) {
             0 -> showFragment(com.example.cekpicklist.fragment.BarcodeInputFragment())
-            1 -> showFragment(com.example.cekpicklist.fragment.BarcodeDashboardFragment())
-            2 -> showFragment(com.example.cekpicklist.fragment.BarcodeHistoryFragment())
+            1 -> showFragment(com.example.cekpicklist.fragment.BarcodeHistoryFragment())
         }
         
         Log.d(TAG, "🔄 Switched to tab: $position")
     }
 
+    private var currentFragment: Fragment? = null
+    
     private fun showFragment(fragment: Fragment) {
+        // Cek apakah fragment sudah ditampilkan untuk mencegah recreation yang tidak perlu
+        val fragmentTag = when (fragment) {
+            is com.example.cekpicklist.fragment.BarcodeInputFragment -> "BarcodeInputFragment"
+            is com.example.cekpicklist.fragment.BarcodeHistoryFragment -> "BarcodeHistoryFragment"
+            else -> null
+        }
+        
+        val existingFragment = fragmentTag?.let { 
+            supportFragmentManager.findFragmentByTag(it) 
+        }
+        
+        if (existingFragment != null && existingFragment.isVisible && existingFragment == currentFragment) {
+            // Fragment sudah ditampilkan dan sama, tidak perlu replace
+            Log.d(TAG, "⚠️ Fragment $fragmentTag already visible, skipping replace")
+            return
+        }
+        
+        // Replace fragment hanya jika diperlukan
         supportFragmentManager.beginTransaction()
-            .replace(R.id.contentFrame, fragment)
+            .replace(R.id.contentFrame, fragment, fragmentTag)
             .commit()
+        
+        currentFragment = fragment
+        Log.d(TAG, "🔄 Fragment replaced: $fragmentTag")
     }
 
-    private fun setupBuiltInBarcodeManager() {
-        Log.d(TAG, "🔧 Setting up BuiltInBarcodeManager...")
-        builtInBarcodeManager = BuiltInBarcodeManager(this, this)
-        
-        Log.d(TAG, "🔧 Setting barcode callback...")
-        builtInBarcodeManager.setBarcodeCallback { barcode ->
-            Log.d(TAG, "📱 Barcode detected in activity: $barcode")
-            Log.d(TAG, "📱 Processing barcode with ViewModel...")
-            viewModel.processScannedBarcode(barcode)
-            Log.d(TAG, "✅ Barcode processing completed")
-        }
-        
-        Log.d(TAG, "🔧 Setting scan state callback...")
-        builtInBarcodeManager.setScanStateCallback { isActive ->
-            Log.d(TAG, "📱 Scanner state changed: $isActive")
-            isScanning = isActive
-            viewModel.setScanningState(isActive)
-        }
-        
-        Log.d(TAG, "✅ BuiltInBarcodeManager initialized successfully")
-    }
 
 
     override fun onKeyDown(keyCode: Int, event: KeyEvent?): Boolean {
-        val isTrigger = keyCode == 139 || keyCode == 280 || keyCode == 291 || 
-                       keyCode == 293 || keyCode == 294 || keyCode == 311 || 
-                       keyCode == 312 || keyCode == 313 || keyCode == 315
-        
+        val isTrigger = keyCode == 293
         if (!isTrigger) return super.onKeyDown(keyCode, event)
-        
+
         if (event?.repeatCount == 0) {
-            Log.d(TAG, "🔑 KeyDown trigger: $keyCode (repeat=0) → startBarcodeScan")
-            if (!isScanning) {
-                startBarcodeScan()
-            }
+            Log.d(TAG, "🔑 KeyDown trigger: $keyCode (repeat=0) → authorize broadcast")
+            // Izinkan SATU broadcast berikutnya
+            allowNextBroadcast = true
         }
-        
-        return true
+        // JANGAN konsumsi event agar driver scanner tetap menerima trigger dan menyalakan laser
+        return false
     }
 
     override fun onKeyUp(keyCode: Int, event: KeyEvent?): Boolean {
-        val isTrigger = keyCode == 139 || keyCode == 280 || keyCode == 291 || 
-                       keyCode == 293 || keyCode == 294 || keyCode == 311 || 
-                       keyCode == 312 || keyCode == 313 || keyCode == 315
-        
+        val isTrigger = keyCode == 293
         if (!isTrigger) return super.onKeyUp(keyCode, event)
-        
-        Log.d(TAG, "🔑 KeyUp trigger: $keyCode → stopBarcodeScan")
-        if (isScanning) {
-            stopBarcodeScan()
-        }
-        
-        return true
+
+        Log.d(TAG, "🔑 KeyUp trigger: $keyCode → authorize next broadcast (one-shot)")
+        allowNextBroadcast = true
+        // Biarkan event diteruskan ke driver scanner
+        return false
     }
 
-    fun startBarcodeScan() {
-        Log.d(TAG, "🚀 Starting barcode scan...")
-        
-        try {
-            val success = builtInBarcodeManager.startScan()
-            if (success) {
-                isScanning = true
-                viewModel.setScanningState(true)
-                // Play start beep
-                audioManager.playStartBeep()
-                Toast.makeText(this, "✅ Scanner aktif - siap untuk scan barcode", Toast.LENGTH_LONG).show()
-                Log.d(TAG, "✅ Barcode scan started successfully")
-            } else {
-                // Play failure beep
-                audioManager.playFailureBeep()
-                Toast.makeText(this, "❌ Gagal mengaktifkan scanner", Toast.LENGTH_SHORT).show()
-                Log.e(TAG, "❌ Failed to start barcode scan")
-            }
-        } catch (e: Exception) {
-            // Play failure beep
-            audioManager.playFailureBeep()
-            Toast.makeText(this, "❌ Error: ${e.message}", Toast.LENGTH_SHORT).show()
-            Log.e(TAG, "❌ Exception starting barcode scan: ${e.message}")
-        }
-    }
-
-    fun stopBarcodeScan() {
-        Log.d(TAG, "🛑 Stopping barcode scan...")
-        
-        try {
-            builtInBarcodeManager.stopScan()
-            isScanning = false
-            viewModel.setScanningState(false)
-            Log.d(TAG, "✅ Barcode scan stopped successfully")
-        } catch (e: Exception) {
-            Log.e(TAG, "❌ Exception stopping barcode scan: ${e.message}")
-        }
-    }
 
     override fun onCreateOptionsMenu(menu: Menu?): Boolean {
         menuInflater.inflate(R.menu.barcode_scanner_menu, menu)
@@ -306,8 +401,15 @@ class BarcodeScannerTabsActivity : AppCompatActivity() {
 
     override fun onDestroy() {
         super.onDestroy()
-        if (isScanning) {
-            stopBarcodeScan()
+        // Unregister receiver jika masih terdaftar
+        if (scannerBroadcastReceiver != null) {
+            try {
+                unregisterReceiver(scannerBroadcastReceiver)
+                Log.d(TAG, "🛑 Scanner broadcast receiver unregistered in onDestroy")
+            } catch (e: Exception) {
+                // Receiver mungkin sudah di-unregister di onPause
+                Log.d(TAG, "📱 Receiver already unregistered or not registered")
+            }
         }
         audioManager.release()
         Log.d(TAG, "📱 BarcodeScannerTabsActivity destroyed")

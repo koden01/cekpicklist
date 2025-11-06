@@ -277,7 +277,7 @@
                         android:layout_height="wrap_content"
                         android:text="Test"
                         android:textSize="12sp"
-                        android:backgroundTint="#3B82F6"
+                        android:backgroundTint="#4CAF50"
                         android:textColor="@android:color/white" />
 
                 </LinearLayout>

@@ -58,12 +58,6 @@
         </activity>
         
         <activity
-            android:name=".LocationActivity"
-            android:exported="false"
-            android:screenOrientation="portrait"
-            android:theme="@style/Theme.CekPicklist">
-        </activity>
-        <activity
             android:name=".LocationDemoActivity"
             android:exported="false"
             android:screenOrientation="portrait"

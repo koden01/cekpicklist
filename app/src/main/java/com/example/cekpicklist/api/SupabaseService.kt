@@ -5,12 +5,15 @@ import com.example.cekpicklist.data.PicklistItem
 import com.example.cekpicklist.config.SupabaseConfig
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.delay
 import org.json.JSONArray
 import org.json.JSONObject
 import java.net.HttpURLConnection
+import java.net.SocketTimeoutException
 import java.net.URL
 import java.net.URLEncoder
 import java.io.BufferedReader
+import java.io.IOException
 import java.io.InputStreamReader
 import java.io.OutputStreamWriter
 import com.example.cekpicklist.viewmodel.Sextuple
@@ -21,6 +24,12 @@ class SupabaseService {
     private val supabaseUrl = SupabaseConfig.SUPABASE_URL
     private val supabaseKey = SupabaseConfig.SUPABASE_ANON_KEY
     
+    companion object {
+        // Retry settings untuk network errors
+        private const val MAX_RETRY_ATTEMPTS = 3
+        private const val BASE_BACKOFF_MS = 1000L // 1 second base delay
+    }
+    
     /**
      * Helper function untuk setup HttpURLConnection dengan timeout
      */
@@ -29,6 +38,49 @@ class SupabaseService {
         connection.connectTimeout = 30000 // 30 detik connection timeout
         connection.readTimeout = 45000 // 45 detik read timeout
         return connection
+    }
+    
+    /**
+     * Helper function untuk menentukan apakah exception bisa di-retry
+     */
+    private fun isRetriableException(e: Exception): Boolean {
+        return when (e) {
+            is SocketTimeoutException -> true
+            is IOException -> true
+            else -> false
+        }
+    }
+    
+    /**
+     * Helper function untuk retry dengan exponential backoff
+     */
+    private suspend fun <T> retryOnNetworkError(
+        operation: String,
+        maxRetries: Int = MAX_RETRY_ATTEMPTS,
+        block: suspend () -> T
+    ): T {
+        var attempt = 0
+        var lastError: Exception? = null
+        
+        while (attempt < maxRetries) {
+            try {
+                return block()
+            } catch (e: Exception) {
+                lastError = e
+                attempt++
+                
+                if (isRetriableException(e) && attempt <= maxRetries) {
+                    val backoff = BASE_BACKOFF_MS * (1L shl (attempt - 1)) // Exponential backoff
+                    Log.w("SupabaseService", "⚠️ Retry $operation attempt $attempt/$maxRetries in ${backoff}ms due to: ${e.message}")
+                    delay(backoff)
+                } else {
+                    // Non-retriable error or max retries reached
+                    throw e
+                }
+            }
+        }
+        
+        throw lastError ?: Exception("Unknown error after $maxRetries attempts")
     }
     
     /**
@@ -54,76 +106,78 @@ class SupabaseService {
     
     suspend fun getPicklists(): List<String> = withContext(Dispatchers.IO) {
         try {
-            val todayDate = getTodayDate()
-            Log.d("SupabaseService", "📅 Filtering data from today: $todayDate")
-            
-            // **PERBAIKAN**: Gunakan pagination untuk mengatasi limit 1000 Supabase
-            val allPicklists = mutableSetOf<String>()
-            var offset = 0
-            val limit = 1000 // Supabase limit maksimal
-            var hasMoreData = true
-            
-            while (hasMoreData) {
-                val queryUrl = "$supabaseUrl/rest/v1/picklist?select=no_picklist&created_at=gte.$todayDate&order=created_at.desc&limit=$limit&offset=$offset"
+            return@withContext retryOnNetworkError("getPicklists") {
+                val todayDate = getTodayDate()
+                Log.d("SupabaseService", "📅 Filtering data from today: $todayDate")
                 
-                Log.d("SupabaseService", "🔥 Picklist Pagination Query URL (offset=$offset, limit=$limit): $queryUrl")
+                // **PERBAIKAN**: Gunakan pagination untuk mengatasi limit 1000 Supabase
+                val allPicklists = mutableSetOf<String>()
+                var offset = 0
+                val limit = 1000 // Supabase limit maksimal
+                var hasMoreData = true
                 
-                val url = URL(queryUrl)
-                val connection = setupConnection(url)
-                
-                connection.requestMethod = "GET"
-                connection.setRequestProperty("apikey", supabaseKey)
-                connection.setRequestProperty("Authorization", "Bearer $supabaseKey")
-                connection.setRequestProperty("Content-Type", "application/json")
-                
-                val responseCode = connection.responseCode
-                Log.d("SupabaseService", "📦 Picklist Pagination Query response code: $responseCode")
-                
-                if (responseCode == HttpURLConnection.HTTP_OK) {
-                    val reader = BufferedReader(InputStreamReader(connection.inputStream))
-                    val response = StringBuilder()
-                    var line: String?
+                while (hasMoreData) {
+                    val queryUrl = "$supabaseUrl/rest/v1/picklist?select=no_picklist&created_at=gte.$todayDate&order=created_at.desc&limit=$limit&offset=$offset"
                     
-                    while (reader.readLine().also { line = it } != null) {
-                        response.append(line)
-                    }
-                    reader.close()
+                    Log.d("SupabaseService", "🔥 Picklist Pagination Query URL (offset=$offset, limit=$limit): $queryUrl")
                     
-                    val responseBody = response.toString()
-                    Log.d("SupabaseService", "📦 Picklist Pagination Query response body length: ${responseBody.length}")
+                    val url = URL(queryUrl)
+                    val connection = setupConnection(url)
                     
-                    if (responseBody != "[]") {
-                        val jsonArray = JSONArray(responseBody)
-                        Log.d("SupabaseService", "📦 Picklist Pagination Batch Records: ${jsonArray.length()} picklists (offset=$offset)")
+                    connection.requestMethod = "GET"
+                    connection.setRequestProperty("apikey", supabaseKey)
+                    connection.setRequestProperty("Authorization", "Bearer $supabaseKey")
+                    connection.setRequestProperty("Content-Type", "application/json")
+                    
+                    val responseCode = connection.responseCode
+                    Log.d("SupabaseService", "📦 Picklist Pagination Query response code: $responseCode")
+                    
+                    if (responseCode == HttpURLConnection.HTTP_OK) {
+                        val reader = BufferedReader(InputStreamReader(connection.inputStream))
+                        val response = StringBuilder()
+                        var line: String?
                         
-                        for (i in 0 until jsonArray.length()) {
-                            val jsonObject = jsonArray.getJSONObject(i)
-                            val picklistNo = jsonObject.getString("no_picklist")
-                            allPicklists.add(picklistNo)
+                        while (reader.readLine().also { line = it } != null) {
+                            response.append(line)
                         }
+                        reader.close()
                         
-                        Log.d("SupabaseService", "📦 Added ${jsonArray.length()} picklists to collection. Total unique: ${allPicklists.size}")
+                        val responseBody = response.toString()
+                        Log.d("SupabaseService", "📦 Picklist Pagination Query response body length: ${responseBody.length}")
                         
-                        // Cek apakah masih ada data lagi
-                        hasMoreData = jsonArray.length() == limit
-                        offset += limit
-                        
+                        if (responseBody != "[]") {
+                            val jsonArray = JSONArray(responseBody)
+                            Log.d("SupabaseService", "📦 Picklist Pagination Batch Records: ${jsonArray.length()} picklists (offset=$offset)")
+                            
+                            for (i in 0 until jsonArray.length()) {
+                                val jsonObject = jsonArray.getJSONObject(i)
+                                val picklistNo = jsonObject.getString("no_picklist")
+                                allPicklists.add(picklistNo)
+                            }
+                            
+                            Log.d("SupabaseService", "📦 Added ${jsonArray.length()} picklists to collection. Total unique: ${allPicklists.size}")
+                            
+                            // Cek apakah masih ada data lagi
+                            hasMoreData = jsonArray.length() == limit
+                            offset += limit
+                            
+                        } else {
+                            // Tidak ada data lagi
+                            hasMoreData = false
+                            Log.d("SupabaseService", "📦 No more picklist data found at offset $offset")
+                        }
                     } else {
-                        // Tidak ada data lagi
+                        Log.e("SupabaseService", "❌ Picklist Pagination Query failed with code: $responseCode")
                         hasMoreData = false
-                        Log.d("SupabaseService", "📦 No more picklist data found at offset $offset")
                     }
-                } else {
-                    Log.e("SupabaseService", "❌ Picklist Pagination Query failed with code: $responseCode")
-                    hasMoreData = false
                 }
+                
+                Log.d("SupabaseService", "✅ Found ${allPicklists.size} unique picklist numbers after pagination")
+                allPicklists.toList()
             }
-            
-            Log.d("SupabaseService", "✅ Found ${allPicklists.size} unique picklist numbers after pagination")
-            allPicklists.toList()
-            
         } catch (e: Exception) {
-            Log.e("SupabaseService", "❌ Error fetching picklists: ${e.message}", e)
+            // Final catch after all retries exhausted
+            Log.e("SupabaseService", "❌ Error fetching picklists after retries: ${e.message}", e)
             emptyList()
         }
     }
@@ -138,145 +192,168 @@ class SupabaseService {
             val todayDate = getTodayDate()
             Log.d("SupabaseService", "📅 Filtering data from today: $todayDate")
             
-            // Buat query dengan multiple picklist numbers menggunakan 'in' operator
+            // **PERBAIKAN**: Gunakan pagination untuk mengatasi limit 1000 Supabase
             val picklistNumbersStr = picklistNumbers.joinToString(",") { "\"$it\"" }
-            val queryUrl = "$supabaseUrl/rest/v1/picklist?no_picklist=in.($picklistNumbersStr)&created_at=gte.$todayDate&select=id,no_picklist,article_id,article_name,size,product_id,qty,created_at&order=created_at.asc&limit=10000"
+            val allItems = mutableListOf<PicklistItem>()
+            var offset = 0
+            val limit = 1000 // Supabase limit maksimal per request
+            var hasMoreData = true
             
-            Log.d("SupabaseService", "🚀 BATCH Query URL: $queryUrl")
-            
-            val url = URL(queryUrl)
-            val connection = setupConnection(url)
-            
-            connection.requestMethod = "GET"
-            connection.setRequestProperty("apikey", supabaseKey)
-            connection.setRequestProperty("Authorization", "Bearer $supabaseKey")
-            connection.setRequestProperty("Content-Type", "application/json")
-            
-            val responseCode = connection.responseCode
-            Log.d("SupabaseService", "📦 BATCH Query response code: $responseCode")
-            
-            if (responseCode == HttpURLConnection.HTTP_OK) {
-                val reader = BufferedReader(InputStreamReader(connection.inputStream))
-                val response = StringBuilder()
-                var line: String?
+            while (hasMoreData) {
+                val queryUrl = "$supabaseUrl/rest/v1/picklist?no_picklist=in.($picklistNumbersStr)&created_at=gte.$todayDate&select=id,no_picklist,article_id,article_name,size,product_id,qty,created_at&order=created_at.asc&limit=$limit&offset=$offset"
                 
-                while (reader.readLine().also { line = it } != null) {
-                    response.append(line)
-                }
-                reader.close()
+                Log.d("SupabaseService", "🚀 BATCH Query URL (offset=$offset, limit=$limit): $queryUrl")
                 
-                val responseBody = response.toString()
-                Log.d("SupabaseService", "📦 BATCH Query response body: $responseBody")
+                val url = URL(queryUrl)
+                val connection = setupConnection(url)
                 
-                if (responseBody != "[]") {
-                    val jsonArray = JSONArray(responseBody)
-                    Log.d("SupabaseService", "Raw DB Records: ${jsonArray.length()} total")
+                connection.requestMethod = "GET"
+                connection.setRequestProperty("apikey", supabaseKey)
+                connection.setRequestProperty("Authorization", "Bearer $supabaseKey")
+                connection.setRequestProperty("Content-Type", "application/json")
+                
+                val responseCode = connection.responseCode
+                Log.d("SupabaseService", "📦 BATCH Query response code: $responseCode")
+                
+                if (responseCode == HttpURLConnection.HTTP_OK) {
+                    val reader = BufferedReader(InputStreamReader(connection.inputStream))
+                    val response = StringBuilder()
+                    var line: String?
                     
-                    // Ambil data scan untuk semua picklists sekaligus
-                    val scanData = getPicklistScansBatch(picklistNumbers)
-                    Log.d("SupabaseService", "BATCH Scan data: ${scanData.size} items")
-                    
-                    // Group items by picklist number
-                    val groupedItems = mutableMapOf<String, MutableList<PicklistItem>>()
-                    
-                    // Initialize empty lists for each picklist
-                    picklistNumbers.forEach { picklistNo ->
-                        groupedItems[picklistNo] = mutableListOf()
+                    while (reader.readLine().also { line = it } != null) {
+                        response.append(line)
                     }
+                    reader.close()
                     
-                    // Process all raw records
-                    for (i in 0 until jsonArray.length()) {
-                        val jsonObject = jsonArray.getJSONObject(i)
-                        val picklistNo = jsonObject.getString("no_picklist")
+                    val responseBody = response.toString()
+                    
+                    if (responseBody != "[]" && responseBody.isNotEmpty()) {
+                        val jsonArray = JSONArray(responseBody)
+                        Log.d("SupabaseService", "📦 BATCH Retrieved ${jsonArray.length()} items (offset=$offset, total=${allItems.size + jsonArray.length()})")
                         
-                        val item = PicklistItem(
-                            id = jsonObject.getString("id"),
-                            noPicklist = picklistNo,
-                            articleId = jsonObject.getString("article_id"),
-                            articleName = jsonObject.getString("article_name"),
-                            size = jsonObject.getString("size"),
-                            productId = if (jsonObject.has("product_id") && !jsonObject.isNull("product_id")) jsonObject.getString("product_id") else null,
-                            qtyPl = jsonObject.getInt("qty"),
-                            qtyScan = 0, // Will be calculated after grouping
-                            createdAt = if (jsonObject.has("created_at") && !jsonObject.isNull("created_at")) jsonObject.getString("created_at") else null
-                        )
-                        
-                        groupedItems[picklistNo]?.add(item)
-                    }
-                    
-                    // Process each picklist's items
-                    val result = mutableMapOf<String, List<PicklistItem>>()
-                    
-                    groupedItems.forEach { (picklistNo, items) ->
-                        if (items.isNotEmpty()) {
-                            // Group by article_id + size dan sum qtyPl
-                            val groupedByArticle = items.groupBy { "${it.articleId}_${it.size}" }
-                            val processedItems = mutableListOf<PicklistItem>()
+                        // Process all raw records in this batch
+                        for (i in 0 until jsonArray.length()) {
+                            val jsonObject = jsonArray.getJSONObject(i)
+                            val picklistNo = jsonObject.getString("no_picklist")
                             
-                            groupedByArticle.forEach { (key, itemGroup) ->
-                                val firstItem = itemGroup.first()
-                                val totalQtyPl = itemGroup.sumOf { it.qtyPl }
-                                
-                                // Hitung qtyScan dari scan data
-                                val picklistScans = scanData.filter { it.getString("no_picklist") == picklistNo }
-                                val articleScans = picklistScans.filter { 
-                                    it.getString("article_id") == firstItem.articleId && 
-                                    it.getString("size") == firstItem.size 
-                                }
-                                // **PERBAIKAN KRITIS**: Gunakan distinct EPCs untuk menghitung qtyScan yang akurat
-                                val distinctEpcs = articleScans.map { it.getString("epc") }.distinct()
-                                val qtyScan = distinctEpcs.size
-                                
-                                // **VERIFIKASI MAPPING**: Log EPC-article mapping saat batch load
-                                Log.d("SupabaseService", "🔍 BATCH Grouped Article: ${firstItem.articleName} ${firstItem.size} - qtyPl: ${firstItem.qtyPl}, qtyScan: $qtyScan")
-                                
-                                // **VERIFIKASI KRITIS**: Cek apakah qtyScan sesuai dengan qtyPl
-                                if (qtyScan < firstItem.qtyPl) {
-                                    Log.w("SupabaseService", "⚠️ BATCH INCOMPLETE ITEM: ${firstItem.articleName} ${firstItem.size} - qtyScan($qtyScan) < qtyPl(${firstItem.qtyPl})")
-                                } else if (qtyScan > firstItem.qtyPl) {
-                                    Log.w("SupabaseService", "⚠️ BATCH OVERSCAN ITEM: ${firstItem.articleName} ${firstItem.size} - qtyScan($qtyScan) > qtyPl(${firstItem.qtyPl})")
-                                } else {
-                                    Log.d("SupabaseService", "✅ BATCH COMPLETE ITEM: ${firstItem.articleName} ${firstItem.size} - qtyScan($qtyScan) = qtyPl(${firstItem.qtyPl})")
-                                }
-                                
-                                if (articleScans.isNotEmpty()) {
-                                    Log.d("SupabaseService", "🔍 BATCH EPC-Article mapping verification for ${firstItem.articleName} ${firstItem.size}:")
-                                    Log.d("SupabaseService", "🔍   Total scans: ${articleScans.size}, Distinct EPCs: ${distinctEpcs.size}")
-                                    articleScans.forEach { scan ->
-                                        val epc = scan.getString("epc")
-                                        val articleId = scan.getString("article_id")
-                                        val size = scan.getString("size")
-                                        Log.d("SupabaseService", "🔍   EPC: $epc -> Article: $articleId, Size: $size")
-                                    }
-                                    Log.d("SupabaseService", "🔍   Distinct EPCs: $distinctEpcs")
-                                }
-                                
-                                val processedItem = firstItem.copy(
-                                    qtyPl = totalQtyPl,
-                                    qtyScan = qtyScan
-                                )
-                                
-                                processedItems.add(processedItem)
-                                
-                                Log.d("SupabaseService", "🔍 Grouped Article: ${firstItem.articleName} ${firstItem.size} - qtyPl: $totalQtyPl (from ${itemGroup.size} records), qtyScan: $qtyScan")
+                            val item = PicklistItem(
+                                id = jsonObject.getString("id"),
+                                noPicklist = picklistNo,
+                                articleId = jsonObject.getString("article_id"),
+                                articleName = jsonObject.getString("article_name"),
+                                size = jsonObject.getString("size"),
+                                productId = if (jsonObject.has("product_id") && !jsonObject.isNull("product_id")) jsonObject.getString("product_id") else null,
+                                qtyPl = jsonObject.getInt("qty"),
+                                qtyScan = 0, // Will be calculated after grouping
+                                createdAt = if (jsonObject.has("created_at") && !jsonObject.isNull("created_at")) jsonObject.getString("created_at") else null
+                            )
+                            
+                            allItems.add(item)
+                        }
+                        
+                        // Cek apakah masih ada data lagi
+                        hasMoreData = jsonArray.length() == limit
+                        offset += limit
+                    } else {
+                        // Tidak ada data lagi
+                        hasMoreData = false
+                    }
+                } else {
+                    Log.e("SupabaseService", "❌ BATCH Query failed with code: $responseCode")
+                    hasMoreData = false
+                }
+            }
+            
+            // Setelah semua data dikumpulkan, process items
+            if (allItems.isNotEmpty()) {
+                Log.d("SupabaseService", "📦 BATCH Total items collected: ${allItems.size}")
+                
+                // Ambil data scan untuk semua picklists sekaligus
+                val scanData = getPicklistScansBatch(picklistNumbers)
+                Log.d("SupabaseService", "BATCH Scan data: ${scanData.size} items")
+                
+                // Group items by picklist number
+                val groupedItems = mutableMapOf<String, MutableList<PicklistItem>>()
+                
+                // Initialize empty lists for each picklist
+                picklistNumbers.forEach { picklistNo ->
+                    groupedItems[picklistNo] = mutableListOf()
+                }
+                
+                // Process all collected items
+                allItems.forEach { item ->
+                    groupedItems[item.noPicklist]?.add(item)
+                }
+                
+                // Process each picklist's items
+                val result = mutableMapOf<String, List<PicklistItem>>()
+                
+                groupedItems.forEach { (picklistNo, items) ->
+                    if (items.isNotEmpty()) {
+                        // Group by article_id + size dan sum qtyPl
+                        val groupedByArticle = items.groupBy { "${it.articleId}_${it.size}" }
+                        val processedItems = mutableListOf<PicklistItem>()
+                        
+                        groupedByArticle.forEach { (key, itemGroup) ->
+                            val firstItem = itemGroup.first()
+                            val totalQtyPl = itemGroup.sumOf { it.qtyPl }
+                            
+                            // Hitung qtyScan dari scan data
+                            val picklistScans = scanData.filter { it.getString("no_picklist") == picklistNo }
+                            val articleScans = picklistScans.filter { 
+                                it.getString("article_id") == firstItem.articleId && 
+                                it.getString("size") == firstItem.size 
+                            }
+                            // **PERBAIKAN KRITIS**: Gunakan distinct EPCs untuk menghitung qtyScan yang akurat
+                            val distinctEpcs = articleScans.map { it.getString("epc") }.distinct()
+                            val qtyScan = distinctEpcs.size
+                            
+                            // **VERIFIKASI MAPPING**: Log EPC-article mapping saat batch load
+                            Log.d("SupabaseService", "🔍 BATCH Grouped Article: ${firstItem.articleName} ${firstItem.size} - qtyPl: ${firstItem.qtyPl}, qtyScan: $qtyScan")
+                            
+                            // **VERIFIKASI KRITIS**: Cek apakah qtyScan sesuai dengan qtyPl
+                            if (qtyScan < firstItem.qtyPl) {
+                                Log.w("SupabaseService", "⚠️ BATCH INCOMPLETE ITEM: ${firstItem.articleName} ${firstItem.size} - qtyScan($qtyScan) < qtyPl(${firstItem.qtyPl})")
+                            } else if (qtyScan > firstItem.qtyPl) {
+                                Log.w("SupabaseService", "⚠️ BATCH OVERSCAN ITEM: ${firstItem.articleName} ${firstItem.size} - qtyScan($qtyScan) > qtyPl(${firstItem.qtyPl})")
+                            } else {
+                                Log.d("SupabaseService", "✅ BATCH COMPLETE ITEM: ${firstItem.articleName} ${firstItem.size} - qtyScan($qtyScan) = qtyPl(${firstItem.qtyPl})")
                             }
                             
-                            result[picklistNo] = processedItems
-                            Log.d("SupabaseService", "✅ Processed ${processedItems.size} grouped items for $picklistNo")
-                        } else {
-                            result[picklistNo] = emptyList()
-                            Log.d("SupabaseService", "⚠️ No items found for picklist: $picklistNo")
+                            if (articleScans.isNotEmpty()) {
+                                Log.d("SupabaseService", "🔍 BATCH EPC-Article mapping verification for ${firstItem.articleName} ${firstItem.size}:")
+                                Log.d("SupabaseService", "🔍   Total scans: ${articleScans.size}, Distinct EPCs: ${distinctEpcs.size}")
+                                articleScans.forEach { scan ->
+                                    val epc = scan.getString("epc")
+                                    val articleId = scan.getString("article_id")
+                                    val size = scan.getString("size")
+                                    Log.d("SupabaseService", "🔍   EPC: $epc -> Article: $articleId, Size: $size")
+                                }
+                                Log.d("SupabaseService", "🔍   Distinct EPCs: $distinctEpcs")
+                            }
+                            
+                            val processedItem = firstItem.copy(
+                                qtyPl = totalQtyPl,
+                                qtyScan = qtyScan
+                            )
+                            
+                            processedItems.add(processedItem)
+                            
+                            Log.d("SupabaseService", "🔍 Grouped Article: ${firstItem.articleName} ${firstItem.size} - qtyPl: $totalQtyPl (from ${itemGroup.size} records), qtyScan: $qtyScan")
                         }
+                        
+                        result[picklistNo] = processedItems
+                        Log.d("SupabaseService", "✅ Processed ${processedItems.size} grouped items for $picklistNo")
+                    } else {
+                        result[picklistNo] = emptyList()
+                        Log.d("SupabaseService", "⚠️ No items found for picklist: $picklistNo")
                     }
-                    
-                    Log.d("SupabaseService", "🚀 BATCH Successfully processed ${result.size} picklists")
-                    result
-                } else {
-                    Log.d("SupabaseService", "⚠️ BATCH No data found for any picklist")
-                    picklistNumbers.associateWith { emptyList<PicklistItem>() }
                 }
+                
+                Log.d("SupabaseService", "🚀 BATCH Successfully processed ${result.size} picklists (total items: ${allItems.size})")
+                result
             } else {
-                Log.e("SupabaseService", "❌ BATCH Query failed with code: $responseCode")
+                Log.d("SupabaseService", "⚠️ BATCH No items found for any picklist")
                 picklistNumbers.associateWith { emptyList<PicklistItem>() }
             }
             
@@ -294,49 +371,73 @@ class SupabaseService {
             val todayDate = getTodayDate()
             Log.d("SupabaseService", "📅 BATCH Filtering scan data from today: $todayDate")
             
+            // **PERBAIKAN**: Gunakan pagination untuk mengatasi limit 1000 Supabase
             val picklistNumbersStr = picklistNumbers.joinToString(",") { "\"$it\"" }
-            val queryUrl = "$supabaseUrl/rest/v1/picklist_scan?no_picklist=in.($picklistNumbersStr)&created_at=gte.$todayDate&select=no_picklist,article_id,size,epc,created_at&order=created_at.asc&limit=10000"
+            val allScans = mutableListOf<JSONObject>()
+            var offset = 0
+            val limit = 1000 // Supabase limit maksimal per request
+            var hasMoreData = true
             
-            val url = URL(queryUrl)
-            val connection = setupConnection(url)
-            
-            connection.requestMethod = "GET"
-            connection.setRequestProperty("apikey", supabaseKey)
-            connection.setRequestProperty("Authorization", "Bearer $supabaseKey")
-            connection.setRequestProperty("Content-Type", "application/json")
-            
-            val responseCode = connection.responseCode
-            
-            if (responseCode == HttpURLConnection.HTTP_OK) {
-                val reader = BufferedReader(InputStreamReader(connection.inputStream))
-                val response = StringBuilder()
-                var line: String?
+            while (hasMoreData) {
+                val queryUrl = "$supabaseUrl/rest/v1/picklist_scan?no_picklist=in.($picklistNumbersStr)&created_at=gte.$todayDate&select=no_picklist,article_id,size,epc,created_at&order=created_at.asc&limit=$limit&offset=$offset"
                 
-                while (reader.readLine().also { line = it } != null) {
-                    response.append(line)
+                Log.d("SupabaseService", "📦 BATCH Scan Query URL (offset=$offset, limit=$limit)")
+                
+                val url = URL(queryUrl)
+                val connection = setupConnection(url)
+                
+                connection.requestMethod = "GET"
+                connection.setRequestProperty("apikey", supabaseKey)
+                connection.setRequestProperty("Authorization", "Bearer $supabaseKey")
+                connection.setRequestProperty("Content-Type", "application/json")
+                
+                val responseCode = connection.responseCode
+                
+                if (responseCode == HttpURLConnection.HTTP_OK) {
+                    val reader = BufferedReader(InputStreamReader(connection.inputStream))
+                    val response = StringBuilder()
+                    var line: String?
+                    
+                    while (reader.readLine().also { line = it } != null) {
+                        response.append(line)
+                    }
+                    reader.close()
+                    
+                    val responseBody = response.toString()
+                    
+                    if (responseBody != "[]" && responseBody.isNotEmpty()) {
+                        val jsonArray = JSONArray(responseBody)
+                        Log.d("SupabaseService", "📦 BATCH Retrieved ${jsonArray.length()} scan records (offset=$offset, total=${allScans.size + jsonArray.length()})")
+                        
+                        for (i in 0 until jsonArray.length()) {
+                            allScans.add(jsonArray.getJSONObject(i))
+                        }
+                        
+                        // Cek apakah masih ada data lagi
+                        hasMoreData = jsonArray.length() == limit
+                        offset += limit
+                    } else {
+                        // Tidak ada data lagi
+                        hasMoreData = false
+                    }
+                } else {
+                    Log.e("SupabaseService", "❌ BATCH Query failed with code: $responseCode")
+                    hasMoreData = false
                 }
-                reader.close()
-                
-                val responseBody = response.toString()
-                val jsonArray = JSONArray(responseBody)
-                val scans = mutableListOf<JSONObject>()
-                
-                for (i in 0 until jsonArray.length()) {
-                    scans.add(jsonArray.getJSONObject(i))
-                }
-                
-                Log.d("SupabaseService", "✅ BATCH Found ${scans.size} scan records")
-                
-                // **VERIFIKASI DETAIL**: Log semua EPC yang ditemukan di database
-                val allEpcsInDb = scans.map { it.getString("epc") }.distinct()
-                Log.d("SupabaseService", "🔍 BATCH VERIFICATION: Total EPCs in database: ${allEpcsInDb.size}")
-                Log.d("SupabaseService", "🔍 BATCH VERIFICATION: All EPCs in database: ${allEpcsInDb.joinToString(", ")}")
-                
-                scans
-            } else {
-                Log.e("SupabaseService", "❌ BATCH Query failed with code: $responseCode")
-                emptyList()
             }
+            
+            Log.d("SupabaseService", "✅ BATCH Found ${allScans.size} total scan records")
+            
+            // **VERIFIKASI DETAIL**: Log semua EPC yang ditemukan di database
+            val allEpcsInDb = allScans.map { it.getString("epc") }.distinct()
+            Log.d("SupabaseService", "🔍 BATCH VERIFICATION: Total EPCs in database: ${allEpcsInDb.size}")
+            if (allEpcsInDb.size <= 20) {
+                Log.d("SupabaseService", "🔍 BATCH VERIFICATION: All EPCs in database: ${allEpcsInDb.joinToString(", ")}")
+            } else {
+                Log.d("SupabaseService", "🔍 BATCH VERIFICATION: Sample EPCs (first 20): ${allEpcsInDb.take(20).joinToString(", ")}...")
+            }
+            
+            allScans
             
         } catch (e: Exception) {
             Log.e("SupabaseService", "❌ BATCH Error getting picklist scans: ${e.message}", e)
@@ -529,84 +630,75 @@ class SupabaseService {
             val todayDate = getTodayDate()
             Log.d("SupabaseService", "📅 Filtering processed EPC data from today: $todayDate")
             
+            // **PERBAIKAN**: Gunakan pagination untuk mengatasi limit 1000 Supabase
             val encodedPicklistNo = URLEncoder.encode(picklistNo, "UTF-8")
-            // **PERBAIKAN**: Gunakan filter yang lebih longgar untuk debugging
-            val selectUrl = "$supabaseUrl/rest/v1/picklist_scan?no_picklist=eq.$encodedPicklistNo&select=epc"
+            val allEpcs = mutableListOf<String>()
+            var offset = 0
+            val limit = 1000 // Supabase limit maksimal per request
+            var hasMoreData = true
             
-            val url = URL(selectUrl)
-            val connection = setupConnection(url)
-            
-            connection.requestMethod = "GET"
-            connection.setRequestProperty("apikey", supabaseKey)
-            connection.setRequestProperty("Authorization", "Bearer $supabaseKey")
-            connection.setRequestProperty("Accept", "application/json")
-            
-            val responseCode = connection.responseCode
-            Log.d("SupabaseService", "📦 Processed EPC list response code: $responseCode")
-            Log.d("SupabaseService", "📦 Processed EPC list query URL: $selectUrl")
-            
-            if (responseCode == 200) {
-                val response = connection.inputStream.bufferedReader().use { it.readText() }
-                Log.d("SupabaseService", "📦 Processed EPC list response length: ${response.length}")
-                Log.d("SupabaseService", "📦 Processed EPC list raw response: $response")
+            while (hasMoreData) {
+                val selectUrl = "$supabaseUrl/rest/v1/picklist_scan?no_picklist=eq.$encodedPicklistNo&created_at=gte.$todayDate&select=epc&order=created_at.asc&limit=$limit&offset=$offset"
                 
-                // Parse JSON response untuk mendapatkan list EPC
-                val epcList = mutableListOf<String>()
-                try {
-                    val jsonArray = org.json.JSONArray(response)
-                    for (i in 0 until jsonArray.length()) {
-                        val jsonObject = jsonArray.getJSONObject(i)
-                        val epc = jsonObject.getString("epc")
-                        epcList.add(epc)
-                    }
-                } catch (e: Exception) {
-                    Log.e("SupabaseService", "❌ Error parsing processed EPC list: ${e.message}", e)
-                }
+                Log.d("SupabaseService", "📦 Processed EPC Pagination Query (offset=$offset, limit=$limit)")
                 
-                // **PERBAIKAN KRITIS**: Log semua EPC yang ditemukan untuk debugging
-                Log.d("SupabaseService", "✅ Found ${epcList.size} processed EPCs for picklist: $picklistNo")
-                if (epcList.isNotEmpty()) {
-                    Log.d("SupabaseService", "🔥 Processed EPCs: ${epcList.joinToString(", ")}")
-                } else {
-                    Log.w("SupabaseService", "⚠️ No processed EPCs found in database for picklist: $picklistNo")
-                    Log.w("SupabaseService", "⚠️ This could mean: 1) No EPCs were ever scanned for this picklist, or 2) Database query returned empty result")
+                val url = URL(selectUrl)
+                val connection = setupConnection(url)
+                
+                connection.requestMethod = "GET"
+                connection.setRequestProperty("apikey", supabaseKey)
+                connection.setRequestProperty("Authorization", "Bearer $supabaseKey")
+                connection.setRequestProperty("Accept", "application/json")
+                
+                val responseCode = connection.responseCode
+                Log.d("SupabaseService", "📦 Processed EPC list response code: $responseCode")
+                
+                if (responseCode == 200) {
+                    val reader = BufferedReader(InputStreamReader(connection.inputStream))
+                    val response = reader.use { it.readText() }
                     
-                    // **PERBAIKAN BARU**: Cek apakah ada data scan untuk picklist ini (tanpa filter tanggal)
-                    try {
-                        Log.d("SupabaseService", "🔍 Checking if there are any scan records for this picklist (without date filter)...")
-                        val checkUrl = "$supabaseUrl/rest/v1/picklist_scan?no_picklist=eq.$encodedPicklistNo&select=epc,created_at&limit=5"
-                        val checkConnection = URL(checkUrl).openConnection() as HttpURLConnection
-                        checkConnection.requestMethod = "GET"
-                        checkConnection.setRequestProperty("apikey", supabaseKey)
-                        checkConnection.setRequestProperty("Authorization", "Bearer $supabaseKey")
-                        checkConnection.setRequestProperty("Accept", "application/json")
-                        
-                        val checkResponseCode = checkConnection.responseCode
-                        if (checkResponseCode == 200) {
-                            val checkResponse = checkConnection.inputStream.bufferedReader().use { it.readText() }
-                            Log.d("SupabaseService", "🔍 Check response (no date filter): $checkResponse")
+                    if (response != "[]" && response.isNotEmpty()) {
+                        try {
+                            val jsonArray = org.json.JSONArray(response)
+                            Log.d("SupabaseService", "📦 Retrieved ${jsonArray.length()} EPCs (offset=$offset, total=${allEpcs.size + jsonArray.length()})")
                             
-                            if (checkResponse != "[]") {
-                                Log.w("SupabaseService", "⚠️ Found scan records without date filter - this suggests the date filter is too restrictive")
-                                Log.w("SupabaseService", "⚠️ Today's date filter: $todayDate might be excluding valid data")
-                            } else {
-                                Log.w("SupabaseService", "⚠️ No scan records found even without date filter - picklist truly has no scanned EPCs")
+                            for (i in 0 until jsonArray.length()) {
+                                val jsonObject = jsonArray.getJSONObject(i)
+                                val epc = jsonObject.getString("epc")
+                                allEpcs.add(epc)
                             }
-                        } else {
-                            Log.e("SupabaseService", "❌ Check query failed with code: $checkResponseCode")
+                            
+                            // Cek apakah masih ada data lagi
+                            hasMoreData = jsonArray.length() == limit
+                            offset += limit
+                        } catch (e: Exception) {
+                            Log.e("SupabaseService", "❌ Error parsing processed EPC list: ${e.message}", e)
+                            hasMoreData = false
                         }
-                    } catch (e: Exception) {
-                        Log.e("SupabaseService", "❌ Error in check query: ${e.message}", e)
+                    } else {
+                        // Tidak ada data lagi
+                        hasMoreData = false
                     }
+                } else {
+                    Log.e("SupabaseService", "❌ Error getting processed EPC list: HTTP $responseCode")
+                    hasMoreData = false
                 }
-
-                epcList
-            } else {
-                Log.e("SupabaseService", "❌ Failed to get processed EPC list: HTTP $responseCode")
-                val errorResponse = connection.errorStream?.bufferedReader()?.use { it.readText() } ?: "No error message"
-                Log.e("SupabaseService", "❌ Error response: $errorResponse")
-                return@withContext emptyList()
             }
+            
+            // **PERBAIKAN KRITIS**: Log semua EPC yang ditemukan untuk debugging
+            Log.d("SupabaseService", "✅ Found ${allEpcs.size} total processed EPCs for picklist: $picklistNo")
+            if (allEpcs.isNotEmpty()) {
+                if (allEpcs.size <= 20) {
+                    Log.d("SupabaseService", "🔥 Processed EPCs: ${allEpcs.joinToString(", ")}")
+                } else {
+                    Log.d("SupabaseService", "🔥 Processed EPCs (first 20): ${allEpcs.take(20).joinToString(", ")}... (total: ${allEpcs.size})")
+                }
+            } else {
+                Log.w("SupabaseService", "⚠️ No processed EPCs found in database for picklist: $picklistNo")
+                Log.w("SupabaseService", "⚠️ This could mean: 1) No EPCs were ever scanned for this picklist, or 2) Database query returned empty result")
+            }
+            
+            allEpcs
         } catch (e: Exception) {
             Log.e("SupabaseService", "❌ Error getting processed EPC list: ${e.message}", e)
             emptyList()
@@ -636,7 +728,8 @@ class SupabaseService {
             Log.d("SupabaseService", "📦 All scan records query URL: $selectUrl")
             
             if (responseCode == 200) {
-                val response = connection.inputStream.bufferedReader().use { it.readText() }
+                val reader = BufferedReader(InputStreamReader(connection.inputStream))
+                val response = reader.use { it.readText() }
                 Log.d("SupabaseService", "📦 All scan records response length: ${response.length}")
                 Log.d("SupabaseService", "📦 All scan records raw response: $response")
                 
@@ -663,7 +756,9 @@ class SupabaseService {
                 epcList
             } else {
                 Log.e("SupabaseService", "❌ Failed to get all scan records: HTTP $responseCode")
-                val errorResponse = connection.errorStream?.bufferedReader()?.use { it.readText() } ?: "No error message"
+                val errorResponse = connection.errorStream?.let { 
+                    BufferedReader(InputStreamReader(it)).use { reader -> reader.readText() }
+                } ?: "No error message"
                 Log.e("SupabaseService", "❌ Error response: $errorResponse")
                 return@withContext emptyList()
             }
@@ -704,7 +799,8 @@ class SupabaseService {
             Log.d("SupabaseService", "📦 Batch check response code: $responseCode")
             
             if (responseCode == 200) {
-                val response = connection.inputStream.bufferedReader().use { it.readText() }
+                val reader = BufferedReader(InputStreamReader(connection.inputStream))
+                val response = reader.use { it.readText() }
                 Log.d("SupabaseService", "📦 Batch check response: $response")
                 
                 // Parse JSON response untuk mendapatkan EPC yang sudah ada
@@ -790,7 +886,9 @@ class SupabaseService {
             
             if (!success) {
                 val errorResponse = try {
-                    connection.errorStream?.bufferedReader()?.use { it.readText() } ?: "No error response"
+                    connection.errorStream?.let { 
+                        BufferedReader(InputStreamReader(it)).use { reader -> reader.readText() }
+                    } ?: "No error response"
                 } catch (e: Exception) {
                     "Error reading error response: ${e.message}"
                 }
@@ -849,7 +947,9 @@ class SupabaseService {
             Log.d("SupabaseService", "📦 Save result: $success")
             
             if (!success) {
-                val errorResponse = connection.errorStream?.bufferedReader()?.readText() ?: "No error message"
+                val errorResponse = connection.errorStream?.let { 
+                    BufferedReader(InputStreamReader(it)).use { reader -> reader.readText() }
+                } ?: "No error message"
                 Log.e("SupabaseService", "❌ Save failed with code $responseCode: $errorResponse")
                 Log.e("SupabaseService", "❌ Request body was: $jsonBody")
             } else {
@@ -997,7 +1097,9 @@ class SupabaseService {
             if (success) {
                 Log.i("SupabaseService", "✅ Picklist $picklistNumber status updated to: $status")
             } else {
-                val errorResponse = connection.errorStream?.bufferedReader()?.readText() ?: "No error message"
+                val errorResponse = connection.errorStream?.let { 
+                    BufferedReader(InputStreamReader(it)).use { reader -> reader.readText() }
+                } ?: "No error message"
                 Log.e("SupabaseService", "❌ Update status failed: $errorResponse")
             }
             

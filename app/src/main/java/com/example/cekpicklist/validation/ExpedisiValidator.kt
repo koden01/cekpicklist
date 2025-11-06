@@ -80,7 +80,12 @@ class ExpedisiValidator(
     )
     
     /**
-     * Validate barcode/resi dengan logika yang sama dengan web app
+     * Validate barcode/resi dengan urutan validasi:
+     * 1. Scan resi (input)
+     * 2. Cek Duplicate (jika duplikat, toast + sound, berhenti)
+     * 3. Cek di cache tbl_expedisi (flag=NO) (jika tidak ada, toast + sound, berhenti)
+     * 4. Cek expedisi mismatch (jika tidak sesuai, toast + sound, berhenti)
+     * 5. VALIDASI OK
      */
     suspend fun validateBarcode(
         barcode: String,
@@ -93,23 +98,56 @@ class ExpedisiValidator(
         try {
             val trimmedBarcode = barcode.trim()
             
-            // 1. Check expedition and karung selection
-            if (selectedExpedisi.isNullOrEmpty() || selectedKarung.isNullOrEmpty()) {
-                audioManager?.playFailureBeep()
-                BarcodeToastManager.showError(context, "Mohon pilih Expedisi dan No Karung terlebih dahulu.")
+            // 1. Check expedition and karung selection (VALIDASI PENTING: HARUS DIPILIH DULU)
+            val expedisiError = when {
+                selectedExpedisi.isNullOrEmpty() -> "Mohon pilih Expedisi terlebih dahulu."
+                selectedExpedisi == "Pilih Expedisi" -> "Mohon pilih Expedisi terlebih dahulu."
+                else -> null
+            }
+            
+            val karungError = when {
+                selectedKarung.isNullOrEmpty() -> "Mohon pilih No Karung terlebih dahulu."
+                selectedKarung == "Pilih Karung" -> "Mohon pilih No Karung terlebih dahulu."
+                else -> null
+            }
+            
+            if (expedisiError != null || karungError != null) {
+                val errorMessage = when {
+                    expedisiError != null && karungError != null -> "Mohon pilih Expedisi dan No Karung terlebih dahulu."
+                    expedisiError != null -> expedisiError
+                    karungError != null -> karungError
+                    else -> "Mohon pilih Expedisi dan No Karung terlebih dahulu."
+                }
+                
+                Log.w(TAG, "🛑 [VALIDASI BERHENTI] $errorMessage - proses berhenti, data TIDAK disimpan")
                 return@withContext ValidationResult(
                     status = ValidationStatus.INVALID_FORMAT,
-                    message = "Mohon pilih Expedisi dan No Karung terlebih dahulu.",
-                    actualCourierName = normalizeExpeditionName(selectedExpedisi)
+                    message = errorMessage,
+                    actualCourierName = normalizeExpeditionName(selectedExpedisi ?: "")
                 )
             }
             
-            // 2. Check if already processed (in tbl_resi)
+            // 2. Check if already processed (in tbl_resi) - Cek Duplicate
+            // **CEK DUPLICATE DI SEMUA DATA CACHE tbl_resi** (4 hari terakhir, tidak hanya hari ini)
+            // Tidak query langsung ke Supabase untuk performa cepat
             val resiDetails = checkResiInDatabase(trimmedBarcode)
             if (resiDetails != null) {
-                val processedDate = resiDetails.created?.let { 
-                    SimpleDateFormat("dd/MM/yyyy HH:mm", Locale.getDefault())
-                        .format(Date(it))
+                val processedDate = resiDetails.created?.let { createdStr ->
+                    try {
+                        // Support format dengan offset (+00:00) dan format dengan Z
+                        // Coba parse sebagai OffsetDateTime dulu, jika gagal baru parse sebagai Instant
+                        val instant = try {
+                            java.time.OffsetDateTime.parse(createdStr).toInstant()
+                        } catch (_: Exception) {
+                            java.time.Instant.parse(createdStr)
+                        }
+                        val date = Date.from(instant)
+                        SimpleDateFormat("dd/MM/yyyy HH:mm", Locale.getDefault()).format(date)
+                    } catch (e: Exception) {
+                        // Fallback: tampilkan original string jika tidak bisa diparse
+                        Log.w(TAG, "⚠️ Failed to parse created for schedule: $createdStr, ${e.message}")
+                        createdStr
+                    }
                 } ?: "Tidak Diketahui"
                 
                 val message = if (resiDetails.schedule == "batal") {
@@ -120,8 +158,7 @@ class ExpedisiValidator(
                     "DOUBLE! Resi ini $keterangan sudah diproses pada $processedDate di karung $nokarung."
                 }
                 
-                audioManager?.playDoubleBeep()
-                BarcodeToastManager.showError(context, message)
+                // UI feedback (sound/toast) ditangani di layer UI (observer)
                 
                 return@withContext ValidationResult(
                     status = ValidationStatus.DUPLICATE_PROCESSED,
@@ -131,11 +168,11 @@ class ExpedisiValidator(
                 )
             }
             
-            // 3. Check in tbl_expedisi
+            // 3. Check in tbl_expedisi (cache, flag=NO) - menggunakan cache-first
             val expedisiRecord = checkExpedisiInDatabase(trimmedBarcode)
             if (expedisiRecord == null) {
-                audioManager?.playFailureBeep()
-                BarcodeToastManager.showError(context, "Data resi $trimmedBarcode tidak ditemukan di database.")
+                // UI feedback (sound/toast) ditangani di layer UI (observer)
+                Log.w(TAG, "🛑 [VALIDASI BERHENTI] Resi '$trimmedBarcode' NOT_FOUND - proses berhenti, data TIDAK disimpan")
                 return@withContext ValidationResult(
                     status = ValidationStatus.NOT_FOUND_IN_EXPEDISI,
                     message = "Data resi $trimmedBarcode tidak ditemukan di database.",
@@ -149,8 +186,7 @@ class ExpedisiValidator(
             
             if (normalizedExpedisiCourierName != normalizedSelectedExpedition) {
                 val message = "Resi ini terdaftar untuk ekspedisi ${expedisiRecord.couriername}, bukan $selectedExpedisi."
-                audioManager?.playFailureBeep()
-                BarcodeToastManager.showError(context, message)
+                // UI feedback (sound/toast) ditangani di layer UI (observer)
                 return@withContext ValidationResult(
                     status = ValidationStatus.MISMATCH_EXPEDISI,
                     message = message,
@@ -159,16 +195,14 @@ class ExpedisiValidator(
                 )
             }
             
-            // 5. Determine schedule based on expedisi created date
+            // 5. Determine schedule based on expedisi created date - VALIDASI OK
             val actualSchedule = determineSchedule(expedisiRecord.created)
             val actualCourierName = normalizeExpeditionName(expedisiRecord.couriername)
             val wasFlagNo = expedisiRecord.flag == "NO"
             
             Log.d(TAG, "✅ Validation successful: $trimmedBarcode")
             
-            // Play success beep and show success notification
-            audioManager?.playSuccessBeep()
-            BarcodeToastManager.showSuccess(context, "Resi $trimmedBarcode berhasil divalidasi")
+            // UI feedback (sound/toast) ditangani di layer UI (observer)
             
             return@withContext ValidationResult(
                 status = ValidationStatus.OK,
@@ -180,8 +214,7 @@ class ExpedisiValidator(
             
         } catch (e: Exception) {
             Log.e(TAG, "❌ Error validating barcode: ${e.message}", e)
-            audioManager?.playFailureBeep()
-            BarcodeToastManager.showError(context, "Terjadi kesalahan: ${e.message}")
+            // UI feedback (sound/toast) ditangani di layer UI (observer)
             return@withContext ValidationResult(
                 status = ValidationStatus.INVALID_FORMAT,
                 message = "Terjadi kesalahan validasi: ${e.message}",
@@ -192,13 +225,21 @@ class ExpedisiValidator(
     
     /**
      * Check if resi exists in tbl_resi
+     * **PENTING**: Menggunakan cache-first strategy (tidak query langsung ke Supabase)
+     * - Cache tbl_resi berisi data 4 hari terakhir
+     * - Fast lookup dari memory (ConcurrentHashMap)
      */
     private suspend fun checkResiInDatabase(resi: String): ResiDetails? = withContext(Dispatchers.IO) {
         try {
-            // Gunakan EnhancedRepository untuk Local-First strategy
+            // Gunakan EnhancedRepository untuk Local-First strategy (cache-first)
+            // getBarcodeResiRecords() akan:
+            // 1. Cek cache dulu (BarcodeCacheManager.getAllResiRecords())
+            // 2. Jika cache valid, langsung return dari cache
+            // 3. Jika cache expired/kosong, baru fetch dari Supabase dan update cache
             val resiRecord = if (enhancedRepository != null) {
                 enhancedRepository.getBarcodeResiRecords().find { it.Resi == resi }
             } else {
+                // Fallback: query langsung via service (jarang digunakan)
                 barcodeExpedisiService?.checkResiInDatabase(resi)
             }
             
@@ -230,11 +271,53 @@ class ExpedisiValidator(
     }
     
     /**
-     * Check if resi exists in tbl_expedisi
+     * Cek apakah created date adalah hari ini
+     */
+    private fun isCreatedToday(createdDate: String?): Boolean {
+        if (createdDate.isNullOrEmpty()) return false
+        return try {
+            // Support multiple ISO 8601 formats (dari Supabase):
+            // Format 1: "2024-11-01T10:30:00.000Z" (dengan Z)
+            // Format 2: "2025-10-29T09:15:26.678+00:00" (dengan offset)
+            // Format 3: "2025-11-01T08:31:14" (tanpa timezone - perlu dianggap sebagai UTC)
+            val created = if (createdDate.contains("T")) {
+                // Coba parse dengan berbagai strategi
+                val instant = try {
+                    // Coba parse sebagai OffsetDateTime (untuk format dengan +00:00 atau -00:00)
+                    java.time.OffsetDateTime.parse(createdDate).toInstant()
+                } catch (_: Exception) {
+                    try {
+                        // Coba parse sebagai Instant (untuk format dengan Z)
+                        java.time.Instant.parse(createdDate)
+                    } catch (_: Exception) {
+                        // Fallback: parse sebagai LocalDateTime dan konversi ke Instant (untuk format tanpa timezone)
+                        // Anggap sebagai UTC untuk konsistensi dengan Supabase
+                        java.time.LocalDateTime.parse(createdDate)
+                            .atZone(java.time.ZoneOffset.UTC)
+                            .toInstant()
+                    }
+                }
+                Date.from(instant)
+            } else {
+                SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss", Locale.getDefault()).parse(createdDate)
+                    ?: return false
+            }
+            val today = Date()
+            val dateFormat = SimpleDateFormat("yyyy-MM-dd", Locale.getDefault())
+            dateFormat.format(created) == dateFormat.format(today)
+        } catch (e: Exception) {
+            Log.e(TAG, "❌ Error parsing created date: ${e.message}", e)
+            false
+        }
+    }
+    
+    /**
+     * Check if resi exists in tbl_expedisi (cache-first, flag=NO)
+     * Menggunakan cache untuk performa cepat
      */
     private suspend fun checkExpedisiInDatabase(resi: String): ExpedisiRecord? = withContext(Dispatchers.IO) {
         try {
-            // Gunakan EnhancedRepository untuk Local-First strategy
+            // Gunakan EnhancedRepository untuk Local-First strategy (cache-first)
             val expedisiRecord = if (enhancedRepository != null) {
                 enhancedRepository.getBarcodeExpedisiRecords().find { it.resino == resi }
             } else {
@@ -281,7 +364,32 @@ class ExpedisiValidator(
         return try {
             if (createdDate.isNullOrEmpty()) return "ontime"
             
-            val created = SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss", Locale.getDefault()).parse(createdDate)
+            // Support multiple ISO 8601 formats:
+            // Format 1: "2024-11-01T10:30:00.000Z" (dengan Z)
+            // Format 2: "2025-10-29T09:15:26.678+00:00" (dengan offset)
+            // Format 3: "2025-11-01T08:31:14" (tanpa timezone - perlu dianggap sebagai UTC atau local time)
+            val instant = if (createdDate.contains("T")) {
+                try {
+                    // Coba parse sebagai OffsetDateTime (untuk format dengan +00:00 atau -00:00)
+                    java.time.OffsetDateTime.parse(createdDate).toInstant()
+                } catch (_: Exception) {
+                    try {
+                        // Coba parse sebagai Instant (untuk format dengan Z)
+                        java.time.Instant.parse(createdDate)
+                    } catch (_: Exception) {
+                        // Fallback: parse sebagai LocalDateTime dan konversi ke Instant (untuk format tanpa timezone)
+                        // Anggap sebagai UTC untuk konsistensi dengan Supabase
+                        java.time.LocalDateTime.parse(createdDate)
+                            .atZone(java.time.ZoneOffset.UTC)
+                            .toInstant()
+                    }
+                }
+            } else {
+                // Fallback ke SimpleDateFormat untuk format lama
+                val parsed = SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss", Locale.getDefault()).parse(createdDate)
+                parsed?.toInstant() ?: throw IllegalArgumentException("Cannot parse date: $createdDate")
+            }
+            val created = Date.from(instant)
             val today = Date()
             
             // Check if created date is today

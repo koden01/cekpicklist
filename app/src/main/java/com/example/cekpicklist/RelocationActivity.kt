@@ -101,12 +101,44 @@ class RelocationActivity : BaseRfidActivity() {
     }
     
     private fun setupRecyclerView() {
-        relocationAdapter = RelocationAdapter()
+        relocationAdapter = RelocationAdapter(onItemClick = { item ->
+            if (item.isValid) {
+                showEpcSelectionDialog(item.articleName, item.size)
+            }
+        })
         
         binding.rvRelocationItems.apply {
             layoutManager = LinearLayoutManager(this@RelocationActivity)
             adapter = relocationAdapter
         }
+    }
+    
+    private fun showEpcSelectionDialog(articleName: String, size: String) {
+        val items = viewModel.relocationItems.value ?: emptyList()
+        val epcs = items.filter { it.isValid && it.articleName.equals(articleName, true) && it.size.equals(size, true) }
+            .map { it.epc }
+            .distinct()
+        if (epcs.isEmpty()) {
+            androidx.appcompat.app.AlertDialog.Builder(this)
+                .setTitle("EPC $articleName $size")
+                .setMessage("Tidak ada EPC untuk artikel ini")
+                .setPositiveButton("OK", null)
+                .show()
+            return
+        }
+        val arr = epcs.toTypedArray()
+        androidx.appcompat.app.AlertDialog.Builder(this)
+            .setTitle("Pilih EPC - $articleName $size")
+            .setItems(arr) { _, which ->
+                val selected = arr[which]
+                val cm = getSystemService(android.content.Context.CLIPBOARD_SERVICE) as android.content.ClipboardManager
+                cm.setPrimaryClip(android.content.ClipData.newPlainText("EPC", selected))
+                val intent = android.content.Intent(this, LocationDemoActivity::class.java)
+                intent.putExtra("target_epc", selected)
+                startActivity(intent)
+            }
+            .setNegativeButton("Batal", null)
+            .show()
     }
     
     private fun setupWarehouseDropdowns() {

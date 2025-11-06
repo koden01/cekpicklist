@@ -73,8 +73,8 @@ class OutActivity : BaseRfidActivity() {
     
     private fun setupRecyclerView() {
         adapter = OutActivityAdapter { groupedItem ->
-            // Handle item click if needed
             Logger.PicklistInput.d("Grouped item clicked: ${groupedItem.articleName}")
+            showEpcSelectionDialog(groupedItem.articleId, groupedItem.articleName, groupedItem.size)
         }
         
         binding.recyclerViewScannedItems.layoutManager = LinearLayoutManager(this)
@@ -97,6 +97,34 @@ class OutActivity : BaseRfidActivity() {
             }
         }
         androidx.recyclerview.widget.ItemTouchHelper(callback).attachToRecyclerView(binding.recyclerViewScannedItems)
+    }
+    
+    private fun showEpcSelectionDialog(articleId: String, articleName: String, size: String) {
+        val data = viewModel.scannedItems.value ?: emptyList()
+        val epcs = data.filter { it.articleId == articleId && it.size.equals(size, true) }
+            .map { it.epc }
+            .distinct()
+        if (epcs.isEmpty()) {
+            androidx.appcompat.app.AlertDialog.Builder(this)
+                .setTitle("EPC $articleName $size")
+                .setMessage("Tidak ada EPC untuk artikel ini")
+                .setPositiveButton("OK", null)
+                .show()
+            return
+        }
+        val arr = epcs.toTypedArray()
+        androidx.appcompat.app.AlertDialog.Builder(this)
+            .setTitle("Pilih EPC - $articleName $size")
+            .setItems(arr) { _, which ->
+                val selected = arr[which]
+                val cm = getSystemService(android.content.Context.CLIPBOARD_SERVICE) as android.content.ClipboardManager
+                cm.setPrimaryClip(android.content.ClipData.newPlainText("EPC", selected))
+                val intent = android.content.Intent(this, LocationDemoActivity::class.java)
+                intent.putExtra("target_epc", selected)
+                startActivity(intent)
+            }
+            .setNegativeButton("Batal", null)
+            .show()
     }
     
     private fun setupButtons() {

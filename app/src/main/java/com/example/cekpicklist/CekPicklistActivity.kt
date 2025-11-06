@@ -608,25 +608,70 @@ class CekPicklistActivity : BaseRfidActivity() {
             adapter = picklistAdapter
         }
         
-        // Setup tap-to-delete functionality
-        setupTapToDelete()
+        // Setup swipe-to-delete functionality
+        setupSwipeToDelete()
+        
+        // Setup item click → show EPC list modal
+        picklistAdapter.setOnItemClickListener { item ->
+            showEpcSelectionDialog(item.articleName, item.size)
+        }
     }
     
     /**
-     * Setup tap-to-delete functionality
+     * Setup swipe-to-delete functionality (ganti dari tap delete)
      */
-    private fun setupTapToDelete() {
-        Log.d(TAG, "🔥 Setup tap-to-delete")
-        
-        // Set listener untuk tap delete
-        picklistAdapter.setOnItemDeleteListener(object : PicklistAdapter.OnItemDeleteListener {
-            override fun onItemDelete(position: Int, item: PicklistItem) {
-                Log.d(TAG, "🔥 Item delete tapped: ${item.articleName} ${item.size}")
-                handleItemDelete(item)
+    private fun setupSwipeToDelete() {
+        Log.d(TAG, "🔥 Setup swipe-to-delete")
+        val swipeCallback = object : androidx.recyclerview.widget.ItemTouchHelper.SimpleCallback(0, androidx.recyclerview.widget.ItemTouchHelper.LEFT or androidx.recyclerview.widget.ItemTouchHelper.RIGHT) {
+            override fun onMove(
+                recyclerView: androidx.recyclerview.widget.RecyclerView,
+                viewHolder: androidx.recyclerview.widget.RecyclerView.ViewHolder,
+                target: androidx.recyclerview.widget.RecyclerView.ViewHolder
+            ): Boolean {
+                return false
             }
-        })
-        
-        Log.d(TAG, "🔥 Tap-to-delete berhasil disetup")
+
+            override fun onSwiped(viewHolder: androidx.recyclerview.widget.RecyclerView.ViewHolder, direction: Int) {
+                val position = viewHolder.bindingAdapterPosition
+                val item = picklistAdapter.getItemAt(position)
+                if (item != null) {
+                    Log.d(TAG, "🔥 Item swiped to delete: ${item.articleName} ${item.size}")
+                    handleItemDelete(item)
+                }
+                // Biarkan ViewModel yang mengatur data; kembalikan tampilan untuk menghindari posisi kosong sementara
+                picklistAdapter.notifyItemChanged(position)
+            }
+        }
+
+        androidx.recyclerview.widget.ItemTouchHelper(swipeCallback).attachToRecyclerView(binding.rvPicklistItems)
+        Log.d(TAG, "🔥 Swipe-to-delete berhasil disetup")
+    }
+    
+    private fun showEpcSelectionDialog(articleName: String, size: String) {
+        val epcs = viewModel.getEpcsForArticle(articleName, size)
+        if (epcs.isEmpty()) {
+            androidx.appcompat.app.AlertDialog.Builder(this)
+                .setTitle("EPC $articleName $size")
+                .setMessage("Belum ada EPC untuk artikel ini")
+                .setPositiveButton("OK", null)
+                .show()
+            return
+        }
+        val items = epcs.toTypedArray()
+        androidx.appcompat.app.AlertDialog.Builder(this)
+            .setTitle("Pilih EPC - $articleName $size")
+            .setItems(items) { _, which ->
+                val selected = items[which]
+                // Copy to clipboard
+                val cm = getSystemService(android.content.Context.CLIPBOARD_SERVICE) as android.content.ClipboardManager
+                cm.setPrimaryClip(android.content.ClipData.newPlainText("EPC", selected))
+                // Navigate to LocationDemoActivity with target EPC
+                val intent = android.content.Intent(this, LocationDemoActivity::class.java)
+                intent.putExtra("target_epc", selected)
+                startActivity(intent)
+            }
+            .setNegativeButton("Batal", null)
+            .show()
     }
     
     /**

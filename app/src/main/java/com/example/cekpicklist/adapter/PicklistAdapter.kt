@@ -17,6 +17,7 @@ class PicklistAdapter : RecyclerView.Adapter<PicklistAdapter.ViewHolder>() {
     
     private var items: List<PicklistItem> = emptyList()
     private var onItemDeleteListener: OnItemDeleteListener? = null
+    private var onItemClickListener: ((PicklistItem) -> Unit)? = null
     
     interface OnItemDeleteListener {
         fun onItemDelete(position: Int, item: PicklistItem)
@@ -24,6 +25,10 @@ class PicklistAdapter : RecyclerView.Adapter<PicklistAdapter.ViewHolder>() {
     
     fun setOnItemDeleteListener(listener: OnItemDeleteListener) {
         onItemDeleteListener = listener
+    }
+    
+    fun setOnItemClickListener(listener: (PicklistItem) -> Unit) {
+        onItemClickListener = listener
     }
     
     fun updateItems(newItems: List<PicklistItem>) {
@@ -48,6 +53,10 @@ class PicklistAdapter : RecyclerView.Adapter<PicklistAdapter.ViewHolder>() {
         }
     }
     
+    fun getItemAt(position: Int): PicklistItem? {
+        return if (position in 0 until items.size) items[position] else null
+    }
+    
     override fun onCreateViewHolder(parent: ViewGroup, viewType: Int): ViewHolder {
         val view = LayoutInflater.from(parent.context)
             .inflate(R.layout.item_picklist, parent, false)
@@ -63,7 +72,7 @@ class PicklistAdapter : RecyclerView.Adapter<PicklistAdapter.ViewHolder>() {
     
     override fun getItemCount(): Int = items.size
     
-    class ViewHolder(itemView: View) : RecyclerView.ViewHolder(itemView) {
+    inner class ViewHolder(itemView: View) : RecyclerView.ViewHolder(itemView) {
         private val cardView: androidx.cardview.widget.CardView = itemView.findViewById(R.id.cardView)
         private val deleteBackground: LinearLayout = itemView.findViewById(R.id.deleteBackground)
         private val deleteIcon: ImageView = itemView.findViewById(R.id.deleteIcon)
@@ -162,23 +171,18 @@ class PicklistAdapter : RecyclerView.Adapter<PicklistAdapter.ViewHolder>() {
                 }
             }
             
-            // Setup tap gesture untuk reveal delete area
+            // Tap membuka modal EPC list untuk artikel
             cardView.setOnClickListener {
-                if (!isRevealed) {
-                    revealDeleteArea()
-                } else {
-                    hideDeleteArea()
+                if (adapterPosition != RecyclerView.NO_POSITION) {
+                    onItemClickListener?.invoke(item)
                 }
             }
             
             // Setup click listener untuk delete background
             deleteBackground.setOnClickListener {
                 // Trigger delete action dengan konfirmasi
-                val adapter = itemView.parent as? RecyclerView
-                val adapterPosition = adapter?.getChildAdapterPosition(itemView) ?: -1
                 if (adapterPosition != RecyclerView.NO_POSITION) {
-                    val adapterInstance = adapter?.adapter as? PicklistAdapter
-                    adapterInstance?.onItemDeleteListener?.onItemDelete(adapterPosition, item)
+                    onItemDeleteListener?.onItemDelete(adapterPosition, item)
                 }
             }
         }

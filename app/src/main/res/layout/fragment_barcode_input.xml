@@ -18,7 +18,7 @@
             android:layout_marginBottom="16dp"
             app:cardCornerRadius="12dp"
             app:cardElevation="8dp"
-            app:cardBackgroundColor="#3B82F6">
+            app:cardBackgroundColor="#4CAF50">
 
             <LinearLayout
                 android:layout_width="match_parent"
@@ -184,6 +184,18 @@
                                 android:indeterminateTint="@android:color/white" />
 
                         </FrameLayout>
+
+                        <!-- Transaksi hari ini (unique resi di tbl_expedisi) -->
+                        <TextView
+                            android:id="@+id/tvTodayUnique"
+                            android:layout_width="wrap_content"
+                            android:layout_height="wrap_content"
+                            android:text="Transaksi hari ini: 0 unik"
+                            android:textColor="@android:color/white"
+                            android:textSize="14sp"
+                            android:alpha="0.85"
+                            android:layout_marginTop="8dp"
+                            android:layout_marginBottom="8dp" />
 
                     </LinearLayout>
 

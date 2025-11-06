@@ -267,7 +267,13 @@ if %errorlevel% neq 0 (
     exit /b 1
 )
 
-git tag "v%new_version%"
+REM Create annotated tag only if it does not already exist
+git rev-parse -q --verify "refs/tags/v%new_version%" >nul 2>&1
+if %errorlevel% neq 0 (
+    git tag -a "v%new_version%" -m "Release v%new_version%"
+) else (
+    echo ℹ️ Tag v%new_version% already exists, skipping tag creation.
+)
 
 if %errorlevel% neq 0 (
     echo ❌ Git tag failed!

@@ -46,6 +46,13 @@ class LocationDemoActivity : AppCompatActivity() {
         
         // Clean chart initially
         llChart.clean()
+        
+        // Prefill target EPC from intent and auto-start
+        intent.getStringExtra("target_epc")?.let { prefill ->
+            etEPC.setText(prefill)
+            // Auto start locating this EPC
+            startLocation()
+        }
     }
     
     /**

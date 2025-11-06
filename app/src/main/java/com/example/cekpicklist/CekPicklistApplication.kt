@@ -5,6 +5,7 @@ import android.util.Log
 import androidx.multidex.MultiDex
 import androidx.multidex.MultiDexApplication
 import com.example.cekpicklist.utils.ToastUtils
+import com.example.cekpicklist.utils.BarcodeAudioManager
 // import com.example.cekpicklist.utils.PerformanceOptimizer
 
 class CekPicklistApplication : MultiDexApplication() {
@@ -42,6 +43,15 @@ class CekPicklistApplication : MultiDexApplication() {
             // throwable.printStackTrace()
         }
         
+        // Initialize audio system early so SoundPool is ready before first scan
+        try {
+            val audio = BarcodeAudioManager(this)
+            audio.initAudio()
+            Log.d(TAG, "🔊 Global audio initialized at app start")
+        } catch (e: Exception) {
+            Log.w(TAG, "⚠️ Failed to pre-initialize audio: ${e.message}")
+        }
+
         Log.e(TAG, "=== APLIKASI SIAP ===")
     }
     

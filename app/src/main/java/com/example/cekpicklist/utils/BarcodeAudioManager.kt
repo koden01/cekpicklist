@@ -28,6 +28,9 @@ class BarcodeAudioManager(private val context: Context) {
     private var audioManager: AudioManager? = null
     private lateinit var soundSettingsManager: SoundSettingsManager
     private var isSoundPoolReady = false
+    private val pendingBeeps = ArrayDeque<BarcodeBeepType>()
+    private var soundsToLoad = 5
+    private var soundsLoaded = 0
     
     /**
      * Initialize audio system
@@ -39,6 +42,11 @@ class BarcodeAudioManager(private val context: Context) {
             // Initialize sound settings manager
             soundSettingsManager = SoundSettingsManager(context)
             
+            if (soundPool != null && isSoundPoolReady) {
+                Log.d(TAG, "🔊 SoundPool already initialized and ready")
+                return
+            }
+
             // Create SoundPool
             soundPool = SoundPool.Builder()
                 .setMaxStreams(5)
@@ -51,10 +59,18 @@ class BarcodeAudioManager(private val context: Context) {
                 .build()
             
             // Set load complete listener
+            soundsLoaded = 0
             soundPool?.setOnLoadCompleteListener { _, _, status ->
                 if (status == 0) {
-                    isSoundPoolReady = true
-                    Log.d(TAG, "✅ SoundPool ready - all sounds loaded successfully")
+                    soundsLoaded += 1
+                    if (soundsLoaded >= soundsToLoad) {
+                        isSoundPoolReady = true
+                        Log.d(TAG, "✅ SoundPool ready - all sounds loaded ($soundsLoaded/$soundsToLoad)")
+                        // Drain pending beeps
+                        while (pendingBeeps.isNotEmpty()) {
+                            playBeep(pendingBeeps.removeFirst())
+                        }
+                    }
                 } else {
                     Log.e(TAG, "❌ SoundPool load failed with status: $status")
                 }
@@ -91,33 +107,31 @@ class BarcodeAudioManager(private val context: Context) {
             
             // Check if SoundPool is ready
             if (!isSoundPoolReady) {
-                Log.w(TAG, "⚠️ SoundPool not ready yet, skipping ${soundType.name} beep")
+                Log.w(TAG, "⚠️ SoundPool not ready yet, queueing ${soundType.name} beep")
+                if (pendingBeeps.size < 5) pendingBeeps.addLast(soundType)
                 return
             }
             
             if (soundPool != null) {
-                // Get sound file name from settings
-                val soundFileName = when (soundType) {
-                    BarcodeBeepType.SUCCESS -> soundSettingsManager.getSuccessSound()
-                    BarcodeBeepType.FAILURE -> soundSettingsManager.getFailureSound()
-                    BarcodeBeepType.DOUBLE -> soundSettingsManager.getDoubleSound()
-                    BarcodeBeepType.START -> soundSettingsManager.getStartSound()
-                    BarcodeBeepType.SABAR -> soundSettingsManager.getSuccessSound() // Use success sound for sabar
+                // Use preloaded sound IDs (SoundPool requires soundId, not raw resourceId)
+                val mapKey = when (soundType) {
+                    BarcodeBeepType.SUCCESS -> SOUND_SUCCESS
+                    BarcodeBeepType.FAILURE -> SOUND_FAILURE
+                    BarcodeBeepType.DOUBLE -> SOUND_DOUBLE
+                    BarcodeBeepType.START -> SOUND_START
+                    BarcodeBeepType.SABAR -> SOUND_SABAR
                 }
-                
-                // Get resource ID for the sound file
-                val resourceId = getResourceIdForSound(soundFileName)
-                if (resourceId != 0) {
+                val soundId = soundMap[mapKey] ?: 0
+                if (soundId != 0) {
                     val volume = audioManager?.let { am ->
                         val currentVolume = am.getStreamVolume(AudioManager.STREAM_NOTIFICATION)
                         val maxVolume = am.getStreamMaxVolume(AudioManager.STREAM_NOTIFICATION)
                         if (maxVolume > 0) currentVolume.toFloat() / maxVolume.toFloat() else 0.5f
                     } ?: 0.5f
-                    
-                    soundPool?.play(resourceId, volume, volume, 1, 0, 1.0f)
-                    Log.d(TAG, "🔊 Playing ${soundType.name} beep with sound: $soundFileName")
+                    soundPool?.play(soundId, volume, volume, 1, 0, 1.0f)
+                    Log.d(TAG, "🔊 Playing ${soundType.name} beep (soundId=$soundId)")
                 } else {
-                    Log.w(TAG, "⚠️ Sound file not found: $soundFileName")
+                    Log.w(TAG, "⚠️ SoundId not found for ${soundType.name}")
                 }
             } else {
                 Log.w(TAG, "⚠️ Sound pool not initialized")

@@ -1478,6 +1478,18 @@ class ScanViewModel(application: Application) : AndroidViewModel(application) {
     }
     
     /**
+     * Mengembalikan daftar EPC untuk artikel (nama + size) dari data processed saat ini.
+     */
+    fun getEpcsForArticle(articleName: String, size: String): List<String> {
+        val data = _processedRfidData.value ?: emptyList()
+        return data.asSequence()
+            .filter { it.articleName.equals(articleName, ignoreCase = true) && it.size.equals(size, ignoreCase = true) }
+            .map { it.epc }
+            .distinct()
+            .toList()
+    }
+    
+    /**
      * Get lookup results untuk EPC yang sudah ada di database
      * Digunakan untuk seeding RfidScanManager agar tidak duplicate
      * 
@@ -1975,11 +1987,27 @@ class ScanViewModel(application: Application) : AndroidViewModel(application) {
                 _processedRfidData.value = updatedProcessedData
                 
                 // **STEP 3.5**: Remove EPCs from RfidScanManager to prevent re-processing
-                if (epcsToRemove.isNotEmpty() && rfidScanManager != null) {
-                    Log.d("ScanViewModel", "🗑️ Removing ${epcsToRemove.size} EPCs from RfidScanManager: ${epcsToRemove.take(3).joinToString(", ")}${if (epcsToRemove.size > 3) "..." else ""}")
-                    rfidScanManager.removeEpcs(epcsToRemove)
-                } else if (epcsToRemove.isNotEmpty()) {
-                    Log.w("ScanViewModel", "⚠️ Cannot remove EPCs from RfidScanManager: reference not provided")
+                if (epcsToRemove.isNotEmpty()) {
+                    if (rfidScanManager != null) {
+                        Log.d("ScanViewModel", "🗑️ Removing ${epcsToRemove.size} EPCs from RfidScanManager: ${epcsToRemove.take(3).joinToString(", ")}${if (epcsToRemove.size > 3) "..." else ""}")
+                        rfidScanManager.removeEpcs(epcsToRemove)
+                    } else {
+                        Log.w("ScanViewModel", "⚠️ Cannot remove EPCs from RfidScanManager: reference not provided")
+                    }
+                    
+                    // **STEP 3.6**: Remove EPCs from uniqueSet and processedEpcPerPicklist untuk allow re-scan
+                    val uniqueSet = getCurrentUniqueSet()
+                    epcsToRemove.forEach { epc ->
+                        uniqueSet.remove(epc)
+                    }
+                    Log.d("ScanViewModel", "🗑️ Removed ${epcsToRemove.size} EPCs from uniqueSet (uniqueSet size: ${uniqueSet.size})")
+                    
+                    if (currentPicklist != null) {
+                        epcsToRemove.forEach { epc ->
+                            processedEpcPerPicklist[currentPicklist]?.remove(epc)
+                        }
+                        Log.d("ScanViewModel", "🗑️ Removed ${epcsToRemove.size} EPCs from processedEpcPerPicklist (processed set size: ${processedEpcPerPicklist[currentPicklist]?.size ?: 0})")
+                    }
                 }
                 
                 // **STEP 4**: Handle item removal based on qtyPl
@@ -2065,8 +2093,9 @@ class ScanViewModel(application: Application) : AndroidViewModel(application) {
      * **FITUR BARU**: Remove RFID untuk article tertentu (delete per article - remove 1 RFID only)
      * @param articleName Nama article yang akan dihapus
      * @param size Size article yang akan dihapus
+     * @param rfidScanManager RfidScanManager instance untuk menghapus EPC dari tracking
      */
-    fun removeRfidForArticle(articleName: String, size: String) {
+    fun removeRfidForArticle(articleName: String, size: String, rfidScanManager: com.example.cekpicklist.utils.RfidScanManager? = null) {
         Log.d("ScanViewModel", "🗑️ Removing RFID for article: $articleName $size")
         
         viewModelScope.launch {
@@ -2126,8 +2155,38 @@ class ScanViewModel(application: Application) : AndroidViewModel(application) {
                     val removedCount = currentProcessedData.size - updatedProcessedData.size
                     Log.d("ScanViewModel", "🗑️ Removed ALL $removedCount processed RFID records for $articleName $size")
                     
+                    // **STEP 2.5**: Get EPCs to remove from RfidScanManager and tracking
+                    val epcsToRemove = currentProcessedData.filter { processedItem ->
+                        processedItem.articleName.equals(articleName, ignoreCase = true) && 
+                        processedItem.size.equals(size, ignoreCase = true)
+                    }.map { it.epc }.toSet()
+                    
                     // **STEP 3**: Update processed RFID data
                     _processedRfidData.value = updatedProcessedData
+                    
+                    // **STEP 3.5**: Remove EPCs from RfidScanManager to prevent re-processing
+                    if (epcsToRemove.isNotEmpty()) {
+                        if (rfidScanManager != null) {
+                            Log.d("ScanViewModel", "🗑️ Removing ${epcsToRemove.size} EPCs from RfidScanManager: ${epcsToRemove.take(3).joinToString(", ")}${if (epcsToRemove.size > 3) "..." else ""}")
+                            rfidScanManager.removeEpcs(epcsToRemove)
+                        } else {
+                            Log.w("ScanViewModel", "⚠️ Cannot remove EPCs from RfidScanManager: reference not provided")
+                        }
+                        
+                        // **STEP 3.6**: Remove EPCs from uniqueSet and processedEpcPerPicklist untuk allow re-scan
+                        val uniqueSet = getCurrentUniqueSet()
+                        epcsToRemove.forEach { epc ->
+                            uniqueSet.remove(epc)
+                        }
+                        Log.d("ScanViewModel", "🗑️ Removed ${epcsToRemove.size} EPCs from uniqueSet (uniqueSet size: ${uniqueSet.size})")
+                        
+                        if (currentPicklist != null) {
+                            epcsToRemove.forEach { epc ->
+                                processedEpcPerPicklist[currentPicklist]?.remove(epc)
+                            }
+                            Log.d("ScanViewModel", "🗑️ Removed ${epcsToRemove.size} EPCs from processedEpcPerPicklist (processed set size: ${processedEpcPerPicklist[currentPicklist]?.size ?: 0})")
+                        }
+                    }
                     
                     // **STEP 4**: Handle item removal based on qtyPl
                     if (itemToRemove.qtyPl == 0) {
@@ -2249,8 +2308,32 @@ class ScanViewModel(application: Application) : AndroidViewModel(application) {
                         val removedCount = currentProcessedData.size - updatedProcessedData.size
                         Log.d("ScanViewModel", "🗑️ Removed $removedCount processed RFID record for $articleName $size")
                         
+                        // **STEP 2.5**: Get EPC to remove from RfidScanManager and tracking
+                        val epcToRemove = itemProcessedData.firstOrNull()?.epc
+                        
                         // **STEP 3**: Update processed RFID data
                         _processedRfidData.value = updatedProcessedData
+                        
+                        // **STEP 3.5**: Remove EPC from RfidScanManager to prevent re-processing
+                        if (epcToRemove != null) {
+                            val epcsToRemove = setOf(epcToRemove)
+                            if (rfidScanManager != null) {
+                                Log.d("ScanViewModel", "🗑️ Removing EPC from RfidScanManager: $epcToRemove")
+                                rfidScanManager.removeEpcs(epcsToRemove)
+                            } else {
+                                Log.w("ScanViewModel", "⚠️ Cannot remove EPC from RfidScanManager: reference not provided")
+                            }
+                            
+                            // **STEP 3.6**: Remove EPC from uniqueSet and processedEpcPerPicklist untuk allow re-scan
+                            val uniqueSet = getCurrentUniqueSet()
+                            uniqueSet.remove(epcToRemove)
+                            Log.d("ScanViewModel", "🗑️ Removed EPC from uniqueSet: $epcToRemove (uniqueSet size: ${uniqueSet.size})")
+                            
+                            if (currentPicklist != null) {
+                                processedEpcPerPicklist[currentPicklist]?.remove(epcToRemove)
+                                Log.d("ScanViewModel", "🗑️ Removed EPC from processedEpcPerPicklist: $epcToRemove (processed set size: ${processedEpcPerPicklist[currentPicklist]?.size ?: 0})")
+                            }
+                        }
                         
                         // **STEP 4**: Update picklist items (decrease qtyScan by 1)
                         val updatedItems = currentItems.map { item ->

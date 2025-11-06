@@ -22,8 +22,8 @@ android {
         applicationId = "com.example.cekpicklist"
         minSdk = 30
         targetSdk = 35
-        versionCode = 16
-        versionName = "5.1.1"
+        versionCode = 20
+        versionName = "5.1.5"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         
@@ -117,11 +117,14 @@ dependencies {
     // RFID SDK
     implementation(files("libs/DeviceAPI_ver20250209_release.aar"))
     
-    // Additional JAR files from demo
-    implementation(files("libs/jxl.jar"))
-    implementation(files("libs/poi-3.12-android-a.jar"))
-    implementation(files("libs/poi-ooxml-schemas-3.12-20150511-a.jar"))
-    implementation(files("libs/xUtils-2.5.5.jar"))
+    // Additional JAR files from demo - REMOVED (files not found in libs folder)
+    // If you need these libraries, either:
+    // 1. Add the JAR files to app/libs/ folder, or
+    // 2. Use Maven dependencies instead
+    // implementation(files("libs/jxl.jar"))
+    // implementation(files("libs/poi-3.12-android-a.jar"))
+    // implementation(files("libs/poi-ooxml-schemas-3.12-20150511-a.jar"))
+    // implementation(files("libs/xUtils-2.5.5.jar"))
     
     // Supabase Realtime (WebSocket) - minimal client
     // Supabase-kt v3 via BOM + modules (compatible with io.github.jan.supabase.* packages)
@@ -148,6 +151,10 @@ dependencies {
     // implementation("com.journeyapps:zxing-android-embedded:4.3.0")
     // implementation("com.google.zxing:core:3.5.2")
 }
+
+
+
+
 
 
 

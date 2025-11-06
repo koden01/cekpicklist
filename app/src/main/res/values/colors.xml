@@ -39,16 +39,17 @@
     <color name="primary_color">#FFD700</color>
     <color name="primary_green">#4CAF50</color>
     <color name="success_color">#4CAF50</color>
+    <color name="warning_color">#F59E0B</color>
     <color name="error_color">#F44336</color>
     <color name="splash_background">#FFD700</color>
     <color name="splash_text_primary">#000000</color>
     <color name="splash_accent">#B8860B</color>
     <color name="splash_text_secondary">#757575</color>
     
-    <!-- Barcode Scanner Colors -->
-    <color name="primary">#1976D2</color>
-    <color name="primary_dark">#1565C0</color>
-    <color name="primary_light">#BBDEFB</color>
+    <!-- Barcode Scanner Colors (Green Theme) -->
+    <color name="primary">#4CAF50</color>
+    <color name="primary_dark">#388E3C</color>
+    <color name="primary_light">#C8E6C9</color>
     <color name="accent">#FF4081</color>
     <color name="background_light">#F5F5F5</color>
     <color name="divider">#E0E0E0</color>

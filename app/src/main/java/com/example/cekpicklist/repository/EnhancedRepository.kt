@@ -8,6 +8,7 @@ import com.example.cekpicklist.api.SupabaseService
 import com.example.cekpicklist.api.NirwanaApiService
 import com.example.cekpicklist.api.BatchSupabaseService
 import com.example.cekpicklist.api.BarcodeSupabaseService
+import com.example.cekpicklist.cache.BarcodeCacheManager
 // PicklistCompletionStatus removed with Room; methods now return simple lists or are no-op
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
@@ -19,6 +20,7 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.CancellationException
 
 /**
  * Enhanced Repository dengan Local-First Strategy
@@ -427,57 +429,195 @@ class EnhancedRepository(private val context: Context) {
     // ==================== BARCODE OPERATIONS ====================
     
     /**
-     * Get barcode resi records dengan Local-First strategy
+     * Get barcode resi records dengan Light Cache strategy
      */
     suspend fun getBarcodeResiRecords(): List<BarcodeSupabaseService.BarcodeScanRecord> = withContext(Dispatchers.IO) {
         try {
-            Log.d(TAG, "🔥 [Supabase-only] Getting barcode resi records")
+            // Check cache first (fast lookup)
+            val cachedRecords = BarcodeCacheManager.getAllResiRecords()
+            if (cachedRecords.isNotEmpty() && BarcodeCacheManager.isResiCacheValid()) {
+                Log.d(TAG, "📦 Using cached barcode resi records: ${cachedRecords.size}")
+                return@withContext cachedRecords
+            }
+            
+            // Cache expired or empty, fetch from Supabase
+            Log.d(TAG, "🔥 [Supabase-only] Fetching barcode resi records from Supabase")
             val remoteRecords = barcodeSupabaseService.getAllBarcodeResi()
             Log.d(TAG, "✅ Retrieved ${remoteRecords.size} barcode resi from Supabase")
+            
+            // Update cache
+            if (cachedRecords.isEmpty()) {
+                BarcodeCacheManager.initializeCache(remoteRecords, emptyList())
+            } else {
+                BarcodeCacheManager.refreshCache(remoteRecords, emptyList())
+            }
+            
             remoteRecords
         } catch (e: Exception) {
-            Log.e(TAG, "❌ Error getting barcode resi records from Supabase: ${e.message}", e)
+            Log.e(TAG, "❌ Error getting barcode resi records: ${e.message}", e)
+            // Fallback to cache if available
+            val cachedRecords = BarcodeCacheManager.getAllResiRecords()
+            if (cachedRecords.isNotEmpty()) {
+                Log.d(TAG, "⚠️ Using cached data due to error")
+                return@withContext cachedRecords
+            }
             emptyList()
         }
     }
     
     /**
-     * Get barcode expedisi records dengan Local-First strategy
+     * Get barcode expedisi records dengan Light Cache strategy
+     * DENGAN VALIDASI UPDATE_AT: Memeriksa timestamp update_at untuk cache invalidation
      */
     suspend fun getBarcodeExpedisiRecords(): List<BarcodeSupabaseService.BarcodeSessionRecord> = withContext(Dispatchers.IO) {
         try {
-            Log.d(TAG, "🔥 [Supabase-only] Getting barcode expedisi records")
+            // Check cache first (fast lookup)
+            val cachedRecords = BarcodeCacheManager.getAllExpedisiRecords()
+            
+            if (cachedRecords.isNotEmpty() && BarcodeCacheManager.isExpedisiCacheValid()) {
+                // **VALIDASI UPDATE_AT**: Cek apakah ada data yang diupdate di Supabase
+                val cachedUpdateAt = BarcodeCacheManager.getLastExpedisiUpdateAt()
+                val latestUpdateAt = try {
+                    barcodeSupabaseService.getLatestExpedisiUpdateAt()
+                } catch (e: Exception) {
+                    Log.w(TAG, "⚠️ Cannot check latest update_at, using cache: ${e.message}")
+                    null
+                }
+                
+                // Jika timestamp update_at di Supabase lebih baru, invalidate cache
+                if (latestUpdateAt != null && latestUpdateAt != cachedUpdateAt) {
+                    Log.d(TAG, "🔄 Cache invalidated: update_at changed (cached=$cachedUpdateAt, latest=$latestUpdateAt)")
+                    // Continue to fetch from Supabase
+                } else {
+                    Log.d(TAG, "📦 Using cached barcode expedisi records: ${cachedRecords.size} (update_at=$cachedUpdateAt)")
+                    return@withContext cachedRecords
+                }
+            }
+            
+            // Cache expired, empty, or invalidated - fetch from Supabase
+            Log.d(TAG, "🔥 [Supabase-only] Fetching barcode expedisi records from Supabase")
             val remoteRecords = barcodeSupabaseService.getAllBarcodeExpedisi()
             Log.d(TAG, "✅ Retrieved ${remoteRecords.size} barcode expedisi from Supabase")
+            
+            // Update cache
+            val resiRecords = BarcodeCacheManager.getAllResiRecords()
+            if (cachedRecords.isEmpty() && resiRecords.isEmpty()) {
+                BarcodeCacheManager.initializeCache(emptyList(), remoteRecords)
+            } else {
+                BarcodeCacheManager.refreshCache(emptyList(), remoteRecords)
+            }
+            
             remoteRecords
         } catch (e: Exception) {
-            Log.e(TAG, "❌ Error getting barcode expedisi records from Supabase: ${e.message}", e)
+            Log.e(TAG, "❌ Error getting barcode expedisi records: ${e.message}", e)
+            // Fallback to cache if available
+            val cachedRecords = BarcodeCacheManager.getAllExpedisiRecords()
+            if (cachedRecords.isNotEmpty()) {
+                Log.d(TAG, "⚠️ Using cached data due to error")
+                return@withContext cachedRecords
+            }
             emptyList()
         }
     }
     
     /**
-     * Save barcode resi record dengan Local-First strategy
+     * Save barcode resi record dengan LOCAL-FIRST Strategy:
+     * - Tambah ke cache dulu (INSTAN, non-blocking)
+     * - POST ke Supabase di background (non-blocking, tidak menunggu response)
+     * Mengembalikan true jika cache berhasil di-update (optimistic), false jika gagal.
+     * Network sync terjadi di background - tidak blocking return value.
      */
-    suspend fun saveBarcodeResiRecord(record: BarcodeSupabaseService.BarcodeScanRecord) = withContext(Dispatchers.IO) {
+    suspend fun saveBarcodeResiRecord(record: BarcodeSupabaseService.BarcodeScanRecord): Boolean = withContext(Dispatchers.IO) {
         try {
-            Log.d(TAG, "💾 [Supabase-only] Saving barcode resi record: ${record.Resi}")
-            barcodeSupabaseService.saveBarcodeScan(record)
-            Log.d(TAG, "✅ Saved barcode resi record to Supabase: ${record.Resi}")
+            // **VALIDASI**: Pastikan created selalu terisi sebelum menyimpan
+            val recordWithCreated = if (record.created.isNullOrBlank()) {
+                Log.w(TAG, "⚠️ Record ${record.Resi} tidak punya created, menambahkan waktu sekarang")
+                record.copy(created = java.time.Instant.now().toString())
+            } else {
+                record
+            }
+            
+            // **LOCAL-FIRST**: Masukkan ke cache dulu (INSTAN, non-blocking)
+            BarcodeCacheManager.addResiRecord(recordWithCreated)
+            Log.d(TAG, "💾 [LOCAL-FIRST] Added to cache instantly: ${recordWithCreated.Resi}, created=${recordWithCreated.created}")
+            
+            // **NON-BLOCKING NETWORK**: POST ke Supabase di background (tidak menunggu response)
+            // Gunakan launch terpisah agar tidak blocking return
+            CoroutineScope(Dispatchers.IO + SupervisorJob()).launch {
+                try {
+                    val success = barcodeSupabaseService.saveBarcodeScan(recordWithCreated)
+                    if (success) {
+                        Log.d(TAG, "✅ [Background] Supabase save OK: ${record.Resi}")
+                    } else {
+                        Log.e(TAG, "❌ [Background] Supabase save FAILED: ${record.Resi}, will be retried by background sync")
+                        // Network gagal, tapi cache sudah di-update (local-first)
+                        // Background sync akan retry otomatis
+                    }
+                } catch (e: Exception) {
+                    Log.e(TAG, "❌ [Background] Error saving to Supabase: ${e.message}", e)
+                    // Error di background, tapi cache sudah di-update (local-first)
+                    // Background sync akan retry otomatis
+                }
+            }
+            
+            // **OPTIMISTIC RETURN**: Return true segera setelah cache update (tidak menunggu network)
+            // Cache sudah di-update, UI bisa langsung update
+            true
         } catch (e: Exception) {
-            Log.e(TAG, "❌ Error saving barcode resi record to Supabase: ${e.message}", e)
+            Log.e(TAG, "❌ Error in local-first save: ${e.message}", e)
+            false
+        }
+    }
+    
+    /**
+     * Hapus barcode resi record dari cache dan Supabase
+     */
+    suspend fun deleteBarcodeResiRecord(resi: String): Boolean = withContext(Dispatchers.IO) {
+        try {
+            Log.d(TAG, "🗑️ Deleting barcode resi record: $resi")
+            
+            // Hapus dari cache terlebih dahulu (optimistic delete)
+            BarcodeCacheManager.removeResiRecord(resi)
+            Log.d(TAG, "🗑️ Removed from cache: $resi")
+            
+            // Hapus dari Supabase
+            val supabaseOk = barcodeSupabaseService.deleteBarcodeResi(resi)
+            if (supabaseOk) {
+                Log.d(TAG, "✅ Barcode resi deleted successfully from Supabase: $resi")
+                true
+            } else {
+                Log.w(TAG, "⚠️ Failed to delete from Supabase, but removed from cache: $resi")
+                // Jika Supabase gagal, tetap return true karena sudah dihapus dari cache
+                // (akan di-sync ulang saat background sync)
+                true
+            }
+        } catch (e: Exception) {
+            Log.e(TAG, "❌ Error deleting barcode resi record: ${e.message}", e)
+            false
         }
     }
     
     /**
      * Update flag di tbl_expedisi berdasarkan resino
+     * Jika flag berubah ke "YES", remove dari cache (karena cache hanya menyimpan flag="NO")
      */
     suspend fun updateExpedisiFlag(resino: String, flag: String): Boolean = withContext(Dispatchers.IO) {
         try {
             Log.d(TAG, "🔄 [Supabase-only] Updating flag in tbl_expedisi: resino=$resino, flag=$flag")
-            barcodeSupabaseService.updateExpedisiFlag(resino, flag)
-            Log.d(TAG, "✅ Flag updated in Supabase: resino=$resino, flag=$flag")
-            true
+            val success = barcodeSupabaseService.updateExpedisiFlag(resino, flag)
+            
+            if (success) {
+                // Jika flag berubah ke "YES", remove dari cache (cache hanya menyimpan flag="NO")
+                if (flag.uppercase() == "YES") {
+                    com.example.cekpicklist.cache.BarcodeCacheManager.removeExpedisiRecord(resino)
+                    Log.d(TAG, "🗑️ Removed from cache (flag changed to YES): resino=$resino")
+                }
+                Log.d(TAG, "✅ Flag updated in Supabase and cache: resino=$resino, flag=$flag")
+            } else {
+                Log.e(TAG, "❌ Failed to update flag in Supabase: resino=$resino, flag=$flag")
+            }
+            
+            success
         } catch (e: Exception) {
             Log.e(TAG, "❌ Error updating expedisi flag in Supabase: ${e.message}", e)
             false
@@ -485,25 +625,21 @@ class EnhancedRepository(private val context: Context) {
     }
     
     /**
-     * Save barcode expedisi record dengan Local-First strategy
+     * Save barcode expedisi record dengan Light Cache strategy
      */
     suspend fun saveBarcodeExpedisiRecord(record: BarcodeSupabaseService.BarcodeSessionRecord) = withContext(Dispatchers.IO) {
         try {
-            Log.d(TAG, "💾 Saving barcode expedisi record: ${record.id}")
+            Log.d(TAG, "💾 Saving barcode expedisi record: ${record.orderno}")
             
-            // Step 1: Save ke local database dulu (fast)
-            barcodeSupabaseService.saveBarcodeSession(record)
+            // Step 1: Save ke Supabase
+            val sessionId = barcodeSupabaseService.saveBarcodeSession(record)
             
-            // Step 2: Sync ke Supabase (background)
-            repositoryScope.launch {
-                try {
-                    barcodeSupabaseService.saveBarcodeSession(record)
-                    // no-op mark clean in Supabase-only mode
-                    Log.d(TAG, "✅ Synced barcode expedisi record to Supabase: ${record.id}")
-                } catch (e: Exception) {
-                    Log.e(TAG, "❌ Failed to sync barcode expedisi record to Supabase: ${e.message}", e)
-                    // no-op mark dirty in Supabase-only mode
-                }
+            if (sessionId != null) {
+                // Step 2: Update cache immediately (optimistic update)
+                BarcodeCacheManager.addExpedisiRecord(record)
+                Log.d(TAG, "✅ Saved barcode expedisi record to Supabase and cache: ${record.orderno}")
+            } else {
+                Log.e(TAG, "❌ Failed to save barcode expedisi record to Supabase: ${record.orderno}")
             }
             
         } catch (e: Exception) {
@@ -518,9 +654,294 @@ class EnhancedRepository(private val context: Context) {
         try {
             Log.d(TAG, "🔄 Performing background sync for barcode data...")
             // Supabase-only: tidak melakukan sync ke Room
-            Log.d(TAG, "✅ Background sync skipped (Supabase-only mode)")
+            
+            // Deteksi dan hapus data yang dihapus di Supabase
+            detectAndRemoveDeletedResi()
+            
+            Log.d(TAG, "✅ Background sync completed (Supabase-only mode)")
         } catch (e: Exception) {
             Log.e(TAG, "❌ Background sync failed for barcode data: ${e.message}", e)
+        }
+    }
+    
+    /**
+     * Helper function untuk check apakah created date dalam window 4 hari terakhir
+     */
+    private fun isWithinLast4Days(created: String?): Boolean {
+        return try {
+            if (created.isNullOrBlank()) return true
+            val datePart = if (created.length >= 10) created.substring(0, 10) else created
+            val recordDate = java.time.LocalDate.parse(datePart)
+            val todayUtc = java.time.Instant.now().atZone(java.time.ZoneOffset.UTC).toLocalDate()
+            val fourDaysWindowStart = todayUtc.minusDays(3) // termasuk hari ini
+            !recordDate.isBefore(fourDaysWindowStart)
+        } catch (e: Exception) {
+            Log.w(TAG, "⚠️ Cannot parse created date: '$created'. Keeping record by default.")
+            true
+        }
+    }
+    
+    /**
+     * **SINKRONISASI DUA ARAH**: Bandingkan cache dengan Supabase
+     * - Hapus data yang dihapus di Supabase dari cache
+     * - Tambahkan data baru dari Supabase ke cache
+     * Dijalankan di background setiap 60 detik untuk menjaga cache tetap sinkron dengan Supabase
+     */
+    suspend fun detectAndRemoveDeletedResi() = withContext(Dispatchers.IO) {
+        try {
+            Log.d(TAG, "🔍 [Background] Detecting deleted resi from Supabase (TIMESTAMP-BASED)...")
+            
+            // **OPTIMASI BANDWIDTH**: Gunakan timestamp-based fetch untuk hanya ambil perubahan
+            val lastSyncTime = BarcodeCacheManager.getLastResiSyncTime()
+            val sinceDate = BarcodeCacheManager.timestampToIsoDate(lastSyncTime)
+            
+            Log.d(TAG, "📅 Last sync time: ${if (lastSyncTime == 0L) "Never (initial sync)" else "${(System.currentTimeMillis() - lastSyncTime) / 1000}s ago"}")
+            Log.d(TAG, "📅 Fetching data since: $sinceDate")
+            
+            // 1. Ambil semua resi dari cache (4 hari terakhir)
+            val cachedResi = BarcodeCacheManager.getAllResiRecords()
+            val cachedResiSet = cachedResi.map { it.Resi.trim().uppercase() }.toSet()
+            
+            Log.d(TAG, "📦 Cache contains ${cachedResiSet.size} resi records")
+            
+            // 2. **OPTIMASI**: Ambil HANYA data yang berubah sejak lastSyncTime dari Supabase
+            val supabaseResi = if (lastSyncTime == 0L) {
+                // Initial sync: ambil semua data (4 hari terakhir)
+                Log.d(TAG, "🔄 Initial sync: fetching all data from last 4 days")
+                barcodeSupabaseService.getAllBarcodeResi()
+            } else {
+                // Incremental sync: ambil hanya data baru/modified sejak lastSyncTime
+                Log.d(TAG, "🔄 Incremental sync: fetching only changes since $sinceDate")
+                barcodeSupabaseService.getBarcodeResiSince(sinceDate)
+            }
+            val supabaseResiSet = supabaseResi.map { it.Resi.trim().uppercase() }.toSet()
+            
+            Log.d(TAG, "☁️ Supabase contains ${supabaseResiSet.size} resi records (${if (lastSyncTime == 0L) "full sync" else "incremental"})")
+            
+            // 3. Bandingkan: resi yang ada di cache tapi tidak ada di Supabase
+            // Bisa jadi: (a) dihapus di Supabase, atau (b) gagal sync ke Supabase (harus di-retry)
+            val missingInSupabase = cachedResiSet - supabaseResiSet
+            
+            // **DETECT FAILED SYNC**: Jika resi ada di cache tapi tidak di Supabase, coba retry save
+            val deletedResi = if (missingInSupabase.isNotEmpty()) {
+                Log.d(TAG, "🔄 Found ${missingInSupabase.size} resi in cache but not in Supabase (possible failed sync), retrying...")
+                
+                // Ambil record dari cache untuk retry
+                val recordsToRetry = cachedResi.filter { 
+                    missingInSupabase.contains(it.Resi.trim().uppercase()) 
+                }
+                
+                // Retry save untuk setiap record yang gagal sync
+                var successCount = 0
+                var failedCount = 0
+                
+                recordsToRetry.forEach { record ->
+                    try {
+                        // Hanya log retry attempt jika banyak item atau verbose logging
+                        if (recordsToRetry.size <= 5) {
+                            Log.d(TAG, "🔄 Retrying save for resi: ${record.Resi}")
+                        }
+                        val retrySuccess = barcodeSupabaseService.saveBarcodeScan(record)
+                        if (retrySuccess) {
+                            // **PERBAIKAN**: retrySuccess bisa true karena:
+                            // 1. Berhasil insert baru (200-299), atau
+                            // 2. Data sudah ada (409 - duplicate key)
+                            // Keduanya dianggap success
+                            successCount++
+                            // Tidak log setiap success individual untuk mengurangi noise
+                            // Hanya log summary di akhir
+                        } else {
+                            failedCount++
+                            Log.w(TAG, "⚠️ [Retry] Failed to sync resi: ${record.Resi}, will retry again later")
+                        }
+                    } catch (e: Exception) {
+                        failedCount++
+                        Log.e(TAG, "❌ [Retry] Error syncing resi ${record.Resi}: ${e.message}", e)
+                    }
+                }
+                
+                Log.d(TAG, "📊 Retry summary: $successCount success (including duplicates), $failedCount failed")
+                
+                // **PERBAIKAN**: Setelah retry dengan 409 handling, perlu re-fetch untuk cek status
+                // Tapi tunggu sedikit lebih lama untuk memastikan Supabase sudah fully updated
+                delay(1000) // Increased delay untuk memastikan data sudah ter-index
+                
+                // Re-fetch untuk verify status setelah retry
+                // Gunakan query incremental sync untuk cek data yang sudah ter-sync
+                val retryCheck = try {
+                    barcodeSupabaseService.getBarcodeResiSince(sinceDate)
+                } catch (e: Exception) {
+                    Log.w(TAG, "⚠️ Error during retry verification: ${e.message}, using empty list")
+                    emptyList()
+                }
+                
+                val supabaseResiAfterRetry = retryCheck.map { it.Resi.trim().uppercase() }.toSet()
+                
+                // Hanya yang benar-benar tidak ada di Supabase (setelah retry) = dihapus
+                val confirmedDeleted = cachedResiSet - supabaseResiAfterRetry
+                
+                if (confirmedDeleted.isNotEmpty()) {
+                    Log.d(TAG, "🗑️ Confirmed ${confirmedDeleted.size} deleted resi (still missing after retry)")
+                } else if (missingInSupabase.isNotEmpty()) {
+                    Log.d(TAG, "✅ All missing resi have been resolved (either synced or already existed)")
+                }
+                
+                confirmedDeleted
+            } else {
+                // Tidak ada missing data, jadi tidak ada yang perlu di-retry atau dihapus
+                emptySet<String>()
+            }
+            
+            // 4. Deteksi data baru: resi yang ada di Supabase tapi tidak ada di cache = baru
+            val newResi = supabaseResiSet - cachedResiSet
+            
+            // 5. Hapus data yang dihapus di Supabase dari cache
+            if (deletedResi.isNotEmpty()) {
+                Log.d(TAG, "🗑️ Found ${deletedResi.size} deleted resi in cache (removed from Supabase), removing...")
+                deletedResi.forEach { resi ->
+                    BarcodeCacheManager.removeResiRecord(resi)
+                }
+                
+                Log.d(TAG, "✅ Removed ${deletedResi.size} deleted resi from cache:")
+                deletedResi.take(10).forEach { resi ->
+                    Log.d(TAG, "   - $resi")
+                }
+                if (deletedResi.size > 10) {
+                    Log.d(TAG, "   ... and ${deletedResi.size - 10} more")
+                }
+            }
+            
+            // 6. Tambahkan data baru dari Supabase ke cache
+            if (newResi.isNotEmpty()) {
+                Log.d(TAG, "🆕 Found ${newResi.size} new resi in Supabase (not in cache), adding to cache...")
+                
+                // Ambil full record dari Supabase untuk data baru
+                val newResiRecords = supabaseResi.filter { 
+                    newResi.contains(it.Resi.trim().uppercase()) 
+                }
+                
+                newResiRecords.forEach { record ->
+                    // Filter hanya data dalam window 4 hari
+                    if (isWithinLast4Days(record.created)) {
+                        BarcodeCacheManager.addResiRecord(record)
+                    }
+                }
+                
+                Log.d(TAG, "✅ Added ${newResiRecords.size} new resi records to cache:")
+                newResi.take(10).forEach { resi ->
+                    Log.d(TAG, "   - $resi")
+                }
+                if (newResi.size > 10) {
+                    Log.d(TAG, "   ... and ${newResi.size - 10} more")
+                }
+            }
+            
+            // 7. **OPTIMASI**: Update lastSyncTime setelah sync berhasil
+            val currentTime = System.currentTimeMillis()
+            BarcodeCacheManager.setLastResiSyncTime(currentTime)
+            Log.d(TAG, "💾 Updated last sync time: ${java.time.Instant.ofEpochMilli(currentTime).atZone(java.time.ZoneOffset.UTC).toLocalDate()}")
+            
+            if (deletedResi.isEmpty() && newResi.isEmpty()) {
+                Log.d(TAG, "✅ Cache is in sync with Supabase (no deletions, no new data)")
+            }
+            
+        } catch (e: Exception) {
+            Log.e(TAG, "❌ Error detecting deleted resi: ${e.message}", e)
+        }
+    }
+    
+    /**
+     * **DETEKSI PENGHAPUSAN**: Bandingkan cache expedisi dengan Supabase, hapus data yang tidak ada di Supabase
+     * Dijalankan di background untuk menjaga cache tetap sinkron dengan Supabase
+     * Catatan: Cache hanya menyimpan expedisi dengan flag="NO", jadi hanya membandingkan data dengan flag="NO"
+     */
+    suspend fun detectAndRemoveDeletedExpedisi() = withContext(Dispatchers.IO) {
+        try {
+            Log.d(TAG, "🔍 [Background] Detecting deleted expedisi from Supabase (TIMESTAMP-BASED)...")
+            
+            // **OPTIMASI BANDWIDTH**: Gunakan timestamp-based fetch untuk hanya ambil perubahan
+            val lastSyncTime = BarcodeCacheManager.getLastExpedisiSyncTime()
+            val sinceDate = BarcodeCacheManager.timestampToIsoDate(lastSyncTime)
+            
+            Log.d(TAG, "📅 Last sync time: ${if (lastSyncTime == 0L) "Never (initial sync)" else "${(System.currentTimeMillis() - lastSyncTime) / 1000}s ago"}")
+            Log.d(TAG, "📅 Fetching data since: $sinceDate")
+            
+            // 1. Ambil semua expedisi dari cache (hanya flag="NO")
+            val cachedExpedisi = BarcodeCacheManager.getAllExpedisiRecords()
+            val cachedResinoSet = cachedExpedisi.map { it.resino.trim().uppercase() }.toSet()
+            
+            Log.d(TAG, "📦 Cache contains ${cachedResinoSet.size} expedisi records (flag=NO)")
+            
+            // 2. **OPTIMASI**: Ambil HANYA data yang berubah sejak lastSyncTime dari Supabase
+            val supabaseExpedisi = if (lastSyncTime == 0L) {
+                // Initial sync: ambil semua data (flag="NO")
+                Log.d(TAG, "🔄 Initial sync: fetching all data with flag=NO")
+                barcodeSupabaseService.getAllBarcodeExpedisi()
+            } else {
+                // Incremental sync: ambil hanya data baru/modified sejak lastSyncTime
+                Log.d(TAG, "🔄 Incremental sync: fetching only changes since $sinceDate")
+                barcodeSupabaseService.getBarcodeExpedisiSince(sinceDate)
+            }
+            val supabaseResinoSet = supabaseExpedisi.map { it.resino.trim().uppercase() }.toSet()
+            
+            Log.d(TAG, "☁️ Supabase contains ${supabaseResinoSet.size} expedisi records (flag=NO, ${if (lastSyncTime == 0L) "full sync" else "incremental"})")
+            
+            // 3. Bandingkan: resino yang ada di cache tapi tidak ada di Supabase = dihapus
+            val deletedResino = cachedResinoSet - supabaseResinoSet
+            
+            // 4. Deteksi data baru: resino yang ada di Supabase tapi tidak ada di cache = baru
+            val newResino = supabaseResinoSet - cachedResinoSet
+            
+            // 5. Hapus data yang dihapus di Supabase dari cache
+            if (deletedResino.isNotEmpty()) {
+                Log.d(TAG, "🗑️ Found ${deletedResino.size} deleted expedisi in cache (removed from Supabase), removing...")
+                deletedResino.forEach { resino ->
+                    BarcodeCacheManager.removeExpedisiRecord(resino)
+                }
+                
+                Log.d(TAG, "✅ Removed ${deletedResino.size} deleted expedisi from cache:")
+                deletedResino.take(10).forEach { resino ->
+                    Log.d(TAG, "   - $resino")
+                }
+                if (deletedResino.size > 10) {
+                    Log.d(TAG, "   ... and ${deletedResino.size - 10} more")
+                }
+            }
+            
+            // 6. Tambahkan data baru dari Supabase ke cache (hanya flag="NO")
+            if (newResino.isNotEmpty()) {
+                Log.d(TAG, "🆕 Found ${newResino.size} new expedisi in Supabase (not in cache), adding to cache...")
+                
+                // Ambil full record dari Supabase untuk data baru (hanya flag="NO")
+                val newExpedisiRecords = supabaseExpedisi.filter { 
+                    newResino.contains(it.resino.trim().uppercase()) && 
+                    it.flag.uppercase() == "NO"
+                }
+                
+                newExpedisiRecords.forEach { record ->
+                    BarcodeCacheManager.addExpedisiRecord(record)
+                }
+                
+                Log.d(TAG, "✅ Added ${newExpedisiRecords.size} new expedisi records to cache:")
+                newResino.take(10).forEach { resino ->
+                    Log.d(TAG, "   - $resino")
+                }
+                if (newResino.size > 10) {
+                    Log.d(TAG, "   ... and ${newResino.size - 10} more")
+                }
+            }
+            
+            // 7. **OPTIMASI**: Update lastSyncTime setelah sync berhasil
+            val currentTime = System.currentTimeMillis()
+            BarcodeCacheManager.setLastExpedisiSyncTime(currentTime)
+            Log.d(TAG, "💾 Updated last sync time: ${java.time.Instant.ofEpochMilli(currentTime).atZone(java.time.ZoneOffset.UTC).toLocalDate()}")
+            
+            if (deletedResino.isEmpty() && newResino.isEmpty()) {
+                Log.d(TAG, "✅ Cache is in sync with Supabase (no deletions, no new data)")
+            }
+            
+        } catch (e: Exception) {
+            Log.e(TAG, "❌ Error detecting deleted expedisi: ${e.message}", e)
         }
     }
     
@@ -539,10 +960,20 @@ class EnhancedRepository(private val context: Context) {
      */
     suspend fun forceRefreshBarcodeData(): List<BarcodeSupabaseService.BarcodeScanRecord> = withContext(Dispatchers.IO) {
         try {
-            Log.d(TAG, "🔄 [Supabase-only] Force refreshing barcode data from Supabase...")
-            val remoteRecords = barcodeSupabaseService.getAllBarcodeResi()
-            Log.d(TAG, "✅ Force refresh completed: ${remoteRecords.size} resi records")
-            remoteRecords
+            Log.d(TAG, "🔄 [Supabase] Incremental force refresh barcode data...")
+            // Tentukan anchor dari cache: gunakan tanggal max(created) di cache (atau 4 hari lalu jika kosong)
+            val cachedResi = BarcodeCacheManager.getAllResiRecords()
+            val sinceDate = cachedResi.mapNotNull { it.created?.take(10) }.maxOrNull()
+                ?: java.time.Instant.now().atZone(java.time.ZoneOffset.UTC).toLocalDate().minusDays(3).toString()
+            val resiDelta = barcodeSupabaseService.getBarcodeResiSince(sinceDate)
+            val expedisiDelta = barcodeSupabaseService.getBarcodeExpedisiSince(sinceDate)
+
+            // Upsert ke cache (tanpa clear)
+            resiDelta.forEach { BarcodeCacheManager.addResiRecord(it) }
+            expedisiDelta.forEach { BarcodeCacheManager.addExpedisiRecord(it) }
+
+            Log.d(TAG, "✅ Incremental refresh: +${resiDelta.size} resi, +${expedisiDelta.size} expedisi (since $sinceDate)")
+            BarcodeCacheManager.getAllResiRecords()
         } catch (e: Exception) {
             Log.e(TAG, "❌ Error force refreshing barcode data from Supabase: ${e.message}", e)
             emptyList()
@@ -554,10 +985,14 @@ class EnhancedRepository(private val context: Context) {
      */
     suspend fun forceRefreshExpedisiData(): List<BarcodeSupabaseService.BarcodeSessionRecord> = withContext(Dispatchers.IO) {
         try {
-            Log.d(TAG, "🔄 [Supabase-only] Force refreshing expedisi data from Supabase...")
-            val remoteRecords = barcodeSupabaseService.getAllBarcodeExpedisi()
-            Log.d(TAG, "✅ Force refresh expedisi completed: ${remoteRecords.size} records")
-            remoteRecords
+            Log.d(TAG, "🔄 [Supabase] Incremental force refresh expedisi data...")
+            val cachedExp = BarcodeCacheManager.getAllExpedisiRecords()
+            val sinceDate = cachedExp.mapNotNull { it.created?.take(10) }.maxOrNull()
+                ?: java.time.Instant.now().atZone(java.time.ZoneOffset.UTC).toLocalDate().minusDays(3).toString()
+            val expedisiDelta = barcodeSupabaseService.getBarcodeExpedisiSince(sinceDate)
+            expedisiDelta.forEach { BarcodeCacheManager.addExpedisiRecord(it) }
+            Log.d(TAG, "✅ Incremental expedisi refresh: +${expedisiDelta.size} (since $sinceDate)")
+            BarcodeCacheManager.getAllExpedisiRecords()
         } catch (e: Exception) {
             Log.e(TAG, "❌ Error force refreshing expedisi data from Supabase: ${e.message}", e)
             emptyList()
@@ -581,17 +1016,119 @@ class EnhancedRepository(private val context: Context) {
     
     
     /**
-     * Get unique courier names dengan Local-First strategy
+     * Get unique courier names untuk spinner: Supabase-first, lalu simpan ke cache couriers.
+     * Fallback ke cache jika offline/failed.
      */
     suspend fun getUniqueCourierNames(): List<String> = withContext(Dispatchers.IO) {
         try {
-            Log.d(TAG, "🔥 [Supabase-only] Getting unique courier names")
+            // 1) **OPTIMASI**: Jika cache couriers valid, gunakan (FASTEST PATH)
+            val cached = BarcodeCacheManager.getCourierNamesCache()
+            if (cached.isNotEmpty() && BarcodeCacheManager.isCouriersCacheValid()) {
+                Log.d(TAG, "📦 Using couriers cache: ${cached.size} (FAST)")
+                return@withContext cached
+            }
+
+            // 2) **OPTIMASI**: Fallback ke expedisi cache jika courier cache kosong (FAST)
+            val expedisiCache = BarcodeCacheManager.getUniqueCourierNamesFromCache()
+            if (expedisiCache.isNotEmpty()) {
+                Log.d(TAG, "📦 Using expedisi cache as fallback: ${expedisiCache.size} (FAST)")
+                // Update courier cache untuk next time
+                BarcodeCacheManager.setCourierNamesCache(expedisiCache)
+                return@withContext expedisiCache
+            }
+
+            // 3) **SLOW PATH**: Ambil langsung dari Supabase jika semua cache kosong
+            Log.d(TAG, "🔥 [Supabase] Fetching unique courier names (cache miss)")
             val supabaseCouriers = barcodeSupabaseService.getUniqueCourierNames()
-            Log.d(TAG, "✅ Retrieved ${supabaseCouriers.size} courier names from Supabase")
+            BarcodeCacheManager.setCourierNamesCache(supabaseCouriers)
+            Log.d(TAG, "✅ Couriers loaded and cached: ${supabaseCouriers.size}")
             supabaseCouriers
         } catch (e: Exception) {
-            Log.e(TAG, "❌ Error getting unique courier names from Supabase: ${e.message}", e)
+            Log.e(TAG, "❌ Error getting unique courier names: ${e.message}", e)
+            // 4) Fallback: expedisi cache yang ada
+            val expedisiCache = BarcodeCacheManager.getUniqueCourierNamesFromCache()
+            if (expedisiCache.isNotEmpty()) {
+                Log.d(TAG, "⚠️ Using expedisi cache due to error: ${expedisiCache.size}")
+                return@withContext expedisiCache
+            }
+            // 5) Last resort: courier cache yang ada (meski expired)
+            val fallback = BarcodeCacheManager.getCourierNamesCache()
+            if (fallback.isNotEmpty()) {
+                Log.d(TAG, "⚠️ Using expired courier cache: ${fallback.size}")
+                return@withContext fallback
+            }
             emptyList()
+        }
+    }
+    
+    /**
+     * Get total qty expedisi (semua flag) untuk courier tertentu pada HARI INI (Supabase)
+     */
+    suspend fun getExpeditionTotalToday(courier: String): Int = withContext(Dispatchers.IO) {
+        try {
+            Log.d(TAG, "🔥 [Supabase] getExpeditionTotalToday: $courier")
+            val total = barcodeSupabaseService.getExpeditionTotalToday(courier)
+            Log.d(TAG, "✅ Expedition total today for '$courier': $total")
+            total
+        } catch (e: Exception) {
+            Log.e(TAG, "❌ Error getting expedition total today: ${e.message}", e)
+            0
+        }
+    }
+
+    /**
+     * Get jumlah unik resino hari ini langsung dari Supabase
+     */
+    suspend fun getTodayUniqueExpedisiCountSupabase(): Int = withContext(Dispatchers.IO) {
+        try {
+            Log.d(TAG, "🔥 [Supabase] getTodayUniqueExpedisiCountSupabase")
+            val total = barcodeSupabaseService.getTodayUniqueExpedisiCountSupabase()
+            Log.d(TAG, "✅ Today unique resino from Supabase: $total")
+            total
+        } catch (e: CancellationException) {
+            Log.d(TAG, "🛑 getTodayUniqueExpedisiCountSupabase cancelled (normal behavior)")
+            throw e // Re-throw untuk proper coroutine cancellation
+        } catch (e: Exception) {
+            Log.e(TAG, "❌ Error getTodayUniqueExpedisiCountSupabase: ${e.message}", e)
+            0
+        }
+    }
+
+    /**
+     * Get total scan hari ini (tbl_resi) langsung dari Supabase
+     */
+    suspend fun getTodayResiScanCountSupabase(): Int = withContext(Dispatchers.IO) {
+        try {
+            Log.d(TAG, "🔥 [Supabase] getTodayResiScanCountSupabase")
+            val total = barcodeSupabaseService.getTodayResiScanCountSupabase()
+            Log.d(TAG, "✅ Today resi scan count from Supabase: $total")
+            total
+        } catch (e: CancellationException) {
+            Log.d(TAG, "🛑 getTodayResiScanCountSupabase cancelled (normal behavior)")
+            throw e // Re-throw untuk proper coroutine cancellation
+        } catch (e: Exception) {
+            Log.e(TAG, "❌ Error getTodayResiScanCountSupabase: ${e.message}", e)
+            0
+        }
+    }
+    
+    /**
+     * **SUPABASE-FIRST**: Cek apakah resi ada di tbl_expedisi (query langsung ke Supabase, tidak menggunakan cache)
+     * Digunakan untuk validasi NOT_FOUND yang kritis - memastikan data tidak disimpan jika resi tidak valid
+     */
+    suspend fun checkExpedisiByResinoDirect(resino: String): BarcodeSupabaseService.BarcodeSessionRecord? = withContext(Dispatchers.IO) {
+        try {
+            Log.d(TAG, "🔍 [Supabase-First] Checking resi '$resino' directly from Supabase...")
+            val result = barcodeSupabaseService.checkExpedisiByResinoDirect(resino)
+            if (result != null) {
+                Log.d(TAG, "✅ [Supabase-First] Found resi '$resino' in tbl_expedisi")
+            } else {
+                Log.d(TAG, "ℹ️ [Supabase-First] Resi '$resino' NOT FOUND in tbl_expedisi")
+            }
+            result
+        } catch (e: Exception) {
+            Log.e(TAG, "❌ [Supabase-First] Error checking resi: ${e.message}", e)
+            null
         }
     }
     

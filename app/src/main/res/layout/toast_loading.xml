@@ -14,7 +14,7 @@
         android:layout_height="24dp"
         android:layout_marginEnd="12dp"
         style="?android:attr/progressBarStyle"
-        android:indeterminateTint="@android:color/holo_blue_bright" />
+        android:indeterminateTint="@color/success_color" />
 
     <!-- Message Text -->
     <TextView
