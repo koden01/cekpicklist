@@ -1,0 +1,116 @@
+[33mtag v5.1.5[m
+Tagger: koden01 <dedenkusdinar@gmail.com>
+Date:   Thu Nov 6 11:57:17 2025 +0700
+
+Release v5.1.5 - Fix cache update_at for tbl_expedisi & fix Sisa value not updating
+
+[33mcommit e23f0fe87b59ca7e10702d928879ec3e3a4fba10[m[33m ([m[1;33mtag: [m[1;33mv5.1.5[m[33m)[m
+Author: koden01 <dedenkusdinar@gmail.com>
+Date:   Thu Nov 6 11:35:18 2025 +0700
+
+    v5.1.5 - Fix cache update_at for tbl_expedisi & fix Sisa value not updating
+    
+    - Add update_at field to BarcodeSessionRecord for cache invalidation
+    - Implement cache validation using update_at timestamp from Supabase
+    - Fix Sisa (remaining) value not updating after scan in BarcodeInputFragment
+    - Add proper thread management for UI updates (Dispatchers.IO and Main)
+    - Add 100ms delay after scan to ensure cache sync before UI refresh
+    - Enhanced logging for debugging expedition summary calculation
+    - Add documentation: EXPEDISI_CACHE_UPDATE_AT_IMPLEMENTATION.md
+    - Add documentation: FIX_SISA_UPDATE_ISSUE.md
+    - Update version to 5.1.5 (build 20)
+
+ ACTIVITY_RESUME_OPTIMIZATION.md                    |  219 [32m+++++[m
+ AUDIO_INITIALIZATION_FIX.md                        |  119 [32m+++[m
+ BACKGROUND_SYNC_DATA_OVERVIEW.md                   |  245 [32m+++++[m
+ BANDWIDTH_OPTIMIZATION_IMPLEMENTED.md              |  204 [32m++++[m
+ BARCODE_CARD_CLICK_FLOW.md                         |  486 [32m+++++++++[m
+ BARCODE_SCANNER_COMPLETE_FLOW.md                   | 1033 [32m++++++++++++++++++++[m
+ BARCODE_SCAN_FLOW_SIMULATION.md                    |  401 [32m++++++++[m
+ BOTTLENECK_OPTIMIZATION.md                         |  220 [32m+++++[m
+ CACHE_MANAGER_COMPARISON.md                        |  323 [32m++++++[m
+ CACHE_SYNC_DOCUMENTATION.md                        |  374 [32m+++++++[m
+ CACHE_VS_SQLITE_COMPARISON.md                      |  307 [32m++++++[m
+ CEKPICKLIST_DATA_SYNC_OVERVIEW.md                  |  309 [32m++++++[m
+ CODE_SIMULATION_SCENARIOS.md                       |  533 [32m++++++++++[m
+ CekPicklist-v5.1.4-release.apk                     |  Bin [31m0[m -> [32m14830804[m bytes
+ DELAY_OPTIMIZATION.md                              |  160 [32m+++[m
+ EXPEDISI_CACHE_UPDATE_AT_IMPLEMENTATION.md         |  349 [32m+++++++[m
+ FIX_SISA_UPDATE_ISSUE.md                           |  242 [32m+++++[m
+ LOCAL_FIRST_STRATEGY_FIX.md                        |  199 [32m++++[m
+ LOGCAT_ANTI_SPAM_GUIDE.md                          |  348 [32m+++++++[m
+ LOGCAT_EOF_FIX_GUIDE.md                            |  287 [32m++++++[m
+ LOGCAT_EOF_FIX_UPDATE.md                           |  150 [32m+++[m
+ PERFORMANCE_COMPARISON.md                          |  227 [32m+++++[m
+ PERFORMANCE_IMPACT_SYNC_ANALYSIS.md                |  319 [32m++++++[m
+ PERSISTENT_CACHE_WITH_CLEANUP.md                   |  255 [32m+++++[m
+ PICKLIST_STATUS_CACHE_FIX.md                       |  188 [32m++++[m
+ PICKLIST_STATUS_SYNC_FIX.md                        |   10 [32m+[m
+ README.md                                          |    6 [32m+[m[31m-[m
+ ROOM_QUERY_PICKLIST_STATUS.md                      |   10 [32m+[m
+ SUPABASE_LIMIT_PAGINATION_FIX.md                   |  211 [32m++++[m
+ TAB_SWITCH_ISSUE_ANALYSIS.md                       |  209 [32m++++[m
+ app/build.gradle.kts                               |   21 [32m+[m[31m-[m
+ app/libs/jxl.jar                                   |  Bin [31m704543[m -> [32m0[m bytes
+ app/libs/poi-3.12-android-a.jar                    |  Bin [31m6429548[m -> [32m0[m bytes
+ app/libs/poi-ooxml-schemas-3.12-20150511-a.jar     |  Bin [31m5699855[m -> [32m0[m bytes
+ app/libs/xUtils-2.5.5.jar                          |  Bin [31m282111[m -> [32m0[m bytes
+ app/src/main/AndroidManifest.xml                   |    6 [31m-[m
+ .../cekpicklist/BarcodeScannerTabsActivity.kt      |  290 [32m++++[m[31m--[m
+ .../com/example/cekpicklist/CekPicklistActivity.kt |   73 [32m+[m[31m-[m
+ .../example/cekpicklist/CekPicklistApplication.kt  |   10 [32m+[m
+ .../com/example/cekpicklist/HalamanAwalActivity.kt |    2 [32m+[m[31m-[m
+ .../com/example/cekpicklist/LocationActivity.kt    |  355 [31m-------[m
+ .../example/cekpicklist/LocationDemoActivity.kt    |    7 [32m+[m
+ .../java/com/example/cekpicklist/MyApplication.kt  |    4 [32m+[m
+ .../java/com/example/cekpicklist/OutActivity.kt    |   30 [32m+[m[31m-[m
+ .../com/example/cekpicklist/RelocationActivity.kt  |   34 [32m+[m[31m-[m
+ .../cekpicklist/adapter/BarcodeHistoryAdapter.kt   |  111 [32m+++[m
+ .../cekpicklist/adapter/BarcodeViewPagerAdapter.kt |    5 [32m+[m[31m-[m
+ .../example/cekpicklist/adapter/PicklistAdapter.kt |   24 [32m+[m[31m-[m
+ .../cekpicklist/adapter/RelocationAdapter.kt       |    8 [32m+[m[31m-[m
+ .../cekpicklist/api/BarcodeSupabaseService.kt      |  425 [32m+++++++[m[31m-[m
+ .../com/example/cekpicklist/api/SupabaseService.kt |  630 [32m+++++++[m[31m-----[m
+ .../cekpicklist/cache/BarcodeCacheManager.kt       |  867 [32m++++++++++++++++[m
+ .../cekpicklist/cache/CacheWarmingService.kt       |   80 [32m+[m[31m-[m
+ .../cekpicklist/fragment/BarcodeHistoryFragment.kt |  158 [32m++[m[31m-[m
+ .../cekpicklist/fragment/BarcodeInputFragment.kt   |  275 [32m+++++[m[31m-[m
+ .../cekpicklist/repository/EnhancedRepository.kt   |  621 [32m+++++++++++[m[31m-[m
+ .../example/cekpicklist/repository/Repository.kt   |   46 [32m+[m[31m-[m
+ .../cekpicklist/sync/BackgroundSyncManager.kt      |  101 [32m+[m[31m-[m
+ .../cekpicklist/utils/BarcodeAudioManager.kt       |   50 [32m+[m[31m-[m
+ .../cekpicklist/utils/BuiltInBarcodeManager.kt     |  420 [32m+[m[31m-------[m
+ .../example/cekpicklist/utils/PlaySoundThread.kt   |  128 [32m++[m[31m-[m
+ .../cekpicklist/validation/ExpedisiValidator.kt    |  164 [32m+++[m[31m-[m
+ .../com/example/cekpicklist/view/LocationView.kt   |  184 [31m----[m
+ .../viewmodel/BarcodeScannerViewModel.kt           |  951 [32m++++++++++++++[m[31m----[m
+ .../cekpicklist/viewmodel/LocationViewModel.kt     |  113 [31m---[m
+ .../example/cekpicklist/viewmodel/ScanViewModel.kt |   95 [32m+[m[31m-[m
+ app/src/main/res/color/navbar_icon_tint.xml        |    7 [32m+[m
+ app/src/main/res/color/navbar_text_color.xml       |    7 [32m+[m
+ .../res/drawable/expedition_card_background.xml    |    2 [32m+[m[31m-[m
+ app/src/main/res/drawable/ic_background_blue.xml   |    2 [32m+[m[31m-[m
+ app/src/main/res/drawable/navbar_background.xml    |    5 [32m+[m[31m-[m
+ .../main/res/drawable/navbar_item_background.xml   |    4 [32m+[m[31m-[m
+ app/src/main/res/drawable/rounded_badge.xml        |    7 [32m+[m
+ .../res/layout/activity_barcode_scanner_tabs.xml   |   12 [32m+[m[31m-[m
+ app/src/main/res/layout/activity_location.xml      |  150 [31m---[m
+ app/src/main/res/layout/dialog_loading.xml         |    2 [32m+[m[31m-[m
+ .../main/res/layout/fragment_barcode_dashboard.xml |    2 [32m+[m[31m-[m
+ .../main/res/layout/fragment_barcode_history.xml   |   30 [32m+[m[31m-[m
+ app/src/main/res/layout/fragment_barcode_input.xml |   14 [32m+[m[31m-[m
+ .../res/layout/fragment_barcode_sound_settings.xml |    2 [32m+[m[31m-[m
+ .../layout/fragment_expedition_detail_modal.xml    |    2 [32m+[m[31m-[m
+ app/src/main/res/layout/item_barcode_history.xml   |  117 [32m+++[m
+ app/src/main/res/layout/location_view.xml          |   13 [31m-[m
+ app/src/main/res/layout/overlay_loading.xml        |    2 [32m+[m[31m-[m
+ app/src/main/res/layout/toast_loading.xml          |    2 [32m+[m[31m-[m
+ app/src/main/res/menu/location_menu.xml            |   11 [31m-[m
+ app/src/main/res/raw/beep_failure.mp3              |  Bin [31m8496[m -> [32m30269[m bytes
+ app/src/main/res/raw/beep_failure2.mp3             |  Bin [31m0[m -> [32m8496[m bytes
+ app/src/main/res/values/colors.xml                 |    9 [32m+[m[31m-[m
+ release_working.bat                                |    8 [32m+[m[31m-[m
+ run_logcat_robust_v2.ps1                           |  507 [32m++++++++++[m
+ run_logcat_simple.ps1                              |  220 [32m++++[m[31m-[m
+ version.txt                                        |    2 [32m+[m[31m-[m
+ 93 files changed, 13244 insertions(+), 2126 deletions(-)
