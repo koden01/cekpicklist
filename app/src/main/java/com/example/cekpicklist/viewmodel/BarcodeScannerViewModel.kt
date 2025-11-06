@@ -1081,6 +1081,36 @@ class BarcodeScannerViewModel(application: Application) : AndroidViewModel(appli
             
             // **SCAN**: dari cache tbl_resi hari ini dengan Keterangan = expedition DAN schedule = "ontime"
             val resiRecords = enhancedRepository.getBarcodeResiRecords()
+            
+            Log.d(TAG, "📊 Analyzing SCAN data:")
+            Log.d(TAG, "  - Total resi records in cache: ${resiRecords.size}")
+            
+            // Debug: Count by schedule type
+            val todayResi = resiRecords.filter { rec ->
+                try {
+                    val created = rec.created
+                    if (created.isNullOrBlank()) false else {
+                        val datePart = if (created.length >= 10) created.substring(0, 10) else created
+                        java.time.LocalDate.parse(datePart) == todayDate
+                    }
+                } catch (_: Exception) { false }
+            }
+            Log.d(TAG, "  - Resi today: ${todayResi.size}")
+            
+            val todayExpedition = todayResi.filter { it.Keterangan == expedition }
+            Log.d(TAG, "  - Resi today + expedition='$expedition': ${todayExpedition.size}")
+            
+            val ontimeCount = todayExpedition.count { it.schedule?.lowercase() == "ontime" }
+            val lateCount = todayExpedition.count { it.schedule?.lowercase() == "late" }
+            val batalCount = todayExpedition.count { it.schedule?.lowercase() == "batal" }
+            val noScheduleCount = todayExpedition.count { it.schedule.isNullOrBlank() }
+            
+            Log.d(TAG, "  - Breakdown by schedule:")
+            Log.d(TAG, "    • ontime: $ontimeCount")
+            Log.d(TAG, "    • late: $lateCount")
+            Log.d(TAG, "    • batal: $batalCount")
+            Log.d(TAG, "    • no schedule data: $noScheduleCount")
+            
             val scanned = resiRecords.count { rec ->
                 val dateOk = try {
                     val created = rec.created
@@ -1090,11 +1120,16 @@ class BarcodeScannerViewModel(application: Application) : AndroidViewModel(appli
                     }
                 } catch (_: Exception) { false }
                 // Filter HANYA schedule="ontime"
-                val isOntime = rec.schedule?.lowercase() == "ontime"
+                // **FALLBACK**: Jika schedule null/empty, assume ontime (untuk data lama)
+                val isOntime = when (rec.schedule?.lowercase()) {
+                    "ontime" -> true
+                    null, "" -> true // Fallback untuk data lama tanpa schedule
+                    else -> false
+                }
                 dateOk && rec.Keterangan == expedition && isOntime
             }
             
-            Log.d(TAG, "  - SCANNED resi (schedule=ontime, today): $scanned")
+            Log.d(TAG, "  - SCANNED resi (schedule=ontime or null, today): $scanned")
             
             // **SISA**: Total resi dengan flag=NO (belum di-scan/proses)
             // Ambil dari cache karena cache hanya menyimpan flag=NO
