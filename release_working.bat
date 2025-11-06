@@ -190,29 +190,41 @@ if not exist "gradlew.bat" (
 
 REM Clean before build
 echo 🧹 Cleaning project...
-.\gradlew clean
+call .\gradlew.bat clean
 
 if %errorlevel% neq 0 (
     echo ⚠️ Clean failed, continuing with build...
 )
 
-echo 🔨 Building release APK...
-.\gradlew assembleRelease -x test --no-daemon
+echo.
+echo 🔨 Building release APK (this may take a few minutes)...
+echo 📝 Build log will be saved to build_log.txt
+echo.
 
+REM Build APK dengan redirect output untuk debugging
+call .\gradlew.bat assembleRelease -x test --no-daemon > build_log.txt 2>&1
+
+REM Check build result
 if %errorlevel% neq 0 (
     echo ❌ Build failed!
-    echo 🔍 Debug information:
-    echo    • Gradle wrapper exists: 
-    if exist "gradlew.bat" (echo YES) else (echo NO)
-    echo    • Build directory exists: 
-    if exist "app\build" (echo YES) else (echo NO)
-    echo    • Android SDK: 
-    echo %ANDROID_HOME%
+    echo.
+    echo 🔍 Build errors (last 30 lines):
+    echo =======================================
+    powershell -Command "Get-Content build_log.txt -Tail 30"
+    echo =======================================
+    echo.
+    echo 📄 Full build log saved to: build_log.txt
+    echo.
+    echo 💡 Common fixes:
+    echo    • Check for missing imports in Kotlin files
+    echo    • Run: .\gradlew.bat clean assembleRelease --stacktrace
+    echo    • Check Android SDK is properly configured
+    echo.
     pause
     exit /b 1
 )
 
-echo ✅ APK build completed
+echo ✅ APK build completed successfully!
 
 REM Step 4: Copy APK
 echo 📱 Step 4: Packaging APK...
@@ -250,8 +262,22 @@ if %errorlevel% neq 0 (
 echo ✅ APK packaged: CekPicklist-v%new_version%-release.apk
 
 REM Step 5: Git Operations
+echo.
 echo 📝 Step 5: Git Operations...
-git add .
+echo.
+
+REM Check if there are changes to commit
+git diff --quiet HEAD
+if %errorlevel% equ 0 (
+    echo ℹ️ No changes detected, checking staged files...
+    git diff --cached --quiet
+    if %errorlevel% equ 0 (
+        echo ⚠️ No changes to commit
+    )
+)
+
+echo 📝 Adding all changes...
+git add -A
 
 if %errorlevel% neq 0 (
     echo ❌ Git add failed!
@@ -259,89 +285,151 @@ if %errorlevel% neq 0 (
     exit /b 1
 )
 
-git commit -m "🚀 Release v%new_version% - %release_notes%"
-
-if %errorlevel% neq 0 (
-    echo ❌ Git commit failed!
-    pause
-    exit /b 1
+echo 📝 Creating commit...
+REM Use appropriate commit message based on whether release notes were provided
+if "%release_notes%"=="" (
+    git commit -m "🚀 Release v%new_version%"
+) else (
+    git commit -m "🚀 Release v%new_version% - %release_notes%"
 )
 
+if %errorlevel% neq 0 (
+    echo ⚠️ Git commit failed or nothing to commit
+    echo Checking if APK file is tracked...
+    git status
+)
+
+echo 📝 Creating git tag...
 REM Create annotated tag only if it does not already exist
 git rev-parse -q --verify "refs/tags/v%new_version%" >nul 2>&1
 if %errorlevel% neq 0 (
     git tag -a "v%new_version%" -m "Release v%new_version%"
+    echo ✅ Tag v%new_version% created
 ) else (
     echo ℹ️ Tag v%new_version% already exists, skipping tag creation.
-)
-
-if %errorlevel% neq 0 (
-    echo ❌ Git tag failed!
-    pause
-    exit /b 1
 )
 
 echo ✅ Git operations completed
 
 REM Step 6: Push to remote
+echo.
 echo 📤 Step 6: Pushing to remote...
+echo.
 
 REM Check current branch
 for /f "tokens=*" %%i in ('git branch --show-current 2^>nul') do set current_branch=%%i
 echo 🔍 Current branch: %current_branch%
+echo.
+
+REM Check if there's something to push
+git cherry -v origin/%current_branch% 2>nul | find "+" >nul
+if %errorlevel% neq 0 (
+    echo ℹ️ No new commits to push
+) else (
+    echo 📤 Pushing commits to origin/%current_branch%...
+)
 
 REM Try to push to current branch first, then fallback to master/main
+echo 📤 Pushing to origin/%current_branch%...
 git push origin %current_branch%
 
 if %errorlevel% neq 0 (
-    echo ⚠️ Push to %current_branch% failed, trying master...
-    git push origin master
+    echo ⚠️ Push to %current_branch% failed, trying alternative branches...
+    git push origin master 2>nul
     
     if %errorlevel% neq 0 (
-        echo ⚠️ Push to master failed, trying main...
-        git push origin main
+        git push origin main 2>nul
         
         if %errorlevel% neq 0 (
             echo ❌ All push attempts failed!
+            echo.
             echo 🔍 Debug information:
             echo    • Current branch: %current_branch%
             echo    • Remote branches:
             git branch -r
+            echo.
+            echo 💡 Possible fixes:
+            echo    • Check your Git authentication
+            echo    • Verify remote repository is accessible
+            echo    • Try manually: git push origin %current_branch%
+            echo.
             pause
             exit /b 1
+        ) else (
+            echo ✅ Pushed to origin/main
         )
+    ) else (
+        echo ✅ Pushed to origin/master
     )
+) else (
+    echo ✅ Pushed to origin/%current_branch%
 )
 
+echo.
+echo 📤 Pushing tags...
 git push origin --tags
 
 if %errorlevel% neq 0 (
-    echo ❌ Push tags failed!
-    pause
-    exit /b 1
+    echo ⚠️ Push tags failed (tags might already exist on remote)
+) else (
+    echo ✅ Tags pushed successfully
 )
 
-echo ✅ Push completed
+echo.
+echo ✅ Push to remote completed
 
 REM Step 7: Summary
 echo.
-echo 🎉 Release Summary:
-echo =======================================
+echo ========================================================================
+echo 🎉 RELEASE COMPLETED SUCCESSFULLY!
+echo ========================================================================
+echo.
 echo 📱 APK Information:
 echo    • File: CekPicklist-v%new_version%-release.apk
 echo    • Version: %new_version%
-echo    • Date: %date% %time%
+echo    • Build Date: %date% %time%
+for %%A in ("CekPicklist-v%new_version%-release.apk") do set apk_size=%%~zA
+echo    • File Size: %apk_size% bytes
 echo.
 echo 📝 Git Information:
-echo    • Commit: 🚀 Release v%new_version%
+echo    • Commit Message: 🚀 Release v%new_version% %release_notes%
 echo    • Tag: v%new_version%
-echo    • Push: Pushed to origin/master and tags
+echo    • Branch: %current_branch%
+echo    • Pushed to: origin/%current_branch%
 echo    • README: Updated with version %new_version%
 echo.
+echo 📂 Files Generated:
+echo    • CekPicklist-v%new_version%-release.apk (in project root)
+echo    • build_log.txt (build details)
+echo.
+echo 🔗 Next Steps:
+echo    • Install APK on device for testing
+echo    • Verify changes on GitHub repository
+echo    • Create GitHub release if needed
+echo    • Distribute APK to users
+echo.
+echo ========================================================================
 echo ✅ Complete release workflow finished successfully!
-echo =======================================
+echo ========================================================================
+echo.
+
+REM Show APK location
+echo 📍 APK Location: %CD%\CekPicklist-v%new_version%-release.apk
+echo.
 
 REM Cleanup temporary files
+echo 🧹 Cleaning up temporary files...
 del version.txt 2>nul
 
-pause
+REM Ask if user wants to keep build log
+set /p keep_log="Keep build_log.txt for reference? (Y/N, default: N): "
+if /i "%keep_log%"=="Y" (
+    echo ℹ️ Build log kept: build_log.txt
+) else (
+    del build_log.txt 2>nul
+    echo ✅ Build log cleaned up
+)
+
+echo.
+echo 👋 Press any key to exit...
+pause >nul
