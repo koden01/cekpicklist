@@ -1062,55 +1062,53 @@ class BarcodeScannerViewModel(application: Application) : AndroidViewModel(appli
                 Log.d(TAG, "📊 No expedition selected, returning empty summary")
                 return mapOf("total" to 0, "scanned" to 0, "remaining" to 0)
             }
-            
+            // Total: dari cache expedisi (flag=NO) untuk hari ini
             val todayDate = java.time.Instant.now().atZone(java.time.ZoneOffset.UTC).toLocalDate()
+            val expedisiCache = BarcodeCacheManager.getAllExpedisiRecords()
             
-            Log.d(TAG, "📊 Expedition Summary Calculation for '$expedition':")
+            Log.d(TAG, "📊 Expedisi cache info:")
+            Log.d(TAG, "  - Total expedisi records in cache (flag=NO): ${expedisiCache.size}")
             Log.d(TAG, "  - Today (UTC): $todayDate")
+            Log.d(TAG, "  - Filtering for expedition: '$expedition'")
             
-            // **TOTAL**: Fetch dari Supabase SEMUA flag (NO + YES) untuk hari ini
-            // Karena cache hanya menyimpan flag=NO, kita harus query Supabase untuk total yang akurat
-            val total = try {
-                fetchExpeditionTotalTodayFromSupabase(expedition, todayDate)
-            } catch (e: Exception) {
-                Log.e(TAG, "❌ Error fetching total from Supabase: ${e.message}", e)
-                0
+            // **DEBUG**: Log sample expedisi records untuk debugging
+            val expeditionRecords = expedisiCache.filter { it.couriername == expedition }
+            Log.d(TAG, "  - Records with couriername='$expedition': ${expeditionRecords.size}")
+            
+            if (expeditionRecords.isNotEmpty()) {
+                Log.d(TAG, "  - Sample expedisi records for '$expedition':")
+                expeditionRecords.take(5).forEach { rec ->
+                    val createdDateStr = rec.created?.substring(0, minOf(10, rec.created.length)) ?: "NULL"
+                    Log.d(TAG, "    - Resino='${rec.resino}', couriername='${rec.couriername}', created='$createdDateStr', flag='${rec.flag}'")
+                }
             }
             
-            Log.d(TAG, "  - TOTAL resi (ALL flags, created=today): $total")
-            
-            // **SCAN**: dari cache tbl_resi hari ini dengan Keterangan = expedition DAN schedule = "ontime"
-            val resiRecords = enhancedRepository.getBarcodeResiRecords()
-            
-            Log.d(TAG, "📊 Analyzing SCAN data:")
-            Log.d(TAG, "  - Total resi records in cache: ${resiRecords.size}")
-            
-            // Debug: Count by schedule type
-            val todayResi = resiRecords.filter { rec ->
-                try {
+            val total = expedisiCache.count { rec ->
+                val dateOk = try {
                     val created = rec.created
-                    if (created.isNullOrBlank()) false else {
+                    if (created.isNullOrBlank()) {
+                        false
+                    } else {
                         val datePart = if (created.length >= 10) created.substring(0, 10) else created
-                        java.time.LocalDate.parse(datePart) == todayDate
+                        val recordDate = java.time.LocalDate.parse(datePart)
+                        val isToday = recordDate == todayDate
+                        if (!isToday && rec.couriername == expedition) {
+                            // Log untuk debugging jika ada data expedisi tapi bukan hari ini
+                            Log.d(TAG, "  - Record not today: Resino='${rec.resino}', date='$datePart' (looking for '$todayDate')")
+                        }
+                        isToday
                     }
-                } catch (_: Exception) { false }
+                } catch (e: Exception) { 
+                    Log.w(TAG, "⚠️ Error parsing date for expedisi ${rec.resino}: ${rec.created}, error: ${e.message}")
+                    false 
+                }
+                dateOk && rec.couriername == expedition
             }
-            Log.d(TAG, "  - Resi today: ${todayResi.size}")
             
-            val todayExpedition = todayResi.filter { it.Keterangan == expedition }
-            Log.d(TAG, "  - Resi today + expedition='$expedition': ${todayExpedition.size}")
+            Log.d(TAG, "  - Total records matching (today + expedition='$expedition'): $total")
             
-            val ontimeCount = todayExpedition.count { it.schedule?.lowercase() == "ontime" }
-            val lateCount = todayExpedition.count { it.schedule?.lowercase() == "late" }
-            val batalCount = todayExpedition.count { it.schedule?.lowercase() == "batal" }
-            val noScheduleCount = todayExpedition.count { it.schedule.isNullOrBlank() }
-            
-            Log.d(TAG, "  - Breakdown by schedule:")
-            Log.d(TAG, "    • ontime: $ontimeCount")
-            Log.d(TAG, "    • late: $lateCount")
-            Log.d(TAG, "    • batal: $batalCount")
-            Log.d(TAG, "    • no schedule data: $noScheduleCount")
-            
+            // Scan: dari cache tbl_resi hari ini dengan Keterangan = expedition
+            val resiRecords = enhancedRepository.getBarcodeResiRecords()
             val scanned = resiRecords.count { rec ->
                 val dateOk = try {
                     val created = rec.created
@@ -1119,52 +1117,42 @@ class BarcodeScannerViewModel(application: Application) : AndroidViewModel(appli
                         java.time.LocalDate.parse(datePart) == todayDate
                     }
                 } catch (_: Exception) { false }
-                // Filter HANYA schedule="ontime"
-                // **FALLBACK**: Jika schedule null/empty, assume ontime (untuk data lama)
-                val isOntime = when (rec.schedule?.lowercase()) {
-                    "ontime" -> true
-                    null, "" -> true // Fallback untuk data lama tanpa schedule
-                    else -> false
-                }
-                dateOk && rec.Keterangan == expedition && isOntime
+                dateOk && rec.Keterangan == expedition
             }
             
-            Log.d(TAG, "  - SCANNED resi (schedule=ontime or null, today): $scanned")
-            
-            // **SISA**: Total resi dengan flag=NO (belum di-scan/proses)
-            // Ambil dari cache karena cache hanya menyimpan flag=NO
-            val expedisiCache = BarcodeCacheManager.getAllExpedisiRecords()
-            val remaining = expedisiCache.count { rec ->
-                val dateOk = try {
-                    val created = rec.created
-                    if (created.isNullOrBlank()) {
-                        true // Keep jika tidak ada created date
-                    } else {
-                        val datePart = if (created.length >= 10) created.substring(0, 10) else created
-                        val recordDate = java.time.LocalDate.parse(datePart)
-                        recordDate == todayDate
+            // **FALLBACK**: Jika cache tidak ada data hari ini, fetch langsung dari Supabase
+            // dengan filter flag=NO dan created=today (lebih akurat)
+            var finalTotal = total
+            if (total == 0) {
+                Log.d(TAG, "⚠️ No data in cache for today, fetching directly from Supabase (flag=NO, created=today)...")
+                try {
+                    // Fetch langsung dari Supabase dengan filter yang tepat
+                    val supabaseTotal = fetchExpeditionTotalTodayFromSupabase(expedition, todayDate)
+                    Log.d(TAG, "📊 Fetching TOTAL from Supabase (ALL flags, created=today) for expedition '$expedition'")
+                    Log.d(TAG, "  - TOTAL (Supabase today, ALL flags): $supabaseTotal")
+                    if (supabaseTotal > 0) {
+                        Log.w(TAG, "⚠️ Cache mismatch: Supabase has $supabaseTotal records but cache has 0 for today")
+                        // Gunakan nilai dari Supabase sebagai fallback
+                        finalTotal = supabaseTotal
                     }
-                } catch (e: Exception) { 
-                    true // Keep jika error parsing
+                } catch (e: Exception) {
+                    Log.e(TAG, "❌ Error fetching from Supabase: ${e.message}", e)
                 }
-                dateOk && rec.couriername == expedition
             }
-            
-            Log.d(TAG, "  - SISA resi (flag=NO, today): $remaining")
+
+            // **PERBAIKAN**: Hitung remaining dengan benar (tidak boleh negatif)
+            val remaining = (finalTotal - scanned).coerceAtLeast(0)
             
             Log.d(TAG, "📊 ========== Summary Calculation FINAL ==========")
             Log.d(TAG, "📊 Expedition: '$expedition'")
-            Log.d(TAG, "📊   - TOTAL resi (ALL flags, created=today): $total")
-            Log.d(TAG, "📊   - SCANNED resi (schedule=ontime, today): $scanned")
-            Log.d(TAG, "📊   - SISA resi (flag=NO, today): $remaining")
-            Log.d(TAG, "📊 Logic:")
-            Log.d(TAG, "📊   - Total tetap konstan (tidak berkurang saat di-scan)")
-            Log.d(TAG, "📊   - Scan hanya hitung ontime")
-            Log.d(TAG, "📊   - Sisa = resi yang belum di-proses (flag masih NO)")
+            Log.d(TAG, "📊   - TOTAL resi (couriername='$expedition', today): $finalTotal")
+            Log.d(TAG, "📊   - SCANNED resi (Keterangan='$expedition', today): $scanned")
+            Log.d(TAG, "📊   - REMAINING (Total - Scanned): $remaining")
+            Log.d(TAG, "📊   - Calculation: $finalTotal - $scanned = $remaining")
             Log.d(TAG, "📊 ================================================")
             
             val summary = mapOf(
-                "total" to total,
+                "total" to finalTotal,
                 "scanned" to scanned,
                 "remaining" to remaining
             )
