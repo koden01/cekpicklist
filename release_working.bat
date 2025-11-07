@@ -379,6 +379,9 @@ echo.
 echo 📦 Step 7: Create GitHub Release...
 echo.
 
+REM Initialize release creation flag
+set release_created=false
+
 REM Check if GitHub CLI is installed (with PATH refresh fallback)
 where gh >nul 2>&1
 if %errorlevel% neq 0 (
@@ -400,15 +403,23 @@ if %errorlevel% neq 0 (
 
 echo ✅ GitHub CLI found
 echo.
+echo 🔍 DEBUG: Starting GitHub Release creation process...
+echo.
 
 REM Check if already authenticated (refresh PATH first if needed)
+echo 🔍 Refreshing PATH and checking GitHub CLI...
 where gh >nul 2>&1
 if %errorlevel% neq 0 (
+    echo ℹ️ Refreshing PATH...
     powershell -Command "$env:Path = [System.Environment]::GetEnvironmentVariable('Path','Machine') + ';' + [System.Environment]::GetEnvironmentVariable('Path','User')" >nul 2>&1
 )
 
+echo 🔍 Checking GitHub authentication...
 gh auth status >nul 2>&1
-if %errorlevel% neq 0 (
+set auth_result=%errorlevel%
+echo ℹ️ Auth check result: %auth_result%
+
+if %auth_result% neq 0 (
     echo ⚠️ Not authenticated with GitHub - Skipping GitHub Release creation
     echo.
     echo 💡 To authenticate
@@ -511,6 +522,7 @@ gh release create "v%new_version%" "CekPicklist-v%new_version%-release.apk" --ti
 if %errorlevel% equ 0 (
     echo.
     echo ✅ GitHub Release created successfully!
+    set release_created=true
     echo.
     
     REM Verify APK was uploaded as asset
@@ -579,15 +591,21 @@ echo    • Pushed to = origin/%current_branch%
 echo    • README = Updated with version %new_version%
 echo.
 echo 📦 GitHub Release
-where gh >nul 2>&1
-if %errorlevel% equ 0 (
-    echo    • Status = Created automatically ✅
+if /i "%release_created%"=="true" (
+    echo    • Status = Created successfully ✅
     echo    • URL = https://github.com/koden01/cekpicklist/releases/tag/v%new_version%
+    echo    • APK Asset = Uploaded ✅
     echo    • Auto-update = Ready ✅
 ) else (
-    echo    • Status = Manual creation needed ⚠️
-    echo    • URL = https://github.com/koden01/cekpicklist/releases/new
-    echo    • Note = Auto-update won't work until release is created
+    echo    • Status = Not created ⚠️
+    echo    • Reason = GitHub CLI not available or authentication failed
+    echo.
+    echo    💡 To create release manually:
+    echo       1. Using script: .\upload_apk_to_release.bat
+    echo       2. Using CLI: gh release create v%new_version% CekPicklist-v%new_version%-release.apk
+    echo       3. Or visit: https://github.com/koden01/cekpicklist/releases/new
+    echo.
+    echo    ⚠️ Note: Auto-update won't work until release with APK is created!
 )
 echo.
 echo 📂 Files Generated
