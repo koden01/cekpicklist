@@ -403,23 +403,27 @@ if %errorlevel% neq 0 (
 
 echo ✅ GitHub CLI found
 echo.
-echo 🔍 DEBUG: Starting GitHub Release creation process...
+echo [DEBUG] Starting GitHub Release creation process...
 echo.
 
 REM Check if already authenticated (refresh PATH first if needed)
-echo 🔍 Refreshing PATH and checking GitHub CLI...
+echo [DEBUG] Refreshing PATH and checking GitHub CLI...
 where gh >nul 2>&1
 if %errorlevel% neq 0 (
     echo ℹ️ Refreshing PATH...
     powershell -Command "$env:Path = [System.Environment]::GetEnvironmentVariable('Path','Machine') + ';' + [System.Environment]::GetEnvironmentVariable('Path','User')" >nul 2>&1
 )
 
-echo 🔍 Checking GitHub authentication...
+echo [DEBUG] Checking GitHub authentication...
 gh auth status >nul 2>&1
+echo [DEBUG] gh auth status command executed
 set auth_result=%errorlevel%
-echo ℹ️ Auth check result: %auth_result%
+echo [DEBUG] Variable auth_result set to: %auth_result%
+echo [DEBUG] About to check auth_result condition...
 
+echo [DEBUG] Entering if statement check...
 if %auth_result% neq 0 (
+    echo [DEBUG] Auth failed, jumping to skip_github_release
     echo ⚠️ Not authenticated with GitHub - Skipping GitHub Release creation
     echo.
     echo 💡 To authenticate
@@ -429,10 +433,13 @@ if %auth_result% neq 0 (
     goto skip_github_release
 )
 
+echo [DEBUG] If statement check completed, auth is valid
+echo [DEBUG] Auth succeeded, continuing to release creation...
 echo ✅ Authenticated with GitHub
 echo.
 
 REM Check if release already exists
+echo [DEBUG] About to check if release v%new_version% already exists...
 echo 🔍 Checking if release v%new_version% already exists...
 gh release view "v%new_version%" >nul 2>&1
 if %errorlevel% equ 0 (
