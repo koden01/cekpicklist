@@ -446,6 +446,27 @@ echo.
 echo 📦 Creating GitHub Release v%new_version%...
 echo.
 
+REM Verify APK exists before creating release
+echo 🔍 Checking if APK file exists...
+if not exist "CekPicklist-v%new_version%-release.apk" (
+    echo ❌ APK file not found: CekPicklist-v%new_version%-release.apk
+    echo.
+    echo 🔍 Debug information
+    echo    • Current directory = %CD%
+    echo    • Expected file = CekPicklist-v%new_version%-release.apk
+    echo    • APK files in directory =
+    dir /b *.apk 2>nul
+    echo.
+    echo ⚠️ Cannot create GitHub release without APK file!
+    echo.
+    pause
+    goto skip_github_release
+)
+
+for %%A in ("CekPicklist-v%new_version%-release.apk") do set apk_size=%%~zA
+echo ✅ APK file found: CekPicklist-v%new_version%-release.apk (%apk_size% bytes)
+echo.
+
 REM Create release notes
 set "release_title=v%new_version%"
 if not "%release_notes%"=="" (
@@ -479,6 +500,11 @@ The app will automatically detect this update and offer direct download & instal
 Full Changelog: https://github.com/koden01/cekpicklist/compare/v5.1.4...v%new_version%^
 '@; $notes | Out-File -FilePath 'release_notes_temp.md' -Encoding UTF8"
 
+echo 📤 Uploading APK to GitHub Release...
+echo    File: CekPicklist-v%new_version%-release.apk
+echo    Size: %apk_size% bytes
+echo.
+
 REM Create release with APK
 gh release create "v%new_version%" "CekPicklist-v%new_version%-release.apk" --title "%release_title%" --notes-file release_notes_temp.md --latest
 
@@ -486,18 +512,47 @@ if %errorlevel% equ 0 (
     echo.
     echo ✅ GitHub Release created successfully!
     echo.
-    echo 🔗 View release: https://github.com/koden01/cekpicklist/releases/tag/v%new_version%
-    echo 📥 Download URL: https://github.com/koden01/cekpicklist/releases/download/v%new_version%/CekPicklist-v%new_version%-release.apk
-    echo.
-    echo 🔄 Auto-update in app will now work!
+    
+    REM Verify APK was uploaded as asset
+    echo 🔍 Verifying APK upload...
+    gh release view "v%new_version%" --json assets --jq ".assets[].name" | findstr "CekPicklist-v%new_version%-release.apk" >nul 2>&1
+    if %errorlevel% equ 0 (
+        echo ✅ APK successfully uploaded as release asset!
+        echo.
+        echo 🔗 View release: https://github.com/koden01/cekpicklist/releases/tag/v%new_version%
+        echo 📥 Download URL: https://github.com/koden01/cekpicklist/releases/download/v%new_version%/CekPicklist-v%new_version%-release.apk
+        echo.
+        echo 🔄 Auto-update in app will now work!
+    ) else (
+        echo ⚠️ Release created but APK might not be uploaded!
+        echo.
+        echo 🔍 Checking release assets...
+        gh release view "v%new_version%" --json assets --jq ".assets[].name"
+        echo.
+        echo 💡 If APK is missing, try uploading manually:
+        echo    gh release upload "v%new_version%" "CekPicklist-v%new_version%-release.apk"
+    )
     echo.
 ) else (
     echo ❌ Failed to create GitHub Release
     echo.
-    echo 💡 You can create it manually
-    echo    • Go to https://github.com/koden01/cekpicklist/releases/new
-    echo    • Tag = v%new_version%
-    echo    • Upload = CekPicklist-v%new_version%-release.apk
+    echo 🔍 Error details:
+    echo    • Error code = %errorlevel%
+    echo    • APK file exists = 
+    if exist "CekPicklist-v%new_version%-release.apk" (echo YES) else (echo NO)
+    echo    • APK file path = %CD%\CekPicklist-v%new_version%-release.apk
+    echo.
+    echo 💡 Possible solutions:
+    echo    1. Try uploading manually:
+    echo       gh release upload "v%new_version%" "CekPicklist-v%new_version%-release.apk"
+    echo.
+    echo    2. Or create release manually:
+    echo       • Go to https://github.com/koden01/cekpicklist/releases/new
+    echo       • Tag = v%new_version%
+    echo       • Upload = CekPicklist-v%new_version%-release.apk
+    echo.
+    echo    3. Check GitHub CLI authentication:
+    echo       gh auth status
     echo.
 )
 
