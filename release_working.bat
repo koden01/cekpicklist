@@ -424,11 +424,11 @@ echo [DEBUG] About to check auth_result condition...
 echo [DEBUG] Entering if statement check...
 if %auth_result% neq 0 (
     echo [DEBUG] Auth failed, jumping to skip_github_release
-    echo ⚠️ Not authenticated with GitHub - Skipping GitHub Release creation
+    echo [WARNING] Not authenticated with GitHub - Skipping GitHub Release creation
     echo.
-    echo 💡 To authenticate
-    echo    • Run gh auth login
-    echo    • Or run install_github_cli.bat (will guide through auth)
+    echo [INFO] To authenticate:
+    echo    - Run gh auth login
+    echo    - Or run install_github_cli.bat ^(will guide through auth^)
     echo.
     goto skip_github_release
 )
