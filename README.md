@@ -814,12 +814,13 @@ Aplikasi **Cek Picklist** siap untuk production dengan:
 
 ---
 
-**Version**: 5.1.19 (Version Code: 34)  
+**Version**: 5.1.20 (Version Code: 35)  
 **Last Updated**: 2025-11-07  
 **Platform**: Android 11+ (API 30+)  
 **Auto Versioning**: ✅ Enabled dengan PowerShell Scripts  
 **Status**: ✅ Production Ready  
 **Latest Tag**: v5.0.1
+
 
 
 

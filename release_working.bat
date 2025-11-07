@@ -491,32 +491,32 @@ if not "%release_notes%"=="" (
     set "release_title=v%new_version% - %release_notes%"
 )
 
-REM Create release notes using PowerShell (safer untuk special characters)
-powershell -Command "$notes = @'^
-## 🎉 Release v%new_version%^
-
-### 📝 Release Notes^
-
-%release_notes%^
-
-### 📱 Download & Install^
-
-Download APK file below and install directly on your device.^
-
-### 🔄 Auto Update^
-
-The app will automatically detect this update and offer direct download & install from within the app!^
-
-### 📊 Build Information^
-
-- Version Name: %new_version%^
-- Build Date: %date% %time%^
-- Branch: %current_branch%^
-
----^
-
-Full Changelog: https://github.com/koden01/cekpicklist/compare/v5.1.4...v%new_version%^
-'@; $notes | Out-File -FilePath 'release_notes_temp.md' -Encoding UTF8"
+REM Create release notes file directly
+(
+echo ## Release v%new_version%
+echo.
+echo ### Release Notes
+echo.
+echo %release_notes%
+echo.
+echo ### Download ^& Install
+echo.
+echo Download APK file below and install directly on your device.
+echo.
+echo ### Auto Update
+echo.
+echo The app will automatically detect this update and offer direct download ^& install from within the app!
+echo.
+echo ### Build Information
+echo.
+echo - Version Name: %new_version%
+echo - Build Date: %date% %time%
+echo - Branch: %current_branch%
+echo.
+echo ---
+echo.
+echo Full Changelog: https://github.com/koden01/cekpicklist/compare/v5.1.4...v%new_version%
+) > release_notes_temp.md
 
 echo 📤 Uploading APK to GitHub Release...
 echo    File: CekPicklist-v%new_version%-release.apk
