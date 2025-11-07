@@ -20,12 +20,16 @@ class DailySyncService(private val context: Context) {
         const val ACTION_SYNC_COMPLETED = "com.example.cekpicklist.SYNC_COMPLETED"
         private const val MAX_RETRY_ATTEMPTS = 3
         private const val RETRY_DELAY_MS = 5000L // 5 detik
+        // Extended sync interval: setiap 5 menit untuk catch missed data
+        // Bukan full sync (7 hari), tapi extended window (1 jam) - lebih efisien bandwidth
+        private const val FULL_SYNC_INTERVAL_MS = 5 * 60 * 1000L // 5 menit
     }
     
     private val enhancedRepository = EnhancedRepository(context)
     private val serviceScope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private var incrementalUpdateJob: Job? = null
     @Volatile private var incrementalIntervalMs: Long = DEFAULT_INCREMENTAL_UPDATE_INTERVAL_MS
+    private var lastFullSyncTime: Long = 0L // Track last full sync time
 
     fun setIncrementalInterval(intervalMs: Long) {
         incrementalIntervalMs = intervalMs
@@ -115,25 +119,59 @@ class DailySyncService(private val context: Context) {
             val rnd = java.util.Random()
             while (isActive) {
                 try {
-                    Log.d(TAG, "🔄 Starting incremental update...")
+                    val currentTime = System.currentTimeMillis()
+                    val timeSinceLastFullSync = currentTime - lastFullSyncTime
                     
-                    val success = enhancedRepository.performIncrementalUpdate()
+                    // Lakukan extended sync setiap 5 menit untuk catch missed data (resi batal dari device lain)
+                    // Extended sync = fetch 1 jam terakhir (bukan 7 hari) untuk hemat bandwidth
+                    val shouldDoFullSync = timeSinceLastFullSync >= FULL_SYNC_INTERVAL_MS
                     
-                    if (success) {
-                        Log.d(TAG, "✅ Incremental update completed")
-                        // Beritahu UI bahwa sync selesai agar dapat refresh status/modal
-                        try {
-                            val intent = android.content.Intent(ACTION_SYNC_COMPLETED)
-                            context.sendBroadcast(intent)
-                        } catch (e: Exception) {
-                            Log.w(TAG, "⚠️ Failed to broadcast sync completion: ${e.message}")
+                    if (shouldDoFullSync) {
+                        Log.d(TAG, "🔄 Starting EXTENDED sync (periodic, every 5 minutes)...")
+                        Log.d(TAG, "   Reason: Catch missed data like cancelled resi from other devices")
+                        
+                        // Mundurkan lastSyncTime 1 jam untuk catch missed data (bukan full sync)
+                        // Ini lebih efisien: hanya ambil data 1 jam terakhir, bukan 7 hari penuh
+                        val oneHourAgo = currentTime - (60 * 60 * 1000L) // 1 jam yang lalu
+                        com.example.cekpicklist.cache.BarcodeCacheManager.setLastResiSyncTime(oneHourAgo)
+                        
+                        val success = enhancedRepository.performIncrementalUpdate()
+                        
+                        if (success) {
+                            lastFullSyncTime = currentTime
+                            Log.d(TAG, "✅ Extended sync completed (fetched data from last 1 hour)")
+                            // Beritahu UI bahwa sync selesai
+                            try {
+                                val intent = android.content.Intent(ACTION_SYNC_COMPLETED)
+                                context.sendBroadcast(intent)
+                            } catch (e: Exception) {
+                                Log.w(TAG, "⚠️ Failed to broadcast sync completion: ${e.message}")
+                            }
+                        } else {
+                            Log.w(TAG, "⚠️ Extended sync failed")
                         }
                     } else {
-                        Log.w(TAG, "⚠️ Incremental update failed")
+                        Log.d(TAG, "🔄 Starting incremental update...")
+                        Log.d(TAG, "   Next full sync in: ${(FULL_SYNC_INTERVAL_MS - timeSinceLastFullSync) / 1000}s")
+                        
+                        val success = enhancedRepository.performIncrementalUpdate()
+                        
+                        if (success) {
+                            Log.d(TAG, "✅ Incremental update completed")
+                            // Beritahu UI bahwa sync selesai
+                            try {
+                                val intent = android.content.Intent(ACTION_SYNC_COMPLETED)
+                                context.sendBroadcast(intent)
+                            } catch (e: Exception) {
+                                Log.w(TAG, "⚠️ Failed to broadcast sync completion: ${e.message}")
+                            }
+                        } else {
+                            Log.w(TAG, "⚠️ Incremental update failed")
+                        }
                     }
                     
                 } catch (e: Exception) {
-                    Log.e(TAG, "❌ Incremental update error: ${e.message}", e)
+                    Log.e(TAG, "❌ Update error: ${e.message}", e)
                 }
                 
                 // Tunggu sesuai interval dinamis + jitter kecil (±10%) untuk hemat bandwidth dan menghindari burst

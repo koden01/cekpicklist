@@ -265,8 +265,14 @@ class BarcodeInputFragment : Fragment() {
                         updateTodayUnique()
                     }
                     "duplicate" -> {
-                        Log.d("BarcodeInputFragment", "🔊 Playing duplicate beep and showing toast for: ${it.Resi}")
-                        audioManager.playDoubleBeep()
+                        // Cek apakah resi dibatalkan (schedule="batal")
+                        if (it.schedule == "batal") {
+                            Log.d("BarcodeInputFragment", "🔊 Playing BATAL beep and showing toast for: ${it.Resi}")
+                            audioManager.playBatalBeep() // Play beep_batal.mp3
+                        } else {
+                            Log.d("BarcodeInputFragment", "🔊 Playing duplicate beep and showing toast for: ${it.Resi}")
+                            audioManager.playDoubleBeep() // Play beep_double.mp3
+                        }
                         BarcodeToastManager.showError(requireContext(), it.message ?: "Resi sudah diproses")
                         // Tetap kosongkan agar siap input ulang
                         etBarcodeInput.setText("")
@@ -278,6 +284,14 @@ class BarcodeInputFragment : Fragment() {
                         audioManager.playFailureBeep()
                         BarcodeToastManager.showError(requireContext(), it.message ?: "Terjadi kesalahan")
                         // Tetap kosongkan agar siap input ulang
+                        etBarcodeInput.setText("")
+                        etBarcodeInput.requestFocus()
+                        updateTodayUnique()
+                    }
+                    "mismatch" -> {
+                        Log.d("BarcodeInputFragment", "🔊 Playing mismatch beep and showing toast for: ${it.Resi}")
+                        audioManager.playMismatchBeep() // Play beep_salah.mp3
+                        BarcodeToastManager.showError(requireContext(), it.message ?: "Resi tidak sesuai ekspedisi")
                         etBarcodeInput.setText("")
                         etBarcodeInput.requestFocus()
                         updateTodayUnique()

@@ -21,6 +21,8 @@ class BarcodeAudioManager(private val context: Context) {
         private const val SOUND_DOUBLE = 3
         private const val SOUND_START = 4
         private const val SOUND_SABAR = 5
+        private const val SOUND_BATAL = 6
+        private const val SOUND_SALAH = 7
     }
     
     private var soundPool: SoundPool? = null
@@ -29,7 +31,7 @@ class BarcodeAudioManager(private val context: Context) {
     private lateinit var soundSettingsManager: SoundSettingsManager
     private var isSoundPoolReady = false
     private val pendingBeeps = ArrayDeque<BarcodeBeepType>()
-    private var soundsToLoad = 5
+    private var soundsToLoad = 7 // Updated: +beep_batal +beep_salah
     private var soundsLoaded = 0
     
     /**
@@ -82,6 +84,8 @@ class BarcodeAudioManager(private val context: Context) {
             soundMap[SOUND_DOUBLE] = soundPool?.load(context, R.raw.beep_double, 1) ?: 0
             soundMap[SOUND_START] = soundPool?.load(context, R.raw.beep_start, 1) ?: 0
             soundMap[SOUND_SABAR] = soundPool?.load(context, R.raw.failure, 1) ?: 0 // Using failure.mp3 for sabar
+            soundMap[SOUND_BATAL] = soundPool?.load(context, R.raw.beep_batal, 1) ?: 0 // NEW: beep for cancelled resi
+            soundMap[SOUND_SALAH] = soundPool?.load(context, R.raw.beep_salah, 1) ?: 0 // NEW: beep for mismatch expedisi
             
             // Get AudioManager
             audioManager = context.getSystemService(Context.AUDIO_SERVICE) as AudioManager
@@ -120,6 +124,8 @@ class BarcodeAudioManager(private val context: Context) {
                     BarcodeBeepType.DOUBLE -> SOUND_DOUBLE
                     BarcodeBeepType.START -> SOUND_START
                     BarcodeBeepType.SABAR -> SOUND_SABAR
+                    BarcodeBeepType.BATAL -> SOUND_BATAL
+                    BarcodeBeepType.SALAH -> SOUND_SALAH
                 }
                 val soundId = soundMap[mapKey] ?: 0
                 if (soundId != 0) {
@@ -177,6 +183,20 @@ class BarcodeAudioManager(private val context: Context) {
     }
     
     /**
+     * Play batal beep (untuk resi yang sudah dibatalkan)
+     */
+    fun playBatalBeep() {
+        playBeep(BarcodeBeepType.BATAL)
+    }
+
+    /**
+     * Play mismatch/salah beep (untuk ekspedisi mismatch)
+     */
+    fun playMismatchBeep() {
+        playBeep(BarcodeBeepType.SALAH)
+    }
+    
+    /**
      * Get resource ID for sound file name
      */
     private fun getResourceIdForSound(soundFileName: String): Int {
@@ -221,5 +241,7 @@ enum class BarcodeBeepType(val soundId: Int) {
     FAILURE(2),
     DOUBLE(3),
     START(4),
-    SABAR(5)
+    SABAR(5),
+    BATAL(6), // NEW: Sound untuk resi yang sudah dibatalkan
+    SALAH(7) // NEW: Sound untuk mismatch expedisi
 }

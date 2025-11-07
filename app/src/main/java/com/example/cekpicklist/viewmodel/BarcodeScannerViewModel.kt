@@ -504,10 +504,12 @@ class BarcodeScannerViewModel(application: Application) : AndroidViewModel(appli
                             _scanResult.value = ScanResult(
                                 status = when (validationResult.status) {
                                     ExpedisiValidator.ValidationStatus.DUPLICATE_PROCESSED -> "duplicate"
+                                    ExpedisiValidator.ValidationStatus.MISMATCH_EXPEDISI -> "mismatch"
                                     else -> "error"
                                 },
                                 message = validationResult.message ?: "Validasi gagal",
                                 Resi = trimmedBarcode,
+                                schedule = validationResult.resiDetails?.schedule ?: "ontime", // Pass schedule untuk duplicate
                                 timestamp = System.currentTimeMillis()
                             )
                             isProcessing = false
