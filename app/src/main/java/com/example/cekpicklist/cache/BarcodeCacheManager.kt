@@ -75,8 +75,8 @@ object BarcodeCacheManager {
     private var lastExpedisiUpdateAt: String? = null
     
     // Cache expiration time (15 jam = 15 * 60 * 60 * 1000 ms)
-    // **PERUBAHAN**: Tidak digunakan lagi, cache sekarang persistent dengan auto-cleanup data > 4 hari
-    @Deprecated("Cache sekarang persistent, tidak ada expiration. Gunakan cleanupOldData() untuk hapus data > 4 hari")
+    // **PERUBAHAN**: Tidak digunakan lagi, cache sekarang persistent dengan auto-cleanup data > 7 hari
+    @Deprecated("Cache sekarang persistent, tidak ada expiration. Gunakan cleanupOldData() untuk hapus data > 7 hari")
     private const val CACHE_EXPIRATION_MS = 15 * 60 * 60 * 1000L
     
     // Interval untuk cleanup data lama (setiap 24 jam = 24 * 60 * 60 * 1000 ms)
@@ -93,7 +93,7 @@ object BarcodeCacheManager {
     fun init(context: Context) {
         this.context = context.applicationContext
         this.sharedPreferences = context.applicationContext.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
-        Log.d(TAG, "✅ BarcodeCacheManager initialized with persistent storage (auto-cleanup data > 4 days)")
+        Log.d(TAG, "✅ BarcodeCacheManager initialized with persistent storage (auto-cleanup data > 7 days)")
         
         // Load cache dari SharedPreferences saat init
         CoroutineScope(Dispatchers.IO).launch {
@@ -101,16 +101,16 @@ object BarcodeCacheManager {
         }
     }
     
-    // Window sinkronisasi resi: 4 hari terakhir (hari ini + 3 hari sebelumnya)
-    private fun isWithinLast4Days(created: String?): Boolean {
+    // Window sinkronisasi resi: 7 hari terakhir (hari ini + 6 hari sebelumnya)
+    private fun isWithinLast7Days(created: String?): Boolean {
         return try {
             if (created.isNullOrBlank()) return true // jika tidak ada timestamp, jangan dibuang
             // Ambil bagian tanggal saja (YYYY-MM-DD) agar robust untuk ISO 8601 dengan waktu
             val datePart = if (created.length >= 10) created.substring(0, 10) else created
             val recordDate = java.time.LocalDate.parse(datePart)
             val todayUtc = java.time.Instant.now().atZone(java.time.ZoneOffset.UTC).toLocalDate()
-            val fourDaysWindowStart = todayUtc.minusDays(3) // termasuk hari ini
-            !recordDate.isBefore(fourDaysWindowStart)
+            val sevenDaysWindowStart = todayUtc.minusDays(6) // termasuk hari ini
+            !recordDate.isBefore(sevenDaysWindowStart)
         } catch (e: Exception) {
             Log.w(TAG, "⚠️ Cannot parse created date for resi: '$created'. Keeping record by default.")
             true
@@ -119,7 +119,7 @@ object BarcodeCacheManager {
     
     /**
      * Check apakah cache masih valid (belum expired)
-     * **PERUBAHAN**: Cache sekarang selalu valid (persistent), hanya cleanup data > 4 hari
+     * **PERUBAHAN**: Cache sekarang selalu valid (persistent), hanya cleanup data > 7 hari
      */
     fun isResiCacheValid(): Boolean {
         // Cache selalu valid jika ada data (persistent storage)
@@ -154,9 +154,9 @@ object BarcodeCacheManager {
                 expedisiRecordsCache.clear()
                 expedisiByOrdernoCache.clear()
                 
-                // Populate resi cache - hanya 4 hari terakhir termasuk hari ini
+                // Populate resi cache - hanya 7 hari terakhir termasuk hari ini
                 resiRecords.forEach { record ->
-                    if (!isWithinLast4Days(record.created)) return@forEach
+                    if (!isWithinLast7Days(record.created)) return@forEach
                     val resi = record.Resi.trim().uppercase()
                     processedResiSet.add(resi)
                     resiRecordsCache[resi] = record
@@ -228,9 +228,9 @@ object BarcodeCacheManager {
             try {
                 Log.d(TAG, "🔄 Refreshing cache...")
                 
-                // Update resi cache - hanya 4 hari terakhir termasuk hari ini
+                // Update resi cache - hanya 7 hari terakhir termasuk hari ini
                 resiRecords.forEach { record ->
-                    if (!isWithinLast4Days(record.created)) return@forEach
+                    if (!isWithinLast7Days(record.created)) return@forEach
                     val resi = record.Resi.trim().uppercase()
                     processedResiSet.add(resi)
                     resiRecordsCache[resi] = record
@@ -312,9 +312,9 @@ object BarcodeCacheManager {
      */
     suspend fun addResiRecord(record: BarcodeSupabaseService.BarcodeScanRecord) {
         cacheMutex.withLock {
-            // Hanya tambahkan jika dalam window 4 hari terakhir
-            if (!isWithinLast4Days(record.created)) {
-                Log.d(TAG, "⚠️ Skipping resi outside 4-day window: ${record.Resi} (${record.created})")
+            // Hanya tambahkan jika dalam window 7 hari terakhir
+            if (!isWithinLast7Days(record.created)) {
+                Log.d(TAG, "⚠️ Skipping resi outside 7-day window: ${record.Resi} (${record.created})")
                 return@withLock
             }
             val normalizedResi = record.Resi.trim().uppercase()
@@ -563,16 +563,16 @@ object BarcodeCacheManager {
     
     /**
      * Convert timestamp (millis) ke ISO date string (YYYY-MM-DD) untuk query Supabase
-     * Jika timestamp = 0, return tanggal 4 hari yang lalu (untuk initial sync)
+     * Jika timestamp = 0, return tanggal 7 hari yang lalu (untuk initial sync)
      */
     fun timestampToIsoDate(timestamp: Long): String {
         return if (timestamp == 0L) {
-            // Initial sync: ambil dari 4 hari yang lalu
-            val fourDaysAgo = java.time.Instant.now()
+            // Initial sync: ambil dari 7 hari yang lalu
+            val sevenDaysAgo = java.time.Instant.now()
                 .atZone(java.time.ZoneOffset.UTC)
                 .toLocalDate()
-                .minusDays(3)
-            fourDaysAgo.toString()
+                .minusDays(6)
+            sevenDaysAgo.toString()
         } else {
             // Convert timestamp ke ISO date
             java.time.Instant.ofEpochMilli(timestamp)
@@ -614,15 +614,15 @@ object BarcodeCacheManager {
                     val type = object : TypeToken<Map<String, BarcodeSupabaseService.BarcodeScanRecord>>() {}.type
                     val loadedResi = gson.fromJson<Map<String, BarcodeSupabaseService.BarcodeScanRecord>>(resiJson, type)
                     if (loadedResi != null) {
-                        // Filter hanya data dalam window 4 hari saat load (cleanup akan handle yang > 4 hari)
+                        // Filter hanya data dalam window 7 hari saat load (cleanup akan handle yang > 7 hari)
                         loadedResi.forEach { (resi, record) ->
-                            if (isWithinLast4Days(record.created)) {
+                            if (isWithinLast7Days(record.created)) {
                                 val normalizedResi = resi.trim().uppercase()
                                 processedResiSet.add(normalizedResi)
                                 resiRecordsCache[normalizedResi] = record
                             }
                         }
-                        Log.d(TAG, "✅ Loaded ${resiRecordsCache.size} resi records from storage (filtered to 4 days)")
+                        Log.d(TAG, "✅ Loaded ${resiRecordsCache.size} resi records from storage (filtered to 7 days)")
                     }
                 }
                 
@@ -632,7 +632,7 @@ object BarcodeCacheManager {
                     val type = object : TypeToken<Map<String, BarcodeSupabaseService.BarcodeSessionRecord>>() {}.type
                     val loadedExpedisi = gson.fromJson<Map<String, BarcodeSupabaseService.BarcodeSessionRecord>>(expedisiJson, type)
                     if (loadedExpedisi != null) {
-                        // Filter hanya flag="NO" dan dalam window 4 hari
+                        // Filter hanya flag="NO" dan dalam window 7 hari
                         loadedExpedisi.forEach { (resino, record) ->
                             if (record.flag.uppercase() == "NO") {
                                 // Check created date jika ada
@@ -641,8 +641,8 @@ object BarcodeCacheManager {
                                         val datePart = if (record.created.length >= 10) record.created.substring(0, 10) else record.created
                                         val recordDate = java.time.LocalDate.parse(datePart)
                                         val todayUtc = java.time.Instant.now().atZone(java.time.ZoneOffset.UTC).toLocalDate()
-                                        val fourDaysWindowStart = todayUtc.minusDays(3)
-                                        !recordDate.isBefore(fourDaysWindowStart)
+                                        val sevenDaysWindowStart = todayUtc.minusDays(6)
+                                        !recordDate.isBefore(sevenDaysWindowStart)
                                     } catch (e: Exception) {
                                         true // Keep jika tidak bisa parse
                                     }
@@ -663,7 +663,7 @@ object BarcodeCacheManager {
                                 }
                             }
                         }
-                        Log.d(TAG, "✅ Loaded ${expedisiRecordsCache.size} expedisi records from storage (filtered to 4 days)")
+                        Log.d(TAG, "✅ Loaded ${expedisiRecordsCache.size} expedisi records from storage (filtered to 7 days)")
                     }
                 }
                 
@@ -729,7 +729,7 @@ object BarcodeCacheManager {
     }
     
     /**
-     * Cleanup data lama (> 4 hari) - Cron job style
+     * Cleanup data lama (> 7 hari) - Cron job style
      * Dijalankan secara otomatis untuk menjaga cache tetap bersih
      */
     suspend fun cleanupOldData() = withContext(Dispatchers.IO) {
@@ -737,17 +737,17 @@ object BarcodeCacheManager {
             try {
                 val now = System.currentTimeMillis()
                 val todayUtc = java.time.Instant.now().atZone(java.time.ZoneOffset.UTC).toLocalDate()
-                val fourDaysWindowStart = todayUtc.minusDays(3) // termasuk hari ini
+                val sevenDaysWindowStart = todayUtc.minusDays(6) // termasuk hari ini
                 
-                Log.d(TAG, "🧹 [CLEANUP] Starting cleanup for data older than 4 days...")
+                Log.d(TAG, "🧹 [CLEANUP] Starting cleanup for data older than 7 days...")
                 
                 var cleanedResiCount = 0
                 var cleanedExpedisiCount = 0
                 
-                // Cleanup resi records > 4 hari
+                // Cleanup resi records > 7 hari
                 val resiToRemove = mutableListOf<String>()
                 resiRecordsCache.forEach { (resi, record) ->
-                    if (!isWithinLast4Days(record.created)) {
+                    if (!isWithinLast7Days(record.created)) {
                         resiToRemove.add(resi)
                     }
                 }
@@ -758,7 +758,7 @@ object BarcodeCacheManager {
                     cleanedResiCount++
                 }
                 
-                // Cleanup expedisi records > 4 hari
+                // Cleanup expedisi records > 7 hari
                 val expedisiToRemove = mutableListOf<String>()
                 expedisiRecordsCache.forEach { (resino, record) ->
                     // Check created date jika ada, atau skip jika tidak ada
@@ -773,7 +773,7 @@ object BarcodeCacheManager {
                         null
                     }
                     
-                    if (recordDate != null && recordDate.isBefore(fourDaysWindowStart)) {
+                    if (recordDate != null && recordDate.isBefore(sevenDaysWindowStart)) {
                         expedisiToRemove.add(resino)
                     }
                 }
@@ -799,9 +799,9 @@ object BarcodeCacheManager {
                         saveCacheToStorage()
                     }
                     
-                    Log.d(TAG, "✅ [CLEANUP] Cleaned up $cleanedResiCount resi records and $cleanedExpedisiCount expedisi records older than 4 days")
+                    Log.d(TAG, "✅ [CLEANUP] Cleaned up $cleanedResiCount resi records and $cleanedExpedisiCount expedisi records older than 7 days")
                 } else {
-                    Log.d(TAG, "✅ [CLEANUP] No old data to clean up (all data within 4 days)")
+                    Log.d(TAG, "✅ [CLEANUP] No old data to clean up (all data within 7 days)")
                 }
                 
             } catch (e: Exception) {

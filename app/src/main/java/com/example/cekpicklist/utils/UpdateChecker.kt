@@ -22,14 +22,20 @@ import java.net.URL
 
 /**
  * Update Checker untuk Cek Picklist
- * Mengecek versi terbaru dari GitHub API dan menampilkan dialog update
+ * 
+ * Mekanisme:
+ * - Cek update setiap kali aplikasi dibuka
+ * - Hanya tampilkan notifikasi/dialog jika ada versi baru
+ * - Silent (tidak ada notifikasi) jika versi sudah terbaru
+ * - Mengambil informasi dari GitHub Releases API
  */
 class UpdateChecker(private val context: Context) {
     
     companion object {
         private const val TAG = "UpdateChecker"
         private const val GITHUB_API_URL = "https://api.github.com/repos/koden01/cekpicklist/releases/latest"
-        private const val MIN_UPDATE_INTERVAL_DAYS = 1 // Minimal 1 hari antar cek
+        @Deprecated("Tidak lagi digunakan - app sekarang cek update setiap kali dibuka")
+        private const val MIN_UPDATE_INTERVAL_DAYS = 1 // Legacy: Minimal 1 hari antar cek
         private const val NOTIFICATION_ID = 1001
         private const val CHANNEL_ID = "update_channel"
         private const val CHANNEL_NAME = "Update Notifications"
@@ -38,14 +44,10 @@ class UpdateChecker(private val context: Context) {
     private val prefs = context.getSharedPreferences("UpdateChecker", Context.MODE_PRIVATE)
     
     /**
-     * Cek update dengan interval yang ditentukan
+     * Cek update setiap kali aplikasi dibuka
+     * Hanya tampilkan notifikasi jika ada versi baru (silent jika versi sama)
      */
     fun checkForUpdates(forceCheck: Boolean = false) {
-        if (!forceCheck && !shouldCheckForUpdate()) {
-            Log.d(TAG, "Skip update check - masih dalam interval")
-            return
-        }
-        
         Log.d(TAG, "Starting update check...")
         
         CoroutineScope(Dispatchers.IO).launch {
@@ -56,25 +58,28 @@ class UpdateChecker(private val context: Context) {
                 Log.d(TAG, "Current version: $currentVersion, Latest version: $latestVersion")
                 
                 if (isNewVersionAvailable(currentVersion, latestVersion)) {
+                    Log.d(TAG, "✨ New version available: $latestVersion")
                     withContext(Dispatchers.Main) {
                         showUpdateDialog(latestVersion)
                     }
                 } else {
-                    Log.d(TAG, "App is up to date")
+                    Log.d(TAG, "✅ App is up to date (no notification shown)")
                 }
                 
                 // Update last check time
                 updateLastCheckTime()
                 
             } catch (e: Exception) {
-                Log.e(TAG, "Error checking for updates: ${e.message}", e)
+                Log.e(TAG, "❌ Error checking for updates: ${e.message}", e)
             }
         }
     }
     
     /**
      * Cek apakah sudah waktunya untuk cek update
+     * @deprecated Tidak lagi digunakan - app sekarang cek update setiap kali dibuka
      */
+    @Deprecated("App sekarang selalu cek update setiap kali dibuka (silent jika tidak ada update)")
     private fun shouldCheckForUpdate(): Boolean {
         val lastCheck = prefs.getLong("last_update_check", 0)
         val currentTime = System.currentTimeMillis()

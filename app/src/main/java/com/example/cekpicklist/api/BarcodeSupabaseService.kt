@@ -388,12 +388,12 @@ class BarcodeSupabaseService {
     }
     
     /**
-     * Ambil tanggal 4 hari terakhir (hari ini + 3 hari yang lalu) dalam format ISO 8601
+     * Ambil tanggal 7 hari terakhir (hari ini + 6 hari yang lalu) dalam format ISO 8601
      */
-    private fun getFourDaysAgoDate(): String {
+    private fun getSevenDaysAgoDate(): String {
         val utcNow = java.time.Instant.now().atZone(java.time.ZoneOffset.UTC)
-        val fourDaysAgo = utcNow.toLocalDate().minusDays(3)
-        return fourDaysAgo.toString() // Format: YYYY-MM-DD (UTC)
+        val sevenDaysAgo = utcNow.toLocalDate().minusDays(6)
+        return sevenDaysAgo.toString() // Format: YYYY-MM-DD (UTC)
     }
     
     /**
@@ -488,11 +488,11 @@ class BarcodeSupabaseService {
     }
     
     /**
-     * **4-DAY SYNC**: Get semua barcode resi data dari 4 hari terakhir (hari ini + 3 hari yang lalu)
+     * **7-DAY SYNC**: Get semua barcode resi data dari 7 hari terakhir (hari ini + 6 hari yang lalu)
      */
     suspend fun getAllBarcodeResi(): List<BarcodeScanRecord> = withContext(Dispatchers.IO) {
         try {
-            val fourDaysAgoDate = getFourDaysAgoDate()
+            val sevenDaysAgoDate = getSevenDaysAgoDate()
             // **PERBAIKAN**: Menggunakan pagination untuk mengatasi limit 1000 Supabase
             val allRecords = mutableListOf<BarcodeScanRecord>()
             var offset = 0
@@ -500,7 +500,7 @@ class BarcodeSupabaseService {
             var hasMoreData = true
             
             while (hasMoreData) {
-                val url = URL("${BarcodeSupabaseConfig.SUPABASE_URL}/rest/v1/tbl_resi?created=gte.$fourDaysAgoDate&order=created.desc&limit=$limit&offset=$offset")
+                val url = URL("${BarcodeSupabaseConfig.SUPABASE_URL}/rest/v1/tbl_resi?created=gte.$sevenDaysAgoDate&order=created.desc&limit=$limit&offset=$offset")
                 
                 val connection = url.openConnection() as HttpURLConnection
                 connection.connectTimeout = 30000 // 30 detik connection timeout
@@ -545,7 +545,7 @@ class BarcodeSupabaseService {
                 connection.disconnect()
             }
             
-            Log.d(TAG, "✅ Retrieved total ${allRecords.size} barcode resi records from last 4 days")
+            Log.d(TAG, "✅ Retrieved total ${allRecords.size} barcode resi records from last 7 days")
             if (allRecords.isNotEmpty()) {
                 Log.d(TAG, "📊 Sample barcode resi records from Supabase:")
                 allRecords.take(5).forEach { record ->

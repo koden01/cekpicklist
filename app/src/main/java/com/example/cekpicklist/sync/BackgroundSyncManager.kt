@@ -129,7 +129,7 @@ class BackgroundSyncManager(
                     Log.e(TAG, "❌ Error detecting deleted expedisi: ${e.message}", e)
                 }
                 
-                // 3. Cleanup data lama (> 4 hari) - Cron job style (setiap 24 jam)
+                // 3. Cleanup data lama (> 7 hari) - Cron job style (setiap 24 jam)
                 try {
                     if (com.example.cekpicklist.cache.BarcodeCacheManager.shouldCleanup()) {
                         com.example.cekpicklist.cache.BarcodeCacheManager.cleanupOldData()

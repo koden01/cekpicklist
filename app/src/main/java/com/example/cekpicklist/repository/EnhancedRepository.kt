@@ -665,16 +665,16 @@ class EnhancedRepository(private val context: Context) {
     }
     
     /**
-     * Helper function untuk check apakah created date dalam window 4 hari terakhir
+     * Helper function untuk check apakah created date dalam window 7 hari terakhir
      */
-    private fun isWithinLast4Days(created: String?): Boolean {
+    private fun isWithinLast7Days(created: String?): Boolean {
         return try {
             if (created.isNullOrBlank()) return true
             val datePart = if (created.length >= 10) created.substring(0, 10) else created
             val recordDate = java.time.LocalDate.parse(datePart)
             val todayUtc = java.time.Instant.now().atZone(java.time.ZoneOffset.UTC).toLocalDate()
-            val fourDaysWindowStart = todayUtc.minusDays(3) // termasuk hari ini
-            !recordDate.isBefore(fourDaysWindowStart)
+            val sevenDaysWindowStart = todayUtc.minusDays(6) // termasuk hari ini
+            !recordDate.isBefore(sevenDaysWindowStart)
         } catch (e: Exception) {
             Log.w(TAG, "⚠️ Cannot parse created date: '$created'. Keeping record by default.")
             true
@@ -698,7 +698,7 @@ class EnhancedRepository(private val context: Context) {
             Log.d(TAG, "📅 Last sync time: ${if (lastSyncTime == 0L) "Never (initial sync)" else "${(System.currentTimeMillis() - lastSyncTime) / 1000}s ago"}")
             Log.d(TAG, "📅 Fetching data since: $sinceDate")
             
-            // 1. Ambil semua resi dari cache (4 hari terakhir)
+            // 1. Ambil semua resi dari cache (7 hari terakhir)
             val cachedResi = BarcodeCacheManager.getAllResiRecords()
             val cachedResiSet = cachedResi.map { it.Resi.trim().uppercase() }.toSet()
             
@@ -706,8 +706,8 @@ class EnhancedRepository(private val context: Context) {
             
             // 2. **OPTIMASI**: Ambil HANYA data yang berubah sejak lastSyncTime dari Supabase
             val supabaseResi = if (lastSyncTime == 0L) {
-                // Initial sync: ambil semua data (4 hari terakhir)
-                Log.d(TAG, "🔄 Initial sync: fetching all data from last 4 days")
+                // Initial sync: ambil semua data (7 hari terakhir)
+                Log.d(TAG, "🔄 Initial sync: fetching all data from last 7 days")
                 barcodeSupabaseService.getAllBarcodeResi()
             } else {
                 // Incremental sync: ambil hanya data baru/modified sejak lastSyncTime
@@ -821,8 +821,8 @@ class EnhancedRepository(private val context: Context) {
                 }
                 
                 newResiRecords.forEach { record ->
-                    // Filter hanya data dalam window 4 hari
-                    if (isWithinLast4Days(record.created)) {
+                    // Filter hanya data dalam window 7 hari
+                    if (isWithinLast7Days(record.created)) {
                         BarcodeCacheManager.addResiRecord(record)
                     }
                 }
@@ -961,10 +961,10 @@ class EnhancedRepository(private val context: Context) {
     suspend fun forceRefreshBarcodeData(): List<BarcodeSupabaseService.BarcodeScanRecord> = withContext(Dispatchers.IO) {
         try {
             Log.d(TAG, "🔄 [Supabase] Incremental force refresh barcode data...")
-            // Tentukan anchor dari cache: gunakan tanggal max(created) di cache (atau 4 hari lalu jika kosong)
+            // Tentukan anchor dari cache: gunakan tanggal max(created) di cache (atau 7 hari lalu jika kosong)
             val cachedResi = BarcodeCacheManager.getAllResiRecords()
             val sinceDate = cachedResi.mapNotNull { it.created?.take(10) }.maxOrNull()
-                ?: java.time.Instant.now().atZone(java.time.ZoneOffset.UTC).toLocalDate().minusDays(3).toString()
+                ?: java.time.Instant.now().atZone(java.time.ZoneOffset.UTC).toLocalDate().minusDays(6).toString()
             val resiDelta = barcodeSupabaseService.getBarcodeResiSince(sinceDate)
             val expedisiDelta = barcodeSupabaseService.getBarcodeExpedisiSince(sinceDate)
 
@@ -988,7 +988,7 @@ class EnhancedRepository(private val context: Context) {
             Log.d(TAG, "🔄 [Supabase] Incremental force refresh expedisi data...")
             val cachedExp = BarcodeCacheManager.getAllExpedisiRecords()
             val sinceDate = cachedExp.mapNotNull { it.created?.take(10) }.maxOrNull()
-                ?: java.time.Instant.now().atZone(java.time.ZoneOffset.UTC).toLocalDate().minusDays(3).toString()
+                ?: java.time.Instant.now().atZone(java.time.ZoneOffset.UTC).toLocalDate().minusDays(6).toString()
             val expedisiDelta = barcodeSupabaseService.getBarcodeExpedisiSince(sinceDate)
             expedisiDelta.forEach { BarcodeCacheManager.addExpedisiRecord(it) }
             Log.d(TAG, "✅ Incremental expedisi refresh: +${expedisiDelta.size} (since $sinceDate)")

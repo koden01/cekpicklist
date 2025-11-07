@@ -128,7 +128,7 @@ class ExpedisiValidator(
             }
             
             // 2. Check if already processed (in tbl_resi) - Cek Duplicate
-            // **CEK DUPLICATE DI SEMUA DATA CACHE tbl_resi** (4 hari terakhir, tidak hanya hari ini)
+            // **CEK DUPLICATE DI SEMUA DATA CACHE tbl_resi** (7 hari terakhir, tidak hanya hari ini)
             // Tidak query langsung ke Supabase untuk performa cepat
             val resiDetails = checkResiInDatabase(trimmedBarcode)
             if (resiDetails != null) {
@@ -226,7 +226,7 @@ class ExpedisiValidator(
     /**
      * Check if resi exists in tbl_resi
      * **PENTING**: Menggunakan cache-first strategy (tidak query langsung ke Supabase)
-     * - Cache tbl_resi berisi data 4 hari terakhir
+     * - Cache tbl_resi berisi data 7 hari terakhir
      * - Fast lookup dari memory (ConcurrentHashMap)
      */
     private suspend fun checkResiInDatabase(resi: String): ResiDetails? = withContext(Dispatchers.IO) {

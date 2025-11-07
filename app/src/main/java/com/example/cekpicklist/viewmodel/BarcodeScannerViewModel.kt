@@ -483,7 +483,7 @@ class BarcodeScannerViewModel(application: Application) : AndroidViewModel(appli
                 
                 // **SATU JALUR VALIDASI**: ExpedisiValidator dengan urutan:
                 // 1. Cek Expedisi & Karung
-                // 2. Cek Duplicate (semua data cache tbl_resi, 4 hari terakhir)
+                // 2. Cek Duplicate (semua data cache tbl_resi, 7 hari terakhir)
                 // 3. Cek NOT_FOUND (tbl_expedisi, flag=NO)
                 // 4. Cek Mismatch Expedisi
                 // 5. VALIDASI OK → Data disimpan
