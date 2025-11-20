@@ -350,7 +350,6 @@ class BarcodeScannerViewModel(application: Application) : AndroidViewModel(appli
         // Gunakan EnhancedRepository untuk Local-First strategy
         expedisiValidator = ExpedisiValidator(
             context = context,
-            enhancedRepository = enhancedRepository,
             audioManager = null,
             notificationManager = notificationManager
         )

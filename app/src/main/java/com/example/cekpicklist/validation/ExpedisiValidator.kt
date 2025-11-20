@@ -2,9 +2,8 @@ package com.example.cekpicklist.validation
 
 import android.content.Context
 import android.util.Log
-import com.example.cekpicklist.api.BarcodeExpedisiService
 import com.example.cekpicklist.api.BarcodeSupabaseService
-import com.example.cekpicklist.repository.EnhancedRepository
+import com.example.cekpicklist.cache.BarcodeCacheManager
 import com.example.cekpicklist.utils.BarcodeToastManager
 import com.example.cekpicklist.utils.BarcodeAudioManager
 import com.example.cekpicklist.utils.BarcodeNotificationManager
@@ -20,8 +19,6 @@ import java.util.*
  */
 class ExpedisiValidator(
     private val context: Context,
-    private val enhancedRepository: EnhancedRepository? = null,
-    private val barcodeExpedisiService: BarcodeExpedisiService? = null,
     private val audioManager: BarcodeAudioManager? = null,
     private val notificationManager: BarcodeNotificationManager? = null
 ) {
@@ -123,6 +120,17 @@ class ExpedisiValidator(
                 return@withContext ValidationResult(
                     status = ValidationStatus.INVALID_FORMAT,
                     message = errorMessage,
+                    actualCourierName = normalizeExpeditionName(selectedExpedisi ?: "")
+                )
+            }
+
+            // Pastikan cache expedisi siap sebelum melanjutkan (tanpa fallback Supabase)
+            if (BarcodeCacheManager.getAllExpedisiRecords().isEmpty()) {
+                val message = "Data expedisi lokal belum siap. Mohon tunggu sinkronisasi offline selesai."
+                Log.w(TAG, "🛑 [VALIDASI BERHENTI] $message")
+                return@withContext ValidationResult(
+                    status = ValidationStatus.INVALID_FORMAT,
+                    message = message,
                     actualCourierName = normalizeExpeditionName(selectedExpedisi ?: "")
                 )
             }
@@ -231,38 +239,23 @@ class ExpedisiValidator(
      */
     private suspend fun checkResiInDatabase(resi: String): ResiDetails? = withContext(Dispatchers.IO) {
         try {
-            // Gunakan EnhancedRepository untuk Local-First strategy (cache-first)
-            // getBarcodeResiRecords() akan:
-            // 1. Cek cache dulu (BarcodeCacheManager.getAllResiRecords())
-            // 2. Jika cache valid, langsung return dari cache
-            // 3. Jika cache expired/kosong, baru fetch dari Supabase dan update cache
-            val resiRecord = if (enhancedRepository != null) {
-                enhancedRepository.getBarcodeResiRecords().find { it.Resi == resi }
-            } else {
-                // Fallback: query langsung via service (jarang digunakan)
-                barcodeExpedisiService?.checkResiInDatabase(resi)
+            val resiCache = BarcodeCacheManager.getAllResiRecords()
+            if (resiCache.isEmpty()) {
+                Log.w(TAG, "⚠️ Resi cache empty - offline validation not ready yet.")
+                return@withContext null
             }
+
+            val normalizedResi = resi.trim().uppercase()
+            val resiRecord = resiCache.find { it.Resi.trim().uppercase() == normalizedResi }
             
-            when (resiRecord) {
-                is BarcodeSupabaseService.BarcodeScanRecord -> {
-                    ResiDetails(
-                        Resi = resiRecord.Resi,
-                        created = resiRecord.created,
-                        Keterangan = resiRecord.Keterangan,
-                        nokarung = resiRecord.nokarung,
-                        schedule = resiRecord.schedule
-                    )
-                }
-                is BarcodeExpedisiService.ResiRecord -> {
-                    ResiDetails(
-                        Resi = resiRecord.Resi,
-                        created = resiRecord.created,
-                        Keterangan = resiRecord.Keterangan,
-                        nokarung = resiRecord.nokarung,
-                        schedule = resiRecord.schedule
-                    )
-                }
-                else -> null
+            resiRecord?.let {
+                ResiDetails(
+                    Resi = it.Resi,
+                    created = it.created,
+                    Keterangan = it.Keterangan,
+                    nokarung = it.nokarung,
+                    schedule = it.schedule
+                )
             }
         } catch (e: Exception) {
             Log.e(TAG, "❌ Error checking resi in database: ${e.message}", e)
@@ -317,39 +310,26 @@ class ExpedisiValidator(
      */
     private suspend fun checkExpedisiInDatabase(resi: String): ExpedisiRecord? = withContext(Dispatchers.IO) {
         try {
-            // Gunakan EnhancedRepository untuk Local-First strategy (cache-first)
-            val expedisiRecord = if (enhancedRepository != null) {
-                enhancedRepository.getBarcodeExpedisiRecords().find { it.resino == resi }
-            } else {
-                barcodeExpedisiService?.checkExpedisiInDatabase(resi)
+            val expedisiCache = BarcodeCacheManager.getAllExpedisiRecords()
+            if (expedisiCache.isEmpty()) {
+                Log.w(TAG, "⚠️ Expedisi cache empty - offline validation not ready yet.")
+                return@withContext null
             }
+
+            val normalizedResi = resi.trim().uppercase()
+            val expedisiRecord = expedisiCache.find { it.resino.trim().uppercase() == normalizedResi }
             
-            when (expedisiRecord) {
-                is BarcodeSupabaseService.BarcodeSessionRecord -> {
-                    ExpedisiRecord(
-                        resino = expedisiRecord.resino ?: "",
-                        orderno = expedisiRecord.orderno ?: "",
-                        chanelsales = expedisiRecord.chanelsales ?: "",
-                        couriername = expedisiRecord.couriername ?: "",
-                        created = expedisiRecord.created ?: "",
-                        datetrans = expedisiRecord.datetrans ?: "",
-                        flag = expedisiRecord.flag,
-                        cekfu = expedisiRecord.cekfu
-                    )
-                }
-                is BarcodeExpedisiService.ExpedisiRecord -> {
-                    ExpedisiRecord(
-                        resino = expedisiRecord.resino,
-                        orderno = expedisiRecord.orderno,
-                        chanelsales = expedisiRecord.chanelsales,
-                        couriername = expedisiRecord.couriername,
-                        created = expedisiRecord.created,
-                        datetrans = expedisiRecord.datetrans,
-                        flag = expedisiRecord.flag,
-                        cekfu = expedisiRecord.cekfu.toBoolean()
-                    )
-                }
-                else -> null
+            expedisiRecord?.let {
+                ExpedisiRecord(
+                    resino = it.resino.orEmpty(),
+                    orderno = it.orderno,
+                    chanelsales = it.chanelsales,
+                    couriername = it.couriername,
+                    created = it.created.orEmpty(),
+                    datetrans = it.datetrans,
+                    flag = it.flag,
+                    cekfu = it.cekfu
+                )
             }
         } catch (e: Exception) {
             Log.e(TAG, "❌ Error checking expedisi in database: ${e.message}", e)

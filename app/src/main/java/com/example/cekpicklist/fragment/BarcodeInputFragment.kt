@@ -85,7 +85,7 @@ class BarcodeInputFragment : Fragment() {
         }
         
         // Initialize expedisi validator dengan Local-First strategy
-        expedisiValidator = ExpedisiValidator(requireContext(), null, null, audioManager)
+        expedisiValidator = ExpedisiValidator(requireContext(), audioManager = audioManager)
         
         initViews(view)
         setupObservers()
