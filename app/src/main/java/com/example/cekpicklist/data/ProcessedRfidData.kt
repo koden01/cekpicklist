@@ -18,5 +18,6 @@ data class ProcessedRfidData(
     val color: String,
     val gender: String,
     val warehouse: String,
-    val tagStatus: String
+    val tagStatus: String,
+    val nirwanaTagStatus: String = ""
 )

@@ -11,8 +11,6 @@ import com.example.cekpicklist.utils.Logger
 import com.example.cekpicklist.utils.ToastUtils
 import com.example.cekpicklist.viewmodel.OutActivityViewModel
 import com.example.cekpicklist.viewmodel.OutActivityViewModelFactory
-import java.text.SimpleDateFormat
-import java.util.*
 
 class OutActivity : BaseRfidActivity() {
     
@@ -38,9 +36,7 @@ class OutActivity : BaseRfidActivity() {
         // Initialize ViewModel
         viewModel = ViewModelProvider(this, OutActivityViewModelFactory(application))[OutActivityViewModel::class.java]
         
-        // Generate notrans
-        notrans = generateNotrans()
-        binding.tvNotrans.text = notrans
+        binding.tvNotrans.text = "Memuat..."
         
         // Realtime removed (Supabase-only without live subscriptions)
 
@@ -50,8 +46,9 @@ class OutActivity : BaseRfidActivity() {
         setupObservers()
         setupSettingsIcon()
         setupBackIcon()
+        viewModel.loadNextNotrans()
         
-        Logger.PicklistInput.d("OutActivity setup completed with notrans: $notrans")
+        Logger.PicklistInput.d("OutActivity setup completed")
     }
 
     private fun setupSettingsIcon() {
@@ -180,10 +177,15 @@ class OutActivity : BaseRfidActivity() {
         viewModel.submitSuccess.observe(this) { success ->
             if (success) {
                 Logger.PicklistInput.d("Submit successful")
-                // Increment counter AFTER successful submit
-                incrementTransactionCounterForToday()
                 ToastUtils.showHighToastWithCooldown(this, "Out activity berhasil disimpan!")
                 finish()
+            }
+        }
+
+        viewModel.currentNotrans.observe(this) { next ->
+            if (!next.isNullOrBlank()) {
+                notrans = next
+                binding.tvNotrans.text = next
             }
         }
     }
@@ -259,6 +261,10 @@ class OutActivity : BaseRfidActivity() {
             ToastUtils.showHighToastWithCooldown(this, "Tidak ada item untuk disubmit")
             return
         }
+        if (notrans.isBlank()) {
+            ToastUtils.showHighToastWithCooldown(this, "Nomor transaksi belum siap, coba lagi")
+            return
+        }
         
         Logger.PicklistInput.d("Performing submit with ${items.size} items")
         viewModel.submitOutActivity(notrans)
@@ -272,42 +278,6 @@ class OutActivity : BaseRfidActivity() {
         
         // Enable submit button if there are items
         binding.btnSubmit.isEnabled = items.isNotEmpty()
-    }
-    
-    /**
-     * Generate notrans dengan format OUT01292025
-     * OUT = transaksi OUT
-     * 01 = transaksi ke 01 hari ini
-     * 292025 = tanggal hari ini (DDMMYYYY)
-     */
-    private fun generateNotrans(): String {
-        val calendar = Calendar.getInstance()
-        val dateFormat = SimpleDateFormat("ddMMyyyy", Locale.getDefault())
-        val today = dateFormat.format(calendar.time)
-        // Read current counter WITHOUT increment
-        val number = getCurrentTransactionNumberForToday()
-        return "OUT${String.format("%02d", number)}$today"
-    }
-
-    private fun getCurrentTransactionNumberForToday(): Int {
-        val prefs = getSharedPreferences("out_activity", MODE_PRIVATE)
-        val today = SimpleDateFormat("yyyyMMdd", Locale.getDefault()).format(Date())
-        val lastDate = prefs.getString("last_date", null)
-        val lastCount = prefs.getInt("transaction_count", 0)
-        return if (lastDate == today && lastCount > 0) lastCount else 1
-    }
-
-    private fun incrementTransactionCounterForToday() {
-        val prefs = getSharedPreferences("out_activity", MODE_PRIVATE)
-        val today = SimpleDateFormat("yyyyMMdd", Locale.getDefault()).format(Date())
-        val lastDate = prefs.getString("last_date", null)
-        val lastCount = prefs.getInt("transaction_count", 0)
-        if (lastDate == today) {
-            prefs.edit().putInt("transaction_count", (if (lastCount > 0) lastCount + 1 else 2)).apply()
-        } else {
-            // New day: set to 2 after first submit because current shown was 1
-            prefs.edit().putString("last_date", today).putInt("transaction_count", 2).apply()
-        }
     }
     
     override fun onResume() {

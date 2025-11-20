@@ -13,6 +13,14 @@ import java.net.URLEncoder
 import java.io.BufferedReader
 import java.io.InputStreamReader
 import java.io.OutputStreamWriter
+import java.net.ConnectException
+import java.net.SocketTimeoutException
+
+/**
+ * Custom exception untuk network error (koneksi gagal/timeout)
+ * Digunakan untuk membedakan antara "tidak ada data" vs "error koneksi"
+ */
+class NetworkException(message: String, cause: Throwable? = null) : Exception(message, cause)
 
 /**
  * Barcode Supabase Service
@@ -96,9 +104,27 @@ class BarcodeSupabaseService {
             Log.d(TAG, "🔄 Update flag result: $success")
             
             success
+        } catch (e: CancellationException) {
+            // Re-throw cancellation untuk proper coroutine handling
+            throw e
+        } catch (e: SocketTimeoutException) {
+            Log.e(TAG, "❌ Timeout updating flag in Supabase: ${e.message}", e)
+            throw NetworkException("Connection timeout: ${e.message}", e)
+        } catch (e: ConnectException) {
+            Log.e(TAG, "❌ Connection failed updating flag in Supabase: ${e.message}", e)
+            throw NetworkException("Connection failed: ${e.message}", e)
         } catch (e: Exception) {
-            Log.e(TAG, "❌ Error updating flag in Supabase: ${e.message}", e)
-            false
+            // Untuk error lain yang mungkin terkait network
+            if (e.message?.contains("network", ignoreCase = true) == true ||
+                e.message?.contains("connection", ignoreCase = true) == true ||
+                e.message?.contains("timeout", ignoreCase = true) == true) {
+                Log.e(TAG, "❌ Network error updating flag in Supabase: ${e.message}", e)
+                throw NetworkException("Network error: ${e.message}", e)
+            } else {
+                // Error lain, tetap return false
+                Log.e(TAG, "❌ Error updating flag in Supabase: ${e.message}", e)
+                false
+            }
         }
     }
     
@@ -171,9 +197,27 @@ class BarcodeSupabaseService {
                 Log.e(TAG, "❌ Failed to save barcode scan: ${record.Resi} - $errorResponse")
                 false
             }
+        } catch (e: CancellationException) {
+            // Re-throw cancellation untuk proper coroutine handling
+            throw e
+        } catch (e: SocketTimeoutException) {
+            Log.e(TAG, "❌ Timeout saving barcode scan: ${record.Resi} - ${e.message}", e)
+            throw NetworkException("Connection timeout: ${e.message}", e)
+        } catch (e: ConnectException) {
+            Log.e(TAG, "❌ Connection failed saving barcode scan: ${record.Resi} - ${e.message}", e)
+            throw NetworkException("Connection failed: ${e.message}", e)
         } catch (e: Exception) {
-            Log.e(TAG, "❌ Error saving barcode scan: ${record.Resi} - ${e.message}", e)
-            false
+            // Untuk error lain yang mungkin terkait network
+            if (e.message?.contains("network", ignoreCase = true) == true ||
+                e.message?.contains("connection", ignoreCase = true) == true ||
+                e.message?.contains("timeout", ignoreCase = true) == true) {
+                Log.e(TAG, "❌ Network error saving barcode scan: ${record.Resi} - ${e.message}", e)
+                throw NetworkException("Network error: ${e.message}", e)
+            } else {
+                // Error lain (misalnya parsing error), tetap return false
+                Log.e(TAG, "❌ Error saving barcode scan: ${record.Resi} - ${e.message}", e)
+                false
+            }
         }
     }
     
@@ -553,9 +597,26 @@ class BarcodeSupabaseService {
                 }
             }
             allRecords
+        } catch (e: CancellationException) {
+            // Re-throw cancellation untuk proper coroutine handling
+            throw e
+        } catch (e: SocketTimeoutException) {
+            Log.e(TAG, "❌ Timeout getting all barcode resi: ${e.message}", e)
+            throw NetworkException("Connection timeout: ${e.message}", e)
+        } catch (e: ConnectException) {
+            Log.e(TAG, "❌ Connection failed getting all barcode resi: ${e.message}", e)
+            throw NetworkException("Connection failed: ${e.message}", e)
         } catch (e: Exception) {
-            Log.e(TAG, "❌ Error getting barcode resi: ${e.message}", e)
-            emptyList()
+            // Untuk error lain (bukan network error), log dan throw sebagai NetworkException
+            if (e.message?.contains("network", ignoreCase = true) == true ||
+                e.message?.contains("connection", ignoreCase = true) == true ||
+                e.message?.contains("timeout", ignoreCase = true) == true) {
+                Log.e(TAG, "❌ Network error getting all barcode resi: ${e.message}", e)
+                throw NetworkException("Network error: ${e.message}", e)
+            } else {
+                Log.e(TAG, "❌ Error getting all barcode resi: ${e.message}", e)
+                throw NetworkException("Error fetching data: ${e.message}", e)
+            }
         }
     }
 
@@ -602,9 +663,29 @@ class BarcodeSupabaseService {
                 connection.disconnect()
             }
             allRecords
+        } catch (e: CancellationException) {
+            // Re-throw cancellation untuk proper coroutine handling
+            throw e
+        } catch (e: SocketTimeoutException) {
+            Log.e(TAG, "❌ Timeout getting barcode resi since $sinceDate: ${e.message}", e)
+            throw NetworkException("Connection timeout: ${e.message}", e)
+        } catch (e: ConnectException) {
+            Log.e(TAG, "❌ Connection failed getting barcode resi since $sinceDate: ${e.message}", e)
+            throw NetworkException("Connection failed: ${e.message}", e)
         } catch (e: Exception) {
-            Log.e(TAG, "❌ Error getting barcode resi since $sinceDate: ${e.message}", e)
-            emptyList()
+            // Untuk error lain (bukan network error), log dan throw sebagai NetworkException
+            // karena kemungkinan besar juga terkait network
+            if (e.message?.contains("network", ignoreCase = true) == true ||
+                e.message?.contains("connection", ignoreCase = true) == true ||
+                e.message?.contains("timeout", ignoreCase = true) == true) {
+                Log.e(TAG, "❌ Network error getting barcode resi since $sinceDate: ${e.message}", e)
+                throw NetworkException("Network error: ${e.message}", e)
+            } else {
+                // Error lain (misalnya parsing error), tetap throw tapi sebagai NetworkException
+                // untuk konsistensi error handling
+                Log.e(TAG, "❌ Error getting barcode resi since $sinceDate: ${e.message}", e)
+                throw NetworkException("Error fetching data: ${e.message}", e)
+            }
         }
     }
 
@@ -655,9 +736,26 @@ class BarcodeSupabaseService {
                 connection.disconnect()
             }
             allRecords
+        } catch (e: CancellationException) {
+            // Re-throw cancellation untuk proper coroutine handling
+            throw e
+        } catch (e: SocketTimeoutException) {
+            Log.e(TAG, "❌ Timeout getting barcode expedisi since $sinceDate: ${e.message}", e)
+            throw NetworkException("Connection timeout: ${e.message}", e)
+        } catch (e: ConnectException) {
+            Log.e(TAG, "❌ Connection failed getting barcode expedisi since $sinceDate: ${e.message}", e)
+            throw NetworkException("Connection failed: ${e.message}", e)
         } catch (e: Exception) {
-            Log.e(TAG, "❌ Error getting barcode expedisi since $sinceDate: ${e.message}", e)
-            emptyList()
+            // Untuk error lain (bukan network error), log dan throw sebagai NetworkException
+            if (e.message?.contains("network", ignoreCase = true) == true ||
+                e.message?.contains("connection", ignoreCase = true) == true ||
+                e.message?.contains("timeout", ignoreCase = true) == true) {
+                Log.e(TAG, "❌ Network error getting barcode expedisi since $sinceDate: ${e.message}", e)
+                throw NetworkException("Network error: ${e.message}", e)
+            } else {
+                Log.e(TAG, "❌ Error getting barcode expedisi since $sinceDate: ${e.message}", e)
+                throw NetworkException("Error fetching data: ${e.message}", e)
+            }
         }
     }
     
@@ -907,9 +1005,26 @@ class BarcodeSupabaseService {
             
             Log.d(TAG, "✅ Retrieved total ${allRecords.size} barcode expedisi records with flag=NO")
             allRecords
+        } catch (e: CancellationException) {
+            // Re-throw cancellation untuk proper coroutine handling
+            throw e
+        } catch (e: SocketTimeoutException) {
+            Log.e(TAG, "❌ Timeout getting all barcode expedisi: ${e.message}", e)
+            throw NetworkException("Connection timeout: ${e.message}", e)
+        } catch (e: ConnectException) {
+            Log.e(TAG, "❌ Connection failed getting all barcode expedisi: ${e.message}", e)
+            throw NetworkException("Connection failed: ${e.message}", e)
         } catch (e: Exception) {
-            Log.e(TAG, "❌ Error getting barcode expedisi: ${e.message}", e)
-            emptyList()
+            // Untuk error lain (bukan network error), log dan throw sebagai NetworkException
+            if (e.message?.contains("network", ignoreCase = true) == true ||
+                e.message?.contains("connection", ignoreCase = true) == true ||
+                e.message?.contains("timeout", ignoreCase = true) == true) {
+                Log.e(TAG, "❌ Network error getting all barcode expedisi: ${e.message}", e)
+                throw NetworkException("Network error: ${e.message}", e)
+            } else {
+                Log.e(TAG, "❌ Error getting all barcode expedisi: ${e.message}", e)
+                throw NetworkException("Error fetching data: ${e.message}", e)
+            }
         }
     }
     

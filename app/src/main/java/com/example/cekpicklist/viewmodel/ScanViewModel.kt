@@ -50,6 +50,22 @@ data class Sextuple<A, B, C, D, E, F>(
     val sixth: F
 )
 
+data class ForeignArticleDetail(
+    val articleId: String,
+    val articleName: String,
+    val size: String,
+    val quantity: Int
+)
+
+data class ForeignGroupSummary(
+    val id: String,
+    val warehouseCode: String,
+    val warehouseLabel: String,
+    val tagStatus: String,
+    val totalQty: Int,
+    val articles: List<ForeignArticleDetail>
+)
+
 class ScanViewModel(application: Application) : AndroidViewModel(application) {
     private val repository = Repository(application.applicationContext)
     private val enhancedRepository = EnhancedRepository(application)
@@ -143,10 +159,14 @@ class ScanViewModel(application: Application) : AndroidViewModel(application) {
     // Processed RFID data untuk UI
     private val _processedRfidData = MutableLiveData<List<ProcessedRfidData>>()
     val processedRfidData: LiveData<List<ProcessedRfidData>> = _processedRfidData
+    private val foreignGroupSummaries = mutableMapOf<String, ForeignGroupSummary>()
     
     // Logging controls
     private companion object {
         private const val VERBOSE_LOGS = false // set true saat debugging rinci
+        private const val DEFAULT_WAREHOUSE_CODE = "03010301"
+        private const val DEFAULT_WAREHOUSE_NAME = "RETAIL"
+        private const val DEFAULT_TAG_STATUS = "TAGGED"
         private fun v(tag: String, message: String) {
             if (VERBOSE_LOGS) android.util.Log.d(tag, message)
         }
@@ -680,7 +700,8 @@ class ScanViewModel(application: Application) : AndroidViewModel(application) {
                             color = product.color,
                             gender = product.gender,
                             warehouse = product.warehouse,
-                            tagStatus = status // Tambahkan status
+                            tagStatus = status, // Tambahkan status
+                            nirwanaTagStatus = product.tagStatus
                         )
                         
                         processedData.add(processedItem)
@@ -732,7 +753,8 @@ class ScanViewModel(application: Application) : AndroidViewModel(application) {
                             color = product.color,
                             gender = product.gender,
                             warehouse = product.warehouse,
-                            tagStatus = status
+                            tagStatus = status,
+                            nirwanaTagStatus = product.tagStatus
                         )
                         
                         processedData.add(processedItem)
@@ -779,7 +801,8 @@ class ScanViewModel(application: Application) : AndroidViewModel(application) {
                                     color = product.color,
                                     gender = product.gender,
                                     warehouse = product.warehouse,
-                                    tagStatus = status
+                                    tagStatus = status,
+                                    nirwanaTagStatus = product.tagStatus
                                 )
                                 
                                 processedData.add(processedItem)
@@ -807,7 +830,8 @@ class ScanViewModel(application: Application) : AndroidViewModel(application) {
                                     color = product.color,
                                     gender = product.gender,
                                     warehouse = product.warehouse,
-                                    tagStatus = "NON_PICKLIST"
+                                    tagStatus = "NON_PICKLIST",
+                                    nirwanaTagStatus = product.tagStatus
                                 )
                                 
                                 processedData.add(processedItem)
@@ -857,7 +881,8 @@ class ScanViewModel(application: Application) : AndroidViewModel(application) {
                                         color = p.color,
                                         gender = p.gender,
                                         warehouse = p.warehouse,
-                                        tagStatus = status
+                                        tagStatus = status,
+                                        nirwanaTagStatus = p.tagStatus
                                     )
                                 )
                                 val updated = picklistItem.copy(qtyScan = newQtyScan)
@@ -881,7 +906,8 @@ class ScanViewModel(application: Application) : AndroidViewModel(application) {
                                         color = p.color,
                                         gender = p.gender,
                                         warehouse = p.warehouse,
-                                        tagStatus = "NON_PICKLIST"
+                                        tagStatus = "NON_PICKLIST",
+                                        nirwanaTagStatus = p.tagStatus
                                     )
                                 )
                             }
@@ -917,7 +943,8 @@ class ScanViewModel(application: Application) : AndroidViewModel(application) {
                                                 color = single.color,
                                                 gender = single.gender,
                                                 warehouse = single.warehouse,
-                                                tagStatus = status
+                                                tagStatus = status,
+                                                nirwanaTagStatus = single.tagStatus
                                             )
                                         )
                                         val updated = picklistItem.copy(qtyScan = newQtyScan)
@@ -940,7 +967,8 @@ class ScanViewModel(application: Application) : AndroidViewModel(application) {
                                                 color = single.color,
                                                 gender = single.gender,
                                                 warehouse = single.warehouse,
-                                                tagStatus = "NON_PICKLIST"
+                                                tagStatus = "NON_PICKLIST",
+                                                nirwanaTagStatus = single.tagStatus
                                             )
                                         )
                                     }
@@ -1223,8 +1251,26 @@ class ScanViewModel(application: Application) : AndroidViewModel(application) {
             Log.d("ScanViewModel", "🔥   - ${item.articleName} ${item.size} (${item.tagStatus})")
         }
         
+        val normalizedTargetStatus = DEFAULT_TAG_STATUS.uppercase()
+        val normalizedTargetWarehouseCode = DEFAULT_WAREHOUSE_CODE.uppercase()
+        val normalizedTargetWarehouseName = DEFAULT_WAREHOUSE_NAME.uppercase()
+
+        // Bagi processedData menjadi yang sesuai preferensi vs di luar preferensi
+        val (preferredProcessedData, foreignProcessedData) = processedData.partition { data ->
+            if (data.nirwanaTagStatus.isBlank() || data.warehouse.isBlank()) {
+                return@partition false
+            }
+            val status = data.nirwanaTagStatus.trim().uppercase()
+            val warehouseValue = data.warehouse.trim().uppercase()
+            val statusMatches = status == normalizedTargetStatus
+            val warehouseMatches = warehouseValue == normalizedTargetWarehouseCode ||
+                    warehouseValue == normalizedTargetWarehouseName ||
+                    warehouseValue.contains(normalizedTargetWarehouseName)
+            statusMatches && warehouseMatches
+        }
+
         // **PERBAIKAN**: Agregasi non-picklist per (articleId,size) agar qty mencerminkan jumlah EPC
-        val nonPicklistGroups = processedData
+        val nonPicklistGroups = preferredProcessedData
             .filter { it.tagStatus == "NON_PICKLIST" }
             .groupBy { Pair(it.articleId, it.size) }
 
@@ -1248,7 +1294,7 @@ class ScanViewModel(application: Application) : AndroidViewModel(application) {
         }
 
         // **PERBAIKAN**: Agregasi overscan yang TIDAK ada di picklist
-        val overscanGroups = processedData
+        val overscanGroups = preferredProcessedData
             .filter { it.tagStatus == "OVERCAN" }
             .filter { pd -> items.none { it.articleId == pd.articleId && it.size == pd.size } }
             .groupBy { Pair(it.articleId, it.size) }
@@ -1273,6 +1319,78 @@ class ScanViewModel(application: Application) : AndroidViewModel(application) {
         }
 
         val additionalItems = nonPicklistItems + overscanItems
+
+        // Bangun ringkasan warehouse/tag status di luar preferensi
+        foreignGroupSummaries.clear()
+        val foreignSummaries = foreignProcessedData
+            .filter { it.nirwanaTagStatus.isNotBlank() || it.warehouse.isNotBlank() }
+            .groupBy { Pair(it.warehouse.ifBlank { "UNKNOWN" }.uppercase(), it.nirwanaTagStatus.ifBlank { "UNKNOWN" }.uppercase()) }
+            .map { (key, entries) ->
+                val warehouseKey = key.first.ifBlank { "UNKNOWN" }
+                val statusKey = key.second.ifBlank { "UNKNOWN" }
+                val displayWarehouse = entries.firstOrNull()?.warehouse?.takeIf { it.isNotBlank() } ?: warehouseKey
+                val displayStatus = entries.firstOrNull()?.nirwanaTagStatus?.takeIf { it.isNotBlank() } ?: statusKey
+                val articleDetails = entries
+                    .groupBy { Pair(it.articleId, it.size) }
+                    .map { (_, groupEntries) ->
+                        val first = groupEntries.first()
+                        ForeignArticleDetail(
+                            articleId = first.articleId,
+                            articleName = first.articleName,
+                            size = first.size,
+                            quantity = groupEntries.size
+                        )
+                    }
+                    .sortedWith(compareBy<ForeignArticleDetail> { it.articleName.lowercase() }
+                        .thenBy { it.size.lowercase() })
+                val totalQty = articleDetails.sumOf { it.quantity }
+                val warehouseIdComponent = warehouseKey.replace("\\s+".toRegex(), "_")
+                val statusIdComponent = statusKey.replace("\\s+".toRegex(), "_")
+                val groupId = "foreign_${warehouseIdComponent}_${statusIdComponent}"
+                ForeignGroupSummary(
+                    id = groupId,
+                    warehouseCode = warehouseKey,
+                    warehouseLabel = displayWarehouse,
+                    tagStatus = displayStatus,
+                    totalQty = totalQty,
+                    articles = articleDetails
+                )
+            }
+            .filterNot { summary ->
+                val summaryStatus = summary.tagStatus.trim().uppercase()
+                val summaryWarehouseCode = summary.warehouseCode.trim().uppercase()
+                val summaryWarehouseLabel = summary.warehouseLabel.trim().uppercase()
+                val warehouseMatchesTarget = summaryWarehouseCode == normalizedTargetWarehouseCode ||
+                        summaryWarehouseCode == normalizedTargetWarehouseName ||
+                        summaryWarehouseLabel == normalizedTargetWarehouseName ||
+                        summaryWarehouseLabel.contains(normalizedTargetWarehouseName) ||
+                        summaryWarehouseCode.contains(normalizedTargetWarehouseName)
+                warehouseMatchesTarget && summaryStatus == normalizedTargetStatus
+            }
+
+        foreignSummaries.forEach { summary ->
+            foreignGroupSummaries[summary.id] = summary
+        }
+
+        val foreignGroupItems = foreignSummaries
+            .sortedWith(
+                compareByDescending<ForeignGroupSummary> { it.totalQty }
+                    .thenBy { it.warehouseLabel })
+            .map { summary ->
+                PicklistItem(
+                    id = summary.id,
+                    noPicklist = currentPicklistNumber ?: "",
+                    articleId = "",
+                    articleName = summary.warehouseLabel,
+                    size = summary.tagStatus,
+                    productId = null,
+                    qtyPl = 0,
+                    qtyScan = summary.totalQty,
+                    createdAt = "",
+                    warehouse = summary.warehouseCode,
+                    tagStatus = "FOREIGN_GROUP"
+                )
+            }
         
         // Gabungkan item picklist dengan item tambahan (non-picklist dan overscan yang tidak ada di picklist)
         val combinedItems = items + additionalItems
@@ -1298,6 +1416,13 @@ class ScanViewModel(application: Application) : AndroidViewModel(application) {
                 Log.d("ScanViewModel", "🔥   - ${item.articleName} ${item.size} (qtyPl=${item.qtyPl}, qtyScan=${item.qtyScan}, status=${item.tagStatus})")
             }
         }
+
+        if (foreignGroupItems.isNotEmpty()) {
+            Log.d("ScanViewModel", "🔥 Foreign groups added to picklist view: ${foreignGroupItems.size}")
+            foreignGroupItems.forEach { item ->
+                Log.d("ScanViewModel", "🔥   - ${item.articleName} (${item.size}) qty=${item.qtyScan}")
+            }
+        }
         
         if (completedCount > 0) {
             Log.d("ScanViewModel", "🔥 Completed items (HIDDEN):")
@@ -1317,7 +1442,9 @@ class ScanViewModel(application: Application) : AndroidViewModel(application) {
             Log.w("ScanViewModel", "⚠️ FilteredItems is EMPTY - this will cause display to show no data!")
         }
         
-        _filteredItems.value = filteredItems
+        val decoratedItems = foreignGroupItems + filteredItems
+        
+        _filteredItems.value = decoratedItems
     }
     
     // **POIN 5: LiveData untuk Real-time Qty Updates**
@@ -1464,6 +1591,8 @@ class ScanViewModel(application: Application) : AndroidViewModel(application) {
      * Get current picklist number
      */
     fun getCurrentPicklistNumber(): String? = currentPicklistNumber
+    
+    fun getForeignGroupSummary(groupId: String): ForeignGroupSummary? = foreignGroupSummaries[groupId]
     
     /**
      * Get processed EPC list for current picklist (untuk seeding RfidScanManager)
@@ -3271,7 +3400,8 @@ class ScanViewModel(application: Application) : AndroidViewModel(application) {
                     color = "",
                     gender = "",
                     warehouse = "",
-                    tagStatus = "SCANNED" // Status khusus untuk EPC yang sudah di-scan
+                    tagStatus = "SCANNED", // Status khusus untuk EPC yang sudah di-scan
+                    nirwanaTagStatus = ""
                 )
                 
                 processedData.add(processedRfid)
@@ -3378,7 +3508,8 @@ class ScanViewModel(application: Application) : AndroidViewModel(application) {
                     color = productInfo.color,
                     gender = productInfo.gender,
                     warehouse = productInfo.warehouse,
-                    tagStatus = tagStatus
+                    tagStatus = tagStatus,
+                    nirwanaTagStatus = productInfo.tagStatus
                 )
                 
                 processedData.add(processedRfid)

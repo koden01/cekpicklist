@@ -30,6 +30,7 @@ import kotlinx.coroutines.Job
 import kotlinx.coroutines.delay
 import com.example.cekpicklist.viewmodel.ScanViewModel
 import com.example.cekpicklist.viewmodel.ScanViewModelFactory
+import com.example.cekpicklist.viewmodel.ForeignGroupSummary
 
 // Legacy RFID SDK imports removed - handled by BaseRfidActivity/RfidScanManager
 
@@ -611,9 +612,12 @@ class CekPicklistActivity : BaseRfidActivity() {
         // Setup swipe-to-delete functionality
         setupSwipeToDelete()
         
-        // Setup item click → show EPC list modal
+        // Setup item click → tampilkan ringkasan artikel per warehouse/tag status
         picklistAdapter.setOnItemClickListener { item ->
-            showEpcSelectionDialog(item.articleName, item.size)
+            val summary = viewModel.getForeignGroupSummary(item.id)
+            if (summary != null) {
+                showForeignArticleDialog(summary)
+            }
         }
     }
     
@@ -635,8 +639,14 @@ class CekPicklistActivity : BaseRfidActivity() {
                 val position = viewHolder.bindingAdapterPosition
                 val item = picklistAdapter.getItemAt(position)
                 if (item != null) {
-                    Log.d(TAG, "🔥 Item swiped to delete: ${item.articleName} ${item.size}")
-                    handleItemDelete(item)
+                    val summary = viewModel.getForeignGroupSummary(item.id)
+                    if (summary != null) {
+                        Log.d(TAG, "ℹ️ Foreign group swiped – showing detail dialog instead of deleting")
+                        showForeignArticleDialog(summary)
+                    } else {
+                        Log.d(TAG, "🔥 Item swiped to delete: ${item.articleName} ${item.size}")
+                        handleItemDelete(item)
+                    }
                 }
                 // Biarkan ViewModel yang mengatur data; kembalikan tampilan untuk menghindari posisi kosong sementara
                 picklistAdapter.notifyItemChanged(position)
@@ -647,30 +657,15 @@ class CekPicklistActivity : BaseRfidActivity() {
         Log.d(TAG, "🔥 Swipe-to-delete berhasil disetup")
     }
     
-    private fun showEpcSelectionDialog(articleName: String, size: String) {
-        val epcs = viewModel.getEpcsForArticle(articleName, size)
-        if (epcs.isEmpty()) {
-            androidx.appcompat.app.AlertDialog.Builder(this)
-                .setTitle("EPC $articleName $size")
-                .setMessage("Belum ada EPC untuk artikel ini")
-                .setPositiveButton("OK", null)
-                .show()
-            return
-        }
-        val items = epcs.toTypedArray()
-        androidx.appcompat.app.AlertDialog.Builder(this)
-            .setTitle("Pilih EPC - $articleName $size")
-            .setItems(items) { _, which ->
-                val selected = items[which]
-                // Copy to clipboard
-                val cm = getSystemService(android.content.Context.CLIPBOARD_SERVICE) as android.content.ClipboardManager
-                cm.setPrimaryClip(android.content.ClipData.newPlainText("EPC", selected))
-                // Navigate to LocationDemoActivity with target EPC
-                val intent = android.content.Intent(this, LocationDemoActivity::class.java)
-                intent.putExtra("target_epc", selected)
-                startActivity(intent)
-            }
-            .setNegativeButton("Batal", null)
+    private fun showForeignArticleDialog(summary: ForeignGroupSummary) {
+        val detailMessage = summary.articles.joinToString(separator = "\n") { detail ->
+            "- ${detail.articleName} (${detail.size}) • Qty ${detail.quantity}"
+        }.ifBlank { "Tidak ada artikel terkait." }
+
+        androidx.appcompat.app.AlertDialog.Builder(this, R.style.RoundDialogTheme)
+            .setTitle("${summary.warehouseLabel} • ${summary.tagStatus}")
+            .setMessage(detailMessage)
+            .setPositiveButton("OK", null)
             .show()
     }
     

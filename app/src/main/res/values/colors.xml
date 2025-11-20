@@ -58,4 +58,5 @@
     <color name="holo_green_dark">#4CAF50</color>
     <color name="holo_red_dark">#F44336</color>
     <color name="holo_orange_dark">#FF9800</color>
+    <color name="retur_invalid_background">#FFF1F0</color>
 </resources>

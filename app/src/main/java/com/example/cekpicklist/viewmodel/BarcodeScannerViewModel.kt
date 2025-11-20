@@ -518,12 +518,17 @@ class BarcodeScannerViewModel(application: Application) : AndroidViewModel(appli
                         ExpedisiValidator.ValidationStatus.OK -> {
                         // **HANYA jika VALIDASI OK**: Data disimpan
                         Log.d(TAG, "✅ Validasi OK, data akan disimpan: $trimmedBarcode")
+                            // **PERBAIKAN**: Await processSuccessfulScan agar isProcessing di-reset setelah selesai
                             processSuccessfulScan(
                                 barcode = trimmedBarcode,
                                 scanDuration = scanDuration,
                                 scannerType = scannerType,
                                 validationResult = validationResult
                             )
+                            // **PERBAIKAN**: Reset isProcessing setelah processSuccessfulScan selesai
+                            isProcessing = false
+                            lastScanCompleteTime = System.currentTimeMillis()
+                            Log.d(TAG, "✅ Scan selesai, ready untuk scan berikutnya (debounce: ${MIN_SCAN_INTERVAL_MS}ms)")
                         }
                 }
                 
@@ -535,11 +540,8 @@ class BarcodeScannerViewModel(application: Application) : AndroidViewModel(appli
                     Resi = barcode,
                     timestamp = System.currentTimeMillis()
                 )
-            } finally {
                 isProcessing = false
-                // **PERBAIKAN**: Update timestamp setelah scan selesai untuk debounce
                 lastScanCompleteTime = System.currentTimeMillis()
-                Log.d(TAG, "✅ Scan selesai, ready untuk scan berikutnya (debounce: ${MIN_SCAN_INTERVAL_MS}ms)")
             }
         }
     }
@@ -547,15 +549,15 @@ class BarcodeScannerViewModel(application: Application) : AndroidViewModel(appli
     /**
      * Process successful scan dan simpan via EnhancedRepository (Supabase-only cache)
      * **KRITIS**: Hanya menyimpan jika VALIDASI OK
+     * **PERBAIKAN**: Ubah menjadi suspend function agar bisa di-await
      */
-    private fun processSuccessfulScan(
+    private suspend fun processSuccessfulScan(
         barcode: String,
         scanDuration: Long,
         scannerType: String,
         validationResult: ExpedisiValidator.ValidationResult
     ) {
-        viewModelScope.launch {
-            try {
+        try {
                 // **GUARD**: Pastikan hanya menyimpan jika VALIDASI OK
                 if (validationResult.status != ExpedisiValidator.ValidationStatus.OK) {
                     Log.e(TAG, "🚫 [BLOCKED] Attempted to save data with invalid status: ${validationResult.status} for resi: $barcode")
@@ -565,7 +567,7 @@ class BarcodeScannerViewModel(application: Application) : AndroidViewModel(appli
                         Resi = barcode,
                         timestamp = System.currentTimeMillis()
                     )
-                    return@launch
+                    return
                 }
                 
                 Log.d(TAG, "✅ [VALIDASI OK] Saving data for resi: $barcode")
@@ -591,12 +593,12 @@ class BarcodeScannerViewModel(application: Application) : AndroidViewModel(appli
                     Log.e(TAG, "❌ Cache update failed for: $barcode")
                     _scanResult.value = ScanResult(
                         status = "error",
-                        message = "Gagal menyimpan ke cache lokal",
-                        Resi = barcode,
-                        timestamp = System.currentTimeMillis()
-                    )
-                    return@launch
-                }
+                    message = "Gagal menyimpan ke cache lokal",
+                    Resi = barcode,
+                    timestamp = System.currentTimeMillis()
+                )
+                return
+            }
                 
                 // **OPTIMISTIC UI UPDATE**: Update UI INSTAN (cache sudah di-update oleh Repository)
                 val processedCount = BarcodeCacheManager.getProcessedResiSet().size
@@ -638,15 +640,14 @@ class BarcodeScannerViewModel(application: Application) : AndroidViewModel(appli
                 // **OPTIMASI**: Jangan reload history (tidak perlu, sudah local-first update)
                 // Data sudah di-update di cache oleh Repository, UI sudah di-update di atas
                 
-            } catch (e: Exception) {
-                Log.e(TAG, "❌ Error processing barcode: ${e.message}")
-                _scanResult.value = ScanResult(
-                    status = "error",
-                    message = "Gagal menyimpan barcode: ${e.message}",
-                    Resi = barcode,
-                    timestamp = System.currentTimeMillis()
-                )
-            }
+        } catch (e: Exception) {
+            Log.e(TAG, "❌ Error processing barcode: ${e.message}")
+            _scanResult.value = ScanResult(
+                status = "error",
+                message = "Gagal menyimpan barcode: ${e.message}",
+                Resi = barcode,
+                timestamp = System.currentTimeMillis()
+            )
         }
     }
     

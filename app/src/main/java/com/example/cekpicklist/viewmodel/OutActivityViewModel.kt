@@ -26,6 +26,9 @@ class OutActivityViewModel(application: Application) : AndroidViewModel(applicat
     
     private val _submitSuccess = MutableLiveData<Boolean>()
     val submitSuccess: LiveData<Boolean> = _submitSuccess
+
+    private val _currentNotrans = MutableLiveData<String>()
+    val currentNotrans: LiveData<String> = _currentNotrans
     
     private val scannedItemsList = mutableListOf<OutActivityItem>()
     
@@ -122,6 +125,18 @@ class OutActivityViewModel(application: Application) : AndroidViewModel(applicat
             } catch (e: Exception) {
                 Logger.PicklistInput.e("Error submitting out activity: ${e.message}")
                 _errorMessage.value = "Error: ${e.message}"
+            }
+        }
+    }
+
+    fun loadNextNotrans() {
+        viewModelScope.launch {
+            try {
+                val next = repository.fetchNextNotrans()
+                _currentNotrans.value = next
+            } catch (e: Exception) {
+                Log.e(TAG, "Error loading next notrans: ${e.message}")
+                _errorMessage.value = "Gagal memuat nomor transaksi: ${e.message}"
             }
         }
     }

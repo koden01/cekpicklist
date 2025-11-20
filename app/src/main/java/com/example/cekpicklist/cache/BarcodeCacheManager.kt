@@ -632,38 +632,23 @@ object BarcodeCacheManager {
                     val type = object : TypeToken<Map<String, BarcodeSupabaseService.BarcodeSessionRecord>>() {}.type
                     val loadedExpedisi = gson.fromJson<Map<String, BarcodeSupabaseService.BarcodeSessionRecord>>(expedisiJson, type)
                     if (loadedExpedisi != null) {
-                        // Filter hanya flag="NO" dan dalam window 7 hari
+                        // **PERBAIKAN**: Expedisi cache menyimpan SEMUA flag="NO" tanpa filter tanggal
+                        // Filter hanya flag="NO" (tidak ada filter tanggal)
                         loadedExpedisi.forEach { (resino, record) ->
                             if (record.flag.uppercase() == "NO") {
-                                // Check created date jika ada
-                                val shouldKeep = if (record.created != null && record.created.isNotEmpty()) {
-                                    try {
-                                        val datePart = if (record.created.length >= 10) record.created.substring(0, 10) else record.created
-                                        val recordDate = java.time.LocalDate.parse(datePart)
-                                        val todayUtc = java.time.Instant.now().atZone(java.time.ZoneOffset.UTC).toLocalDate()
-                                        val sevenDaysWindowStart = todayUtc.minusDays(6)
-                                        !recordDate.isBefore(sevenDaysWindowStart)
-                                    } catch (e: Exception) {
-                                        true // Keep jika tidak bisa parse
-                                    }
-                                } else {
-                                    true // Keep jika tidak ada created date
-                                }
+                                // **TIDAK ADA FILTER TANGGAL**: Simpan semua flag="NO" tanpa peduli tanggalnya
+                                val normalizedResino = resino.trim().uppercase()
+                                processedResinoSet.add(normalizedResino)
+                                expedisiRecordsCache[normalizedResino] = record
                                 
-                                if (shouldKeep) {
-                                    val normalizedResino = resino.trim().uppercase()
-                                    processedResinoSet.add(normalizedResino)
-                                    expedisiRecordsCache[normalizedResino] = record
-                                    
-                                    record.orderno?.let { orderno ->
-                                        if (orderno.isNotEmpty()) {
-                                            expedisiByOrdernoCache[orderno.trim()] = record
-                                        }
+                                record.orderno?.let { orderno ->
+                                    if (orderno.isNotEmpty()) {
+                                        expedisiByOrdernoCache[orderno.trim()] = record
                                     }
                                 }
                             }
                         }
-                        Log.d(TAG, "✅ Loaded ${expedisiRecordsCache.size} expedisi records from storage (filtered to 7 days)")
+                        Log.d(TAG, "✅ Loaded ${expedisiRecordsCache.size} expedisi records from storage (flag=NO only, no date filter)")
                     }
                 }
                 
@@ -739,10 +724,9 @@ object BarcodeCacheManager {
                 val todayUtc = java.time.Instant.now().atZone(java.time.ZoneOffset.UTC).toLocalDate()
                 val sevenDaysWindowStart = todayUtc.minusDays(6) // termasuk hari ini
                 
-                Log.d(TAG, "🧹 [CLEANUP] Starting cleanup for data older than 7 days...")
+                Log.d(TAG, "🧹 [CLEANUP] Starting cleanup for resi data older than 7 days (expedisi tidak di-cleanup berdasarkan tanggal)...")
                 
                 var cleanedResiCount = 0
-                var cleanedExpedisiCount = 0
                 
                 // Cleanup resi records > 7 hari
                 val resiToRemove = mutableListOf<String>()
@@ -758,48 +742,21 @@ object BarcodeCacheManager {
                     cleanedResiCount++
                 }
                 
-                // Cleanup expedisi records > 7 hari
-                val expedisiToRemove = mutableListOf<String>()
-                expedisiRecordsCache.forEach { (resino, record) ->
-                    // Check created date jika ada, atau skip jika tidak ada
-                    val recordDate = try {
-                        if (record.created != null && record.created.isNotEmpty()) {
-                            val datePart = if (record.created.length >= 10) record.created.substring(0, 10) else record.created
-                            java.time.LocalDate.parse(datePart)
-                        } else {
-                            null
-                        }
-                    } catch (e: Exception) {
-                        null
-                    }
-                    
-                    if (recordDate != null && recordDate.isBefore(sevenDaysWindowStart)) {
-                        expedisiToRemove.add(resino)
-                    }
-                }
-                
-                expedisiToRemove.forEach { resino ->
-                    val record = expedisiRecordsCache.remove(resino)
-                    processedResinoSet.remove(resino)
-                    
-                    // Remove dari orderno cache juga
-                    record?.orderno?.let { orderno ->
-                        expedisiByOrdernoCache.remove(orderno.trim())
-                    }
-                    
-                    cleanedExpedisiCount++
-                }
+                // **PERBAIKAN**: Expedisi cache TIDAK di-cleanup berdasarkan tanggal
+                // Expedisi hanya dihapus saat flag berubah menjadi "YES" (dilakukan saat sync)
+                // Cache expedisi menyimpan SEMUA flag="NO" tanpa filter tanggal
+                // Tidak perlu cleanup expedisi berdasarkan tanggal
                 
                 // Update last cleanup time
                 lastCleanupTime = now
                 
                 // Save ke persistent storage jika ada data yang dihapus
-                if (cleanedResiCount > 0 || cleanedExpedisiCount > 0) {
+                if (cleanedResiCount > 0) {
                     CoroutineScope(Dispatchers.IO).launch {
                         saveCacheToStorage()
                     }
                     
-                    Log.d(TAG, "✅ [CLEANUP] Cleaned up $cleanedResiCount resi records and $cleanedExpedisiCount expedisi records older than 7 days")
+                    Log.d(TAG, "✅ [CLEANUP] Cleaned up $cleanedResiCount resi records older than 7 days (expedisi tidak di-cleanup berdasarkan tanggal, hanya berdasarkan flag)")
                 } else {
                     Log.d(TAG, "✅ [CLEANUP] No old data to clean up (all data within 7 days)")
                 }

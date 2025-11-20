@@ -2,6 +2,7 @@ package com.example.cekpicklist.api
 
 import android.util.Log
 import com.example.cekpicklist.data.PicklistItem
+import com.example.cekpicklist.data.OutActivityItem
 import com.example.cekpicklist.config.SupabaseConfig
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
@@ -961,6 +962,121 @@ class SupabaseService {
         } catch (e: Exception) {
             Log.e("SupabaseService", "❌ Error saving picklist scan: ${e.message}", e)
             false
+        }
+    }
+
+    suspend fun saveOutActivityScans(notrans: String, items: List<OutActivityItem>): Boolean = withContext(Dispatchers.IO) {
+        if (items.isEmpty()) return@withContext true
+        try {
+            return@withContext retryOnNetworkError("saveOutActivityScans") {
+                val insertUrl = "$supabaseUrl/rest/v1/picklist_scan"
+                val jsonArray = org.json.JSONArray()
+
+                items.forEach { item ->
+                    val jsonObject = org.json.JSONObject().apply {
+                        put("no_picklist", notrans)
+                        put("notrans", notrans)
+                        put("product_id", item.productId)
+                        put("article_id", item.articleId)
+                        put("article_name", item.articleName)
+                        put("size", item.size)
+                        put("epc", item.epc)
+                        put("brand", item.brand)
+                        put("category", item.category)
+                        put("sub_category", item.subCategory)
+                        put("color", item.color)
+                        put("gender", item.gender)
+                        put("warehouse", item.warehouse)
+                        put("tag_status", item.tagStatus)
+                        put("created_at", getCurrentTimestamp())
+                    }
+                    jsonArray.put(jsonObject)
+                }
+
+                val url = URL(insertUrl)
+                val connection = setupConnection(url)
+                connection.requestMethod = "POST"
+                connection.setRequestProperty("apikey", supabaseKey)
+                connection.setRequestProperty("Authorization", "Bearer $supabaseKey")
+                connection.setRequestProperty("Content-Type", "application/json")
+                connection.setRequestProperty("Prefer", "return=minimal")
+                connection.doOutput = true
+
+                val writer = OutputStreamWriter(connection.outputStream)
+                writer.write(jsonArray.toString())
+                writer.flush()
+                writer.close()
+
+                val responseCode = connection.responseCode
+                val success = responseCode == HttpURLConnection.HTTP_CREATED || responseCode == HttpURLConnection.HTTP_OK
+                if (!success) {
+                    val errorResponse = connection.errorStream?.bufferedReader()?.use { it.readText() } ?: "No error body"
+                    Log.e("SupabaseService", "❌ Failed to save out activity scans: HTTP $responseCode, body=$errorResponse")
+                } else {
+                    Log.d("SupabaseService", "✅ Saved ${items.size} out activity scans with notrans=$notrans")
+                }
+                success
+            }
+        } catch (e: Exception) {
+            Log.e("SupabaseService", "❌ Error saving out activity scans: ${e.message}", e)
+            false
+        }
+    }
+
+    suspend fun getNextOutTransactionId(dateString: String): String = withContext(Dispatchers.IO) {
+        retryOnNetworkError("getNextOutTransactionId") {
+            val latest = fetchLatestOutTransactionId(dateString)
+            val nextSequence = (latest?.let { extractOutSequence(it) } ?: 0) + 1
+            buildOutNotrans(nextSequence, dateString)
+        }
+    }
+
+    private fun buildOutNotrans(sequence: Int, dateString: String): String {
+        return "OUT${String.format("%02d", sequence)}$dateString"
+    }
+
+    private fun extractOutSequence(notrans: String): Int {
+        return try {
+            val datePartLength = 8
+            if (!notrans.startsWith("OUT") || notrans.length <= 3 + datePartLength) return 0
+            val numberPart = notrans.substring(3, notrans.length - datePartLength)
+            numberPart.toIntOrNull() ?: 0
+        } catch (_: Exception) {
+            0
+        }
+    }
+
+    private fun fetchLatestOutTransactionId(dateString: String): String? {
+        return try {
+            val todayIso = getTodayDate()
+            val pattern = URLEncoder.encode("OUT*$dateString", "UTF-8")
+            val queryUrl = "$supabaseUrl/rest/v1/picklist_scan?select=no_picklist&no_picklist=like.$pattern&created_at=gte.$todayIso&order=created_at.desc&limit=1"
+            val url = URL(queryUrl)
+            val connection = setupConnection(url)
+            connection.requestMethod = "GET"
+            connection.setRequestProperty("apikey", supabaseKey)
+            connection.setRequestProperty("Authorization", "Bearer $supabaseKey")
+            connection.setRequestProperty("Content-Type", "application/json")
+
+            val responseCode = connection.responseCode
+            if (responseCode == HttpURLConnection.HTTP_OK) {
+                val response = connection.inputStream.bufferedReader().use { it.readText() }
+                val jsonArray = org.json.JSONArray(response)
+                if (jsonArray.length() > 0) {
+                    val latest = jsonArray.getJSONObject(0).optString("no_picklist", null)
+                    Log.d("SupabaseService", "✅ Latest OUT notrans from Supabase: $latest")
+                    latest
+                } else {
+                    null
+                }
+            } else {
+                val errorBody = connection.errorStream?.bufferedReader()?.use { it.readText() }
+                Log.e("SupabaseService", "❌ Failed to fetch latest OUT notrans: HTTP $responseCode, body=$errorBody")
+                null
+            }
+        } catch (e: Exception) {
+            Log.e("SupabaseService", "❌ Error fetching latest OUT notrans: ${e.message}", e)
+            null
         }
     }
     

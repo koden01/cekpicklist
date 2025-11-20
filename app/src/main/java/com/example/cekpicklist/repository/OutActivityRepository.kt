@@ -1,66 +1,47 @@
 package com.example.cekpicklist.repository
 
 import android.app.Application
-import android.util.Log
-import com.example.cekpicklist.api.SupabaseService
+import android.content.Context
 import com.example.cekpicklist.api.NirwanaApiService
+import com.example.cekpicklist.api.SupabaseService
 import com.example.cekpicklist.data.RelocationUpdateRequest
 import com.example.cekpicklist.data.OutActivityItem
 import com.example.cekpicklist.utils.Logger
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
+import java.text.SimpleDateFormat
+import java.util.Date
+import java.util.Locale
 
 class OutActivityRepository(application: Application) {
     
-    private val supabaseService = SupabaseService()
     private val nirwanaApiService = NirwanaApiService()
-    
-    companion object {
-        private const val TAG = "OutActivityRepository"
-    }
+    private val supabaseService = SupabaseService()
+    private val appContext = application.applicationContext
+    private val prefs = appContext.getSharedPreferences("out_activity", Context.MODE_PRIVATE)
     
     /**
      * Submit out activity to database
      */
     suspend fun submitOutActivity(notrans: String, items: List<OutActivityItem>): Boolean = withContext(Dispatchers.IO) {
         try {
-            Logger.PicklistInput.d("Submitting out activity with ${items.size} items, notrans: $notrans")
+            Logger.PicklistInput.d("Submitting out activity (SOLD only) with ${items.size} items, notrans: $notrans")
             
-            // TIDAK menulis ke Room sebagai sumber utama; semua write diarahkan ke Supabase.
-            // Jika ingin cache lokal, bisa diaktifkan kembali dengan memasukkan hasil ke picklist_scan.
-            
-            // Submit langsung ke Supabase (source of truth)
-            var allSuccess = true
-            for (item in items) {
-                val success = supabaseService.savePicklistScan(
-                    picklistNo = notrans,
-                    articleId = item.articleId,
-                    epc = item.epc,
-                    productId = item.productId,
-                    articleName = item.articleName,
-                    size = item.size,
-                    notrans = notrans
-                )
-                
-                if (!success) {
-                    Logger.PicklistInput.e("Failed to save item to Supabase: ${item.epc}")
-                    allSuccess = false
-                }
+            val supabaseSaved = supabaseService.saveOutActivityScans(notrans, items)
+            if (!supabaseSaved) {
+                Logger.PicklistInput.e("Failed to save out activity to Supabase")
+                return@withContext false
             }
-            
-            if (allSuccess) {
-                Logger.PicklistInput.d("Successfully submitted out activity to Supabase")
-            } else {
-                Logger.PicklistInput.w("Some items failed to submit to Supabase")
-            }
-            
-            // Setelah submit ke database, update tag status ke SOLD per-warehouse
+
+            incrementTransactionCounterForToday()
+
+            // Setelah submit, langsung update tag status ke SOLD per-warehouse
             val soldPosted = updateTagStatusSold(items)
             if (!soldPosted) {
                 Logger.PicklistInput.w("Posting SOLD tag status returned partial/false result")
             }
 
-            allSuccess && soldPosted
+            supabaseSaved && soldPosted
             
         } catch (e: Exception) {
             Logger.PicklistInput.e("Error submitting out activity: ${e.message}")
@@ -144,5 +125,60 @@ class OutActivityRepository(application: Application) {
             Logger.PicklistInput.e("Error posting SOLD tag status: ${e.message}", e)
             false
         }
+    }
+
+    suspend fun fetchNextNotrans(): String = withContext(Dispatchers.IO) {
+        val dateStr = SimpleDateFormat("ddMMyyyy", Locale.getDefault()).format(Date())
+        try {
+            val nextNotrans = supabaseService.getNextOutTransactionId(dateStr)
+            val sequence = extractSequence(nextNotrans)
+            cacheTransactionNumberForToday(sequence)
+            Logger.PicklistInput.d("Next OUT notrans from Supabase: $nextNotrans (seq=$sequence)")
+            nextNotrans
+        } catch (e: Exception) {
+            Logger.PicklistInput.e("Failed to fetch next notrans from Supabase: ${e.message}")
+            val localNumber = getCurrentTransactionNumberForToday()
+            val fallback = buildNotrans(localNumber, dateStr)
+            Logger.PicklistInput.w("Using local fallback notrans: $fallback")
+            fallback
+        }
+    }
+
+    private fun buildNotrans(number: Int, dateStr: String): String {
+        return "OUT${String.format("%02d", number)}$dateStr"
+    }
+
+    private fun extractSequence(notrans: String): Int {
+        val datePartLength = 8
+        return try {
+            if (!notrans.startsWith("OUT") || notrans.length <= 3 + datePartLength) return 0
+            val numberPart = notrans.substring(3, notrans.length - datePartLength)
+            numberPart.toIntOrNull() ?: 0
+        } catch (_: Exception) {
+            0
+        }
+    }
+
+    private fun getCurrentTransactionNumberForToday(): Int {
+        val today = SimpleDateFormat("yyyyMMdd", Locale.getDefault()).format(Date())
+        val lastDate = prefs.getString("last_date", null)
+        val lastCount = prefs.getInt("transaction_count", 0)
+        return if (lastDate == today && lastCount > 0) lastCount else 1
+    }
+
+    private fun incrementTransactionCounterForToday() {
+        val today = SimpleDateFormat("yyyyMMdd", Locale.getDefault()).format(Date())
+        val lastDate = prefs.getString("last_date", null)
+        val lastCount = prefs.getInt("transaction_count", 0)
+        if (lastDate == today) {
+            prefs.edit().putInt("transaction_count", if (lastCount > 0) lastCount + 1 else 2).apply()
+        } else {
+            prefs.edit().putString("last_date", today).putInt("transaction_count", 2).apply()
+        }
+    }
+
+    private fun cacheTransactionNumberForToday(nextNumber: Int) {
+        val today = SimpleDateFormat("yyyyMMdd", Locale.getDefault()).format(Date())
+        prefs.edit().putString("last_date", today).putInt("transaction_count", nextNumber).apply()
     }
 }

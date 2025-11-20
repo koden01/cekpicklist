@@ -8,8 +8,8 @@ import android.util.Log
 import android.view.KeyEvent
 import android.view.View
 import android.widget.Toast
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.activity.viewModels
-import androidx.appcompat.app.AppCompatActivity
 import com.example.cekpicklist.base.BaseRfidActivity
 import androidx.lifecycle.Observer
 import com.example.cekpicklist.utils.LoadingAnimationHelper
@@ -29,60 +29,80 @@ class RelocationActivity : BaseRfidActivity() {
     companion object {
         private const val TAG = "RelocationActivity"
     }
-    
+
     private lateinit var binding: ActivityRelocationBinding
     private val viewModel: RelocationViewModel by viewModels()
     private lateinit var relocationAdapter: RelocationAdapter
-    
+    private var resumeScanningAfterLocation = false
+    private val relocationDefaultPowerLevel = 25
+    private val relocationDefaultRssiThreshold = -80
+    private val locationActivityLauncher = registerForActivityResult(
+        ActivityResultContracts.StartActivityForResult()
+    ) {
+        Log.d(TAG, "🔙 Kembali dari LocationDemoActivity: resultCode=${it.resultCode}")
+        ensureRelocationPreferredSettings()
+        applySettingsFromSharedPreferences()
+        if (resumeScanningAfterLocation && !isRfidScanning()) {
+            Log.d(TAG, "🔄 Melanjutkan scanning otomatis setelah kembali ke Relocation")
+            startRfidScanning()
+        }
+        resumeScanningAfterLocation = false
+        // Pastikan Handler untuk update UI dijalankan jika diperlukan
+        Handler(Looper.getMainLooper()).post {
+            verifyRfidSettings()
+        }
+    }
+
     // RFID handled by BaseRfidActivity/RfidScanManager
-    
+
     // Cooldown untuk tombol scan (sama seperti MainActivity)
     private var lastScanButtonClickTime = 0L
     private val SCAN_BUTTON_COOLDOWN_MS = 2000L // 2 detik cooldown
-    
+
     // Beep sound handled by BaseRfidActivity
-    
+
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         binding = ActivityRelocationBinding.inflate(layoutInflater)
         setContentView(binding.root)
-        
+
         setupToolbar()
         setupRecyclerView()
         setupWarehouseDropdowns()
         setupObservers()
         setupClickListeners()
         // Beep sound handled by BaseRfidActivity
-        
+
         // Apply RFID settings from SharedPreferences
         applySettingsFromSharedPreferences()
-        
+        ensureRelocationPreferredSettings()
+
         // **VERIFIKASI SETTINGS**: Log settings yang diterapkan
         verifyRfidSettings()
-        
+
         Log.d(TAG, "🔥 RelocationActivity created")
 
         // Fetch warehouses sudah dipanggil di init ViewModel; tidak perlu dipanggil lagi di sini
     }
-    
+
     private fun setupToolbar() {
         setSupportActionBar(binding.toolbar)
         supportActionBar?.setDisplayHomeAsUpEnabled(true)
         supportActionBar?.setDisplayShowHomeEnabled(true)
-        
+
         binding.toolbar.setNavigationOnClickListener {
             onBackPressed()
         }
     }
-    
-    
+
+
     override fun onCreateOptionsMenu(menu: android.view.Menu?): Boolean {
         Log.d(TAG, "🔥 onCreateOptionsMenu called")
         menuInflater.inflate(R.menu.relocation_menu, menu)
         Log.d(TAG, "🔥 Menu inflated: ${menu?.size()} items")
         return true
     }
-    
+
     override fun onOptionsItemSelected(item: android.view.MenuItem): Boolean {
         return when (item.itemId) {
             R.id.action_settings -> {
@@ -93,30 +113,36 @@ class RelocationActivity : BaseRfidActivity() {
             else -> super.onOptionsItemSelected(item)
         }
     }
-    
+
     private fun navigateToSettings() {
         Log.d(TAG, "🔥 Navigasi ke SettingsActivity")
         val intent = Intent(this, SettingsActivity::class.java)
         startActivity(intent)
     }
-    
+
     private fun setupRecyclerView() {
         relocationAdapter = RelocationAdapter(onItemClick = { item ->
             if (item.isValid) {
-                showEpcSelectionDialog(item.articleName, item.size)
+                showEpcSelectionDialog(item)
+            } else {
+                showInvalidEpcList(item)
             }
         })
-        
+
         binding.rvRelocationItems.apply {
             layoutManager = LinearLayoutManager(this@RelocationActivity)
             adapter = relocationAdapter
         }
     }
-    
-    private fun showEpcSelectionDialog(articleName: String, size: String) {
+
+    private fun showEpcSelectionDialog(item: RelocationItem) {
+        val articleName = item.articleName
+        val size = item.size
         val items = viewModel.relocationItems.value ?: emptyList()
         val epcs = items.filter { it.isValid && it.articleName.equals(articleName, true) && it.size.equals(size, true) }
-            .map { it.epc }
+            .flatMap { it.epc.split(',') }
+            .map { it.trim() }
+            .filter { it.isNotEmpty() }
             .distinct()
         if (epcs.isEmpty()) {
             androidx.appcompat.app.AlertDialog.Builder(this)
@@ -133,14 +159,83 @@ class RelocationActivity : BaseRfidActivity() {
                 val selected = arr[which]
                 val cm = getSystemService(android.content.Context.CLIPBOARD_SERVICE) as android.content.ClipboardManager
                 cm.setPrimaryClip(android.content.ClipData.newPlainText("EPC", selected))
-                val intent = android.content.Intent(this, LocationDemoActivity::class.java)
-                intent.putExtra("target_epc", selected)
-                startActivity(intent)
+                navigateToLocationDemo(selected)
             }
             .setNegativeButton("Batal", null)
             .show()
     }
-    
+
+    private fun showInvalidEpcList(item: RelocationItem) {
+        val epcs = item.epc
+            .split(',')
+            .map { it.trim() }
+            .filter { it.isNotEmpty() }
+            .distinct()
+
+        if (epcs.isEmpty()) {
+            androidx.appcompat.app.AlertDialog.Builder(this)
+                .setTitle("RFID Tidak Tersedia")
+                .setMessage("Tidak ada RFID tercatat untuk data ini.")
+                .setPositiveButton("OK", null)
+                .show()
+            return
+        }
+
+        val titleWarehouse = item.warehouse.ifBlank { "Unknown Warehouse" }
+        val titleTagStatus = item.tagStatus.ifBlank { "Unknown Status" }
+        val arr = epcs.toTypedArray()
+
+        androidx.appcompat.app.AlertDialog.Builder(this)
+            .setTitle("RFID $titleWarehouse ($titleTagStatus)")
+            .setItems(arr) { _, which ->
+                val selected = arr[which]
+                val cm = getSystemService(android.content.Context.CLIPBOARD_SERVICE) as android.content.ClipboardManager
+                cm.setPrimaryClip(android.content.ClipData.newPlainText("EPC", selected))
+                Log.d(TAG, "📋 RFID invalid disalin: $selected")
+                navigateToLocationDemo(selected)
+            }
+            .setNegativeButton("Tutup", null)
+            .show()
+    }
+
+    private fun navigateToLocationDemo(epc: String) {
+        ensureRelocationPreferredSettings()
+        resumeScanningAfterLocation = isRfidScanning()
+        if (resumeScanningAfterLocation) {
+            Log.d(TAG, "⏸️ Menghentikan scanning sebelum membuka LocationDemoActivity")
+            cancelGracePeriod()
+            stopRfidScanning()
+        }
+        val intent = Intent(this, LocationDemoActivity::class.java)
+        intent.putExtra("target_epc", epc)
+        locationActivityLauncher.launch(intent)
+    }
+
+    private fun ensureRelocationPreferredSettings() {
+        val sharedPrefs = getSharedPreferences("RFIDSettings", MODE_PRIVATE)
+        val currentPower = sharedPrefs.getInt("power_level", relocationDefaultPowerLevel)
+        val currentRssi = sharedPrefs.getInt("rssi_threshold", relocationDefaultRssiThreshold)
+
+        val adjustedPower = if (currentPower <= 1) relocationDefaultPowerLevel else currentPower
+        val adjustedRssi = if (currentRssi > relocationDefaultRssiThreshold) relocationDefaultRssiThreshold else currentRssi
+
+        if (adjustedPower != currentPower || adjustedRssi != currentRssi) {
+            sharedPrefs.edit()
+                .putInt("power_level", adjustedPower)
+                .putInt("rssi_threshold", adjustedRssi)
+                .apply()
+            Log.d(TAG, "🔧 SharedPreferences disesuaikan untuk Relocation: power=$adjustedPower, rssi=$adjustedRssi")
+        }
+
+        val currentSettings = rfidScanManager.getSettings()
+        if (currentSettings.powerLevel != adjustedPower || currentSettings.rssiThreshold != adjustedRssi) {
+            Log.d(TAG, "🔧 Menyetel ulang power untuk Relocation: power=$adjustedPower, rssi=$adjustedRssi")
+            rfidScanManager.setCustomPower(adjustedPower, adjustedRssi)
+        } else {
+            Log.d(TAG, "✅ Relocation sudah memakai power yang sesuai: power=$adjustedPower, rssi=$adjustedRssi")
+        }
+    }
+
     private fun setupWarehouseDropdowns() {
         // Setup current location modal selection
         binding.actvCurrentLocation.apply {
@@ -150,7 +245,7 @@ class RelocationActivity : BaseRfidActivity() {
                     setText(selectedWarehouse.warehouseName, false)
                     viewModel.setSelectedCurrentWarehouse(selectedWarehouse)
                     Log.d(TAG, "🔥 Current warehouse selected: ${selectedWarehouse.warehouseName}")
-                    
+
                     // **AUTO-REFRESH**: Refresh listbox saat warehouse berubah
                     refreshListboxData()
                 }
@@ -158,7 +253,7 @@ class RelocationActivity : BaseRfidActivity() {
             }
             // Remove focus listener - we only want click
         }
-        
+
         // Setup target location modal selection
         binding.actvTargetLocation.apply {
             // Remove adapter setup - we'll use modal instead
@@ -167,7 +262,7 @@ class RelocationActivity : BaseRfidActivity() {
                     setText(selectedWarehouse.warehouseName, false)
                     viewModel.setSelectedTargetWarehouse(selectedWarehouse)
                     Log.d(TAG, "🔥 Target warehouse selected: ${selectedWarehouse.warehouseName}")
-                    
+
                     // **NO AUTO-REFRESH**: Target location tidak perlu refresh listbox
                     // refreshListboxData() // Disabled untuk target location
                 }
@@ -176,11 +271,11 @@ class RelocationActivity : BaseRfidActivity() {
             // Remove focus listener - we only want click
         }
     }
-    
+
     private fun showWarehouseSelectionModal(title: String, onWarehouseSelected: (Warehouse) -> Unit) {
         val cachedWarehouses = viewModel.getCachedWarehouses()
         Log.d("RelocationActivity", "🔥 Cached warehouses: ${cachedWarehouses?.size ?: 0}")
-        
+
         if (cachedWarehouses != null && cachedWarehouses.isNotEmpty()) {
             Log.d("RelocationActivity", "🔥 Using cached warehouses: ${cachedWarehouses.size}")
             WarehouseSelectionDialog(this, cachedWarehouses, onWarehouseSelected).show()
@@ -198,39 +293,39 @@ class RelocationActivity : BaseRfidActivity() {
             }
         }
     }
-    
+
     private fun setupObservers() {
         // Jangan clear EPC list setelah submit; biarkan untuk relokasi ulang
         viewModel.setOnRfidScanManagerClear {
             Log.d(TAG, "ℹ️ Submit completed - keeping EPC list for further relocation lookups")
         }
-        
+
         // RFID Detection Count - Hanya update UI, tidak auto lookup
         viewModel.rfidDetectionCount.observe(this, Observer { count ->
             binding.tvRfidDetected.text = count.toString()
             Log.d(TAG, "🔥 RFID detected count updated: $count")
         })
-        
+
         // RFID Valid Count
         viewModel.rfidValidCount.observe(this, Observer { count ->
             binding.tvRfidValid.text = count.toString()
         })
-        
+
         // RFID NA Count
         viewModel.rfidNaCount.observe(this, Observer { count ->
             binding.tvRfidNa.text = count.toString()
         })
-        
+
         // Relocation Items
         viewModel.relocationItems.observe(this, Observer { items ->
             relocationAdapter.updateItems(items)
         })
-        
+
         // Warehouses - Cache is handled automatically by ViewModel
         viewModel.warehouses.observe(this, Observer { warehouses ->
             Log.d(TAG, "🔥 Warehouses loaded: ${warehouses.size} warehouses")
         })
-        
+
         // Selected Current Warehouse - refresh tampilan berdasarkan cache lokal
         viewModel.selectedCurrentWarehouse.observe(this, Observer { warehouse ->
             if (warehouse != null) {
@@ -245,14 +340,14 @@ class RelocationActivity : BaseRfidActivity() {
                 }
             }
         })
-        
+
         // Selected Target Warehouse - no-op (tidak memicu refresh atau loading)
         viewModel.selectedTargetWarehouse.observe(this, Observer { warehouse ->
             if (warehouse != null) {
                 Log.d(TAG, "ℹ️ Target warehouse changed (no-op): ${warehouse.warehouseName}")
             }
         })
-        
+
         // Selected Tag Status - refresh tampilan berdasarkan cache lokal
         viewModel.selectedTagStatus.observe(this, Observer { tagStatus ->
             if (tagStatus != null) {
@@ -272,14 +367,14 @@ class RelocationActivity : BaseRfidActivity() {
                 }
             }
         })
-        
+
         // Loading State - Show loading animation seperti SwipeRefreshLayout
         viewModel.isLoading.observe(this, Observer { isLoading ->
             if (isLoading) {
                 LoadingAnimationHelper.showLoadingToast(this, "Processing...", Toast.LENGTH_SHORT)
             }
         })
-        
+
         // Error Message
         viewModel.errorMessage.observe(this, Observer { message ->
             if (message != null) {
@@ -287,7 +382,7 @@ class RelocationActivity : BaseRfidActivity() {
                 Log.e(TAG, "❌ Error: $message")
             }
         })
-        
+
         // Success Message
         viewModel.successMessage.observe(this, Observer { message ->
             if (message != null) {
@@ -296,15 +391,15 @@ class RelocationActivity : BaseRfidActivity() {
             }
         })
     }
-    
+
     private fun setupClickListeners() {
         // Set default Tag Status to TAGGED for both current and target
         binding.rbTagged.isChecked = true
         binding.rbTargetTagged.isChecked = true
-        
+
         // Initialize ViewModel dengan default tag status
         viewModel.setSelectedTagStatus(TagStatus.TAGGED)
-        
+
         // Radio Group for Current Tag Status - trigger lookup
         binding.rgTagStatus.setOnCheckedChangeListener { _, checkedId ->
             val tagStatus = when (checkedId) {
@@ -315,11 +410,11 @@ class RelocationActivity : BaseRfidActivity() {
             Log.d(TAG, "🔥 Current tag status changed to: $tagStatus")
             // Update ViewModel untuk trigger observer
             viewModel.setSelectedTagStatus(tagStatus)
-            
+
             // **AUTO-REFRESH**: Refresh listbox saat radio current location berubah
             refreshListboxData()
         }
-        
+
         // Radio Group for Target Tag Status - hanya untuk submit; tidak memicu filter/refresh
         binding.rgTargetTagStatus.setOnCheckedChangeListener { _, checkedId ->
             val tagStatus = when (checkedId) {
@@ -330,60 +425,60 @@ class RelocationActivity : BaseRfidActivity() {
             Log.d(TAG, "🔥 Target tag status changed to: $tagStatus")
             // No-op: jangan update selectedTagStatus (filter current)
         }
-        
+
         // Scan Button - Toggle scanning
         binding.btnScan.setOnClickListener {
             toggleScanning()
         }
-        
+
         // Submit Button
         binding.btnSubmit.setOnClickListener {
             performSubmit()
         }
-        
+
         // Clear All Button
         binding.btnClear.setOnClickListener {
             clearAllRfids()
         }
     }
-    
+
     /**
      * Refresh listbox data saat warehouse atau radio current location berubah
      */
     private fun refreshListboxData() {
         Log.d(TAG, "🔄 Refreshing listbox data due to warehouse/radio change")
-        
+
         // Trigger re-lookup dengan parameter yang sudah dipilih
         val currentWarehouse = viewModel.getSelectedCurrentWarehouse()
         val tagStatus = viewModel.getSelectedTagStatus()
-        
+
         if (currentWarehouse != null && tagStatus != null) {
             Log.d(TAG, "🔄 Auto-refresh: Current warehouse=${currentWarehouse.warehouseName}, Tag status=$tagStatus")
-            
+
             // Trigger lookup dengan parameter yang sudah dipilih
             viewModel.performLookupWithCurrentSettings()
         } else {
             Log.d(TAG, "🔄 Auto-refresh skipped: Missing warehouse or tag status")
         }
     }
-    
+
     private fun performManualLookup() {
         val tagStatus = viewModel.getSelectedTagStatus()
-        
+
         if (tagStatus == null) {
             Log.d(TAG, "⚠️ Manual lookup skipped - no tag status selected")
             return
         }
-        
+
         if (viewModel.getScannedRfids().isEmpty()) {
             Log.d(TAG, "⚠️ Manual lookup skipped - no RFIDs scanned")
             return
         }
-        
+
         Log.d(TAG, "🔥 Performing manual lookup using RfidScanManager results...")
         Log.d(TAG, "🔥 Tag Status: $tagStatus")
         Log.d(TAG, "🔥 RFIDs: ${viewModel.getScannedRfids()}")
-        
+
         // Konsumsi hasil lookup yang sudah ada di RfidScanManager
         try {
             val localResults = rfidScanManager.getAllLookupResults()
@@ -393,30 +488,30 @@ class RelocationActivity : BaseRfidActivity() {
             Log.e(TAG, "❌ Error in manual lookup: ${e.message}")
         }
     }
-    
+
     private fun performSubmit() {
         val targetTagStatus = getSelectedTargetTagStatus()
-        
+
         if (targetTagStatus == null) {
             Toast.makeText(this, "Pilih target tag status", Toast.LENGTH_SHORT).show()
             return
         }
-        
+
         if (viewModel.getValidRfids().isEmpty()) {
             Toast.makeText(this, "Tidak ada RFID valid untuk di-submit", Toast.LENGTH_SHORT).show()
             return
         }
-        
+
         val targetWarehouseId = viewModel.getSelectedTargetWarehouseId()
         if (targetWarehouseId.isNullOrEmpty()) {
             Toast.makeText(this, "Pilih target location", Toast.LENGTH_SHORT).show()
             return
         }
-        
+
         // Tampilkan dialog konfirmasi sebelum submit
         showSubmitConfirmationDialog(targetTagStatus, targetWarehouseId)
     }
-    
+
     /**
      * Tampilkan dialog konfirmasi untuk submit relocation
      */
@@ -425,13 +520,13 @@ class RelocationActivity : BaseRfidActivity() {
         val currentWarehouse = viewModel.getSelectedCurrentWarehouse()
         val targetWarehouse = viewModel.getSelectedTargetWarehouse()
         val currentTagStatus = getSelectedTagStatus()
-        
+
         val currentWarehouseName = currentWarehouse?.warehouseName ?: "Unknown"
         val targetWarehouseName = targetWarehouse?.warehouseName ?: "Unknown"
         val currentTagStatusText = currentTagStatus?.value ?: "Unknown"
         val targetTagStatusText = targetTagStatus.value
         val validRfidCount = viewModel.getValidRfids().size
-        
+
         val message = """
             Apakah Anda akan memindahkan $validRfidCount dari:
             
@@ -445,7 +540,7 @@ class RelocationActivity : BaseRfidActivity() {
             
        
         """.trimIndent()
-        
+
         androidx.appcompat.app.AlertDialog.Builder(this)
             .setTitle("Konfirmasi Relocation")
             .setMessage(message)
@@ -455,14 +550,14 @@ class RelocationActivity : BaseRfidActivity() {
                 Log.d(TAG, "🔥 Target Tag Status: $targetTagStatus")
                 Log.d(TAG, "🔥 Target Warehouse: $targetWarehouseId")
                 Log.d(TAG, "🔥 Valid RFIDs: ${viewModel.getValidRfids()}")
-                
+
                 viewModel.submitRelocation(targetTagStatus.value)
             }
             .setNegativeButton("Batal", null)
             .setIcon(android.R.drawable.ic_dialog_alert)
             .show()
     }
-    
+
     private fun getSelectedTagStatus(): TagStatus? {
         return when (binding.rgTagStatus.checkedRadioButtonId) {
             R.id.rbTagged -> TagStatus.TAGGED
@@ -470,7 +565,7 @@ class RelocationActivity : BaseRfidActivity() {
             else -> null
         }
     }
-    
+
     /**
      * Get selected target tag status from radio buttons (for submit)
      */
@@ -481,7 +576,7 @@ class RelocationActivity : BaseRfidActivity() {
             else -> null
         }
     }
-    
+
     /**
      * Toggle RFID scanning on/off
      */
@@ -489,21 +584,21 @@ class RelocationActivity : BaseRfidActivity() {
         // Cek cooldown untuk mencegah scan berulang terlalu cepat
         val currentTime = System.currentTimeMillis()
         val timeSinceLastClick = currentTime - lastScanButtonClickTime
-        
+
         if (timeSinceLastClick < SCAN_BUTTON_COOLDOWN_MS) {
             val remainingCooldown = SCAN_BUTTON_COOLDOWN_MS - timeSinceLastClick
             Log.d(TAG, "🔥 Scan button cooldown active - remaining: ${remainingCooldown}ms")
             // Toast dihilangkan sesuai permintaan user
             return
         }
-        
+
         lastScanButtonClickTime = currentTime
-        
+
         // **PERBAIKAN KRITIS**: Apply settings sebelum toggle scanning
         if (!isScanning) {
             applySettingsFromSharedPreferences()
         }
-        
+
         toggleRfidScanning()
     }
 
@@ -540,25 +635,25 @@ class RelocationActivity : BaseRfidActivity() {
         try {
             val localResults = rfidScanManager.getAllLookupResults()
             val stats = rfidScanManager.getLocalDataStats()
-            
+
             Log.d(TAG, "🔥 Lookup results consumed from RfidScanManager: ${localResults.size} items")
             Log.d(TAG, "📊 Local data stats: $stats")
-            
+
             // Filter hanya EPC yang ada di rfidList untuk efisiensi
-            val relevantResults = localResults.filterKeys { epc -> 
-                rfidList.contains(epc) 
+            val relevantResults = localResults.filterKeys { epc ->
+                rfidList.contains(epc)
             }
-            
+
             Log.d(TAG, "🎯 Processing ${relevantResults.size} relevant EPCs from ${localResults.size} total cached results")
-            
+
             // Apply lookup results ke ViewModel
             viewModel.applyLookupResults(relevantResults)
-            
+
             // Log statistik untuk monitoring
             val foundCount = relevantResults.values.count { it.articleName != "NOT_FOUND" }
             val notFoundCount = relevantResults.values.count { it.articleName == "NOT_FOUND" }
             Log.d(TAG, "📈 Processed results: $foundCount found, $notFoundCount not found")
-            
+
         } catch (e: Exception) {
             Log.e(TAG, "❌ Error consuming lookup results: ${e.message}")
         }
@@ -568,8 +663,8 @@ class RelocationActivity : BaseRfidActivity() {
         binding.tvRfidDetected.text = "0"
         relocationAdapter.updateItems(emptyList())
     }
-    
-    
+
+
     /**
      * Clear all scanned RFIDs
      */
@@ -586,7 +681,7 @@ class RelocationActivity : BaseRfidActivity() {
         try {
             rfidScanManager.clearAllData()
             Log.d(TAG, "🔥 RFID buffer cleared in RfidScanManager")
-            
+
             // **PERBAIKAN BARU**: Re-seed dengan data dari database setelah clear (jika ada)
             // Untuk RelocationActivity, kita tidak perlu re-seeding karena tidak ada picklist yang di-load sebelumnya
             // Tapi kita bisa menambahkan log untuk konsistensi
@@ -601,7 +696,7 @@ class RelocationActivity : BaseRfidActivity() {
         // Toast dihilangkan sesuai permintaan user
         Log.d(TAG, "🔥 All RFIDs cleared (ViewModel + Manager)")
     }
-    
+
     /**
      * Method untuk menambahkan RFID dari external source (misalnya dari RFID scanner)
      */
@@ -609,59 +704,59 @@ class RelocationActivity : BaseRfidActivity() {
         val isNew = viewModel.addRfid(epc)
         Log.d(TAG, "🔥 RFID added from external: $epc (isNew=$isNew)")
     }
-    
-    
+
+
     /**
      * Initialize Sound Pool untuk beep sound
      */
     // Sound initialization removed; use BaseRfidActivity.playBeepSound()
-    
+
     /**
      * Play beep sound
      */
     // Local playBeepSound removed; use BaseRfidActivity.playBeepSound()
-    
+
     /**
      * Initialize RFID Reader
      */
     private fun initializeRfidReader() {
         // Legacy SDK init removed - handled by BaseRfidActivity
     }
-    
+
     /**
      * Start RFID Scanning
      */
     // Legacy RFID scanning removed - handled by BaseRfidActivity
-    
+
     /**
      * Stop RFID Scanning
      */
     // Legacy stop removed - use BaseRfidActivity
-    
+
     /**
      * Stop RFID Scanning dengan grace period untuk menangkap RFID terlambat
      */
     // Legacy stop with grace removed - handled by BaseRfidActivity
-    
+
     /**
      * Update UI untuk menunjukkan grace period
      */
     private fun updateUIForGracePeriod() {
         binding.btnScan.text = "Waiting..."
         binding.btnScan.isEnabled = false
-        
+
         // Show grace period indicator
         showGracePeriodIndicator()
-        
+
         // Monitor grace period status
         monitorGracePeriodStatus()
     }
-    
+
     /**
      * Show grace period indicator
      */
     // gunakan BaseRfidActivity.showGracePeriodIndicator()
-    
+
     /**
      * Monitor grace period status
      */
@@ -680,43 +775,43 @@ class RelocationActivity : BaseRfidActivity() {
         }
         handler.post(runnable)
     }
-    
+
     /**
      * Update UI setelah grace period selesai
      */
     private fun updateUIAfterGracePeriod() {
         binding.btnScan.text = "Start"
         binding.btnScan.isEnabled = true
-        
+
         // Hide grace period indicator
         hideGracePeriodIndicator()
-        
+
         Log.d(TAG, "🔥 Grace period completed, UI updated")
     }
-    
+
     /**
      * Handle grace period cancellation dengan user feedback
      */
     private fun handleGracePeriodCancellation() {
         if (isGracePeriodActive()) {
             Log.d(TAG, "🔥 Grace period cancelled by user - starting new scan")
-            
+
             // Show feedback bahwa grace period di-cancel
             showGracePeriodCancelledFeedback()
-            
+
             // Cancel grace period
             cancelGracePeriod()
-            
+
             // Update UI immediately
             updateUIAfterGracePeriod()
         }
     }
-    
+
     /**
      * Show feedback bahwa grace period di-cancel
      */
     // gunakan BaseRfidActivity.showGracePeriodCancelledFeedback()
-    
+
     override fun onDestroy() {
         super.onDestroy()
         stopRfidScanning()
@@ -727,10 +822,10 @@ class RelocationActivity : BaseRfidActivity() {
         } catch (t: Throwable) {
             Log.w(TAG, "⚠️ Failed to clear EPC list on destroy: ${t.message}")
         }
-        
+
         // handled by BaseRfidActivity cleanup
     }
-    
+
     override fun onKeyDown(keyCode: Int, event: KeyEvent?): Boolean {
         if (super.onKeyDown(keyCode, event)) return true
         // Log detail untuk semua tombol yang ditekan
@@ -738,40 +833,40 @@ class RelocationActivity : BaseRfidActivity() {
         val repeatCount = event?.repeatCount ?: 0
         val action = event?.action ?: -1
         val flags = event?.flags ?: 0
-        
+
         Log.d(TAG, "🔥 KEYCODE DETECTED: $keyName (Code: $keyCode, Repeat: $repeatCount, Action: $action, Flags: $flags)")
-        
+
         // Handle tombol fisik untuk scanning RFID
         when (keyCode) {
             // Tombol Scan Trigger (keycode 293) - Press to start, release to stop
             293 -> {
                 if (repeatCount == 0) {
                     Log.d(TAG, "🔥 Physical scan button pressed - Code: $keyCode")
-                    
+
                     // **PERBAIKAN**: Cek cooldown untuk tombol fisik juga
                     val currentTime = System.currentTimeMillis()
                     val timeSinceLastClick = currentTime - lastScanButtonClickTime
-                    
+
                     if (timeSinceLastClick < SCAN_BUTTON_COOLDOWN_MS) {
                         val remainingCooldown = SCAN_BUTTON_COOLDOWN_MS - timeSinceLastClick
                         Log.d(TAG, "🔥 Physical scan button cooldown active - remaining: ${remainingCooldown}ms")
                         // Toast dihilangkan sesuai permintaan user
                         return true
                     }
-                    
+
                     lastScanButtonClickTime = currentTime
-                    
+
                     if (!isScanning) {
                         // **PERBAIKAN KRITIS**: Apply settings sebelum start scanning
                         applySettingsFromSharedPreferences()
                         startRfidScanning()
                         binding.btnScan.text = "Stop"
-                            // Toast dihilangkan sesuai permintaan user
+                        // Toast dihilangkan sesuai permintaan user
                     }
                 }
                 return true
             }
-            
+
             // Tombol lainnya - Gunakan fungsi default device
             else -> {
                 Log.d(TAG, "🔥 Tombol fisik ditekan: $keyName - Code: $keyCode (Fungsi default device)")
@@ -779,29 +874,29 @@ class RelocationActivity : BaseRfidActivity() {
             }
         }
     }
-    
+
     override fun onKeyUp(keyCode: Int, event: KeyEvent?): Boolean {
         if (super.onKeyUp(keyCode, event)) return true
         // Log detail untuk semua tombol yang dilepas
         val keyName = getKeyName(keyCode)
         val action = event?.action ?: -1
         val flags = event?.flags ?: 0
-        
+
         Log.d(TAG, "🔥 KEYCODE RELEASED: $keyName (Code: $keyCode, Action: $action, Flags: $flags)")
-        
+
         // Handle tombol fisik untuk stop scanning
         when (keyCode) {
             // Tombol Scan Trigger (keycode 293) - Release to stop
             293 -> {
                 Log.d(TAG, "🔥 Physical scan button released - Code: $keyCode")
-                
+
                 if (isScanning) {
                     // Stop scanning dengan grace period
                     stopRfidScanningWithGracePeriod()
                 }
                 return true
             }
-            
+
             // Tombol lainnya - Gunakan fungsi default device
             else -> {
                 Log.d(TAG, "🔥 Tombol fisik dilepas: $keyName - Code: $keyCode (Fungsi default device)")
@@ -809,7 +904,7 @@ class RelocationActivity : BaseRfidActivity() {
             }
         }
     }
-    
+
     /**
      * Get RSSI threshold from settings
      */
@@ -817,7 +912,7 @@ class RelocationActivity : BaseRfidActivity() {
         val sharedPrefs = getSharedPreferences("RFIDSettings", MODE_PRIVATE)
         return sharedPrefs.getInt("rssi_threshold", -55)
     }
-    
+
     /**
      * Get Power Level from settings
      */
@@ -825,7 +920,7 @@ class RelocationActivity : BaseRfidActivity() {
         val sharedPrefs = getSharedPreferences("RFIDSettings", MODE_PRIVATE)
         return sharedPrefs.getInt("power_level", 25)
     }
-    
+
     /**
      * Apply RFID settings from SharedPreferences
      */
@@ -834,12 +929,12 @@ class RelocationActivity : BaseRfidActivity() {
             // Use the new method from RfidScanManager that reads from SharedPreferences
             rfidScanManager.refreshSettingsFromSharedPreferences()
             Log.d(TAG, "🔥 RFID settings refreshed from SharedPreferences in RelocationActivity")
-            
+
         } catch (e: Exception) {
             Log.e(TAG, "🔥 Error applying settings: ${e.message}", e)
         }
     }
-    
+
     /**
      * Verify RFID settings yang diterapkan
      */
@@ -849,7 +944,7 @@ class RelocationActivity : BaseRfidActivity() {
             val savedPowerLevel = sharedPreferences.getInt("power_level", 25)
             val savedRssiThreshold = sharedPreferences.getInt("rssi_threshold", -55)
             val currentSettings = rfidScanManager.getSettings()
-            
+
             Log.d(TAG, "🔥 === RFID SETTINGS VERIFICATION ===")
             Log.d(TAG, "🔥 SharedPreferences - Power Level: $savedPowerLevel")
             Log.d(TAG, "🔥 SharedPreferences - RSSI Threshold: $savedRssiThreshold")
@@ -857,7 +952,7 @@ class RelocationActivity : BaseRfidActivity() {
             Log.d(TAG, "🔥 RfidScanManager - RSSI Threshold: ${currentSettings.rssiThreshold}")
             Log.d(TAG, "🔥 RfidScanManager - Duplicate Removal: ${currentSettings.duplicateRemovalEnabled}")
             // **GRACE PERIOD REMOVED**: Tidak perlu log grace period
-            
+
             if (currentSettings.powerLevel != savedPowerLevel) {
                 Log.w(TAG, "⚠️ WARNING: Power level mismatch! SharedPrefs: $savedPowerLevel, RfidScanManager: ${currentSettings.powerLevel}")
             }
@@ -865,12 +960,12 @@ class RelocationActivity : BaseRfidActivity() {
                 Log.w(TAG, "⚠️ WARNING: RSSI threshold mismatch! SharedPrefs: $savedRssiThreshold, RfidScanManager: ${currentSettings.rssiThreshold}")
             }
             Log.d(TAG, "🔥 === END SETTINGS VERIFICATION ===")
-            
+
         } catch (e: Exception) {
             Log.e(TAG, "🔥 Error verifying settings: ${e.message}", e)
         }
     }
-    
+
     /**
      * Get key name for logging purposes
      */
@@ -898,7 +993,7 @@ class RelocationActivity : BaseRfidActivity() {
             else -> "UNKNOWN($keyCode)"
         }
     }
-    
+
     override fun onBackPressed() {
         super.onBackPressed()
         finish()
