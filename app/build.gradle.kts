@@ -22,8 +22,8 @@ android {
         applicationId = "com.example.cekpicklist"
         minSdk = 30
         targetSdk = 35
-        versionCode = 42
-        versionName = "5.1.27"
+        versionCode = 44
+        versionName = "5.1.29"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         
@@ -151,6 +151,8 @@ dependencies {
     // implementation("com.journeyapps:zxing-android-embedded:4.3.0")
     // implementation("com.google.zxing:core:3.5.2")
 }
+
+
 
 
 

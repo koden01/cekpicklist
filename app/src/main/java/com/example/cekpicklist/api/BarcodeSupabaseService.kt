@@ -547,8 +547,8 @@ class BarcodeSupabaseService {
                 val url = URL("${BarcodeSupabaseConfig.SUPABASE_URL}/rest/v1/tbl_resi?created=gte.$sevenDaysAgoDate&order=created.desc&limit=$limit&offset=$offset")
                 
                 val connection = url.openConnection() as HttpURLConnection
-                connection.connectTimeout = 30000 // 30 detik connection timeout
-                connection.readTimeout = 45000 // 45 detik read timeout
+                connection.connectTimeout = 10000 // 10 detik connection timeout (optimized for faster failure)
+                connection.readTimeout = 15000 // 15 detik read timeout (optimized for faster failure)
                 connection.requestMethod = "GET"
                 connection.setRequestProperty("apikey", BarcodeSupabaseConfig.SUPABASE_ANON_KEY)
                 connection.setRequestProperty("Authorization", "Bearer ${BarcodeSupabaseConfig.SUPABASE_ANON_KEY}")
@@ -632,8 +632,8 @@ class BarcodeSupabaseService {
             while (hasMoreData) {
                 val url = URL("${BarcodeSupabaseConfig.SUPABASE_URL}/rest/v1/tbl_resi?created=gte.$sinceDate&order=created.desc&limit=$limit&offset=$offset")
                 val connection = url.openConnection() as HttpURLConnection
-                connection.connectTimeout = 30000
-                connection.readTimeout = 45000
+                connection.connectTimeout = 10000 // 10 detik (optimized for faster failure)
+                connection.readTimeout = 15000 // 15 detik (optimized for faster failure)
                 connection.requestMethod = "GET"
                 connection.setRequestProperty("apikey", BarcodeSupabaseConfig.SUPABASE_ANON_KEY)
                 connection.setRequestProperty("Authorization", "Bearer ${BarcodeSupabaseConfig.SUPABASE_ANON_KEY}")
@@ -702,8 +702,8 @@ class BarcodeSupabaseService {
             while (hasMoreData) {
                 val url = URL("${BarcodeSupabaseConfig.SUPABASE_URL}/rest/v1/tbl_expedisi?select=$selectCols&flag=eq.NO&created=gte.$sinceDate&order=created.desc&limit=$limit&offset=$offset")
                 val connection = url.openConnection() as HttpURLConnection
-                connection.connectTimeout = 30000
-                connection.readTimeout = 45000
+                connection.connectTimeout = 10000 // 10 detik (optimized for faster failure)
+                connection.readTimeout = 15000 // 15 detik (optimized for faster failure)
                 connection.requestMethod = "GET"
                 connection.setRequestProperty("apikey", BarcodeSupabaseConfig.SUPABASE_ANON_KEY)
                 connection.setRequestProperty("Authorization", "Bearer ${BarcodeSupabaseConfig.SUPABASE_ANON_KEY}")
@@ -958,8 +958,8 @@ class BarcodeSupabaseService {
                 val url = URL("${BarcodeSupabaseConfig.SUPABASE_URL}/rest/v1/tbl_expedisi?select=$selectCols&flag=eq.NO&order=created.desc&limit=$limit&offset=$offset")
                 
                 val connection = url.openConnection() as HttpURLConnection
-                connection.connectTimeout = 30000 // 30 detik connection timeout
-                connection.readTimeout = 45000 // 45 detik read timeout
+                connection.connectTimeout = 10000 // 10 detik connection timeout (optimized for faster failure)
+                connection.readTimeout = 15000 // 15 detik read timeout (optimized for faster failure)
                 connection.requestMethod = "GET"
                 connection.setRequestProperty("apikey", BarcodeSupabaseConfig.SUPABASE_ANON_KEY)
                 connection.setRequestProperty("Authorization", "Bearer ${BarcodeSupabaseConfig.SUPABASE_ANON_KEY}")

@@ -17,6 +17,8 @@ import com.example.cekpicklist.api.BarcodeSupabaseService
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.async
+import kotlinx.coroutines.coroutineScope
 import java.text.SimpleDateFormat
 import java.util.*
 
@@ -163,28 +165,41 @@ class BarcodeScannerViewModel(application: Application) : AndroidViewModel(appli
                 
                 // Cache kosong atau expired - refresh di background (non-blocking)
                 if (cachedResi.isEmpty() || cachedExpedisi.isEmpty() || !resiCacheValid || !expedisiCacheValid) {
-                    Log.d(TAG, "📦 Cache empty or expired, refreshing from Supabase (background)...")
+                    Log.d(TAG, "📦 Cache empty or expired, refreshing from Supabase (background, parallel)...")
                     
-                    // Load dari repository (akan mengisi cache) - background, non-blocking
+                    // **PARALLEL FETCH**: Load resi dan expedisi secara bersamaan (non-blocking)
                     viewModelScope.launch(Dispatchers.IO) {
                         try {
-                            val resiRecords = enhancedRepository.getBarcodeResiRecords()
-                            val expedisiRecords = enhancedRepository.getBarcodeExpedisiRecords()
-                            
-                            // Pre-warm courier names cache dari expedisi records
-                            if (expedisiRecords.isNotEmpty()) {
-                                val courierNames = BarcodeCacheManager.getUniqueCourierNamesFromCache()
-                                if (courierNames.isNotEmpty()) {
-                                    BarcodeCacheManager.setCourierNamesCache(courierNames)
-                                    Log.d(TAG, "⚡ Pre-warmed courier names cache: ${courierNames.size} couriers")
+                            // **PARALLEL**: Fetch resi dan expedisi secara bersamaan
+                            coroutineScope {
+                                val resiDeferred = async {
+                                    enhancedRepository.getBarcodeResiRecords()
                                 }
+                                val expedisiDeferred = async {
+                                    enhancedRepository.getBarcodeExpedisiRecords()
+                                }
+                                
+                                // Wait untuk kedua fetch selesai (parallel execution)
+                                val resiRecords = resiDeferred.await()
+                                val expedisiRecords = expedisiDeferred.await()
+                                
+                                Log.d(TAG, "✅ [PARALLEL FETCH] Retrieved ${resiRecords.size} resi, ${expedisiRecords.size} expedisi")
+                                
+                                // Pre-warm courier names cache dari expedisi records
+                                if (expedisiRecords.isNotEmpty()) {
+                                    val courierNames = BarcodeCacheManager.getUniqueCourierNamesFromCache()
+                                    if (courierNames.isNotEmpty()) {
+                                        BarcodeCacheManager.setCourierNamesCache(courierNames)
+                                        Log.d(TAG, "⚡ Pre-warmed courier names cache: ${courierNames.size} couriers")
+                                    }
+                                }
+                                
+                                // Reload UI data setelah cache di-update
+                                loadScanHistoryFromDatabase()
+                                loadProcessedBarcodesFromDatabase()
+                                
+                                Log.d(TAG, "✅ Cache refreshed: ${resiRecords.size} resi, ${expedisiRecords.size} expedisi")
                             }
-                            
-                            // Reload UI data setelah cache di-update
-                            loadScanHistoryFromDatabase()
-                            loadProcessedBarcodesFromDatabase()
-                            
-                            Log.d(TAG, "✅ Cache refreshed: ${resiRecords.size} resi, ${expedisiRecords.size} expedisi")
                         } catch (e: Exception) {
                             Log.e(TAG, "❌ Error refreshing cache: ${e.message}", e)
                         }

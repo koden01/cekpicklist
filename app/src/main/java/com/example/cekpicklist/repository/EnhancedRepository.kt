@@ -455,19 +455,36 @@ class EnhancedRepository(private val context: Context) {
                     }
                 }
             } else if (cachedRecords.isEmpty()) {
-                // **INITIAL SYNC**: Jika cache kosong, lakukan full fetch (blocking untuk pertama kali)
-                Log.d(TAG, "🔥 [INITIAL SYNC] Cache empty, performing full fetch...")
-                try {
-                    val remoteRecords = barcodeSupabaseService.getAllBarcodeResi()
-                    Log.d(TAG, "✅ Retrieved ${remoteRecords.size} resi records from Supabase")
-                    BarcodeCacheManager.initializeCache(remoteRecords, emptyList())
-                    BarcodeCacheManager.setLastResiSyncTime(System.currentTimeMillis())
-                    return@withContext remoteRecords
-                } catch (networkError: Exception) {
-                    Log.w(TAG, "⚠️ Initial sync failed (offline?): ${networkError.message}")
-                    // Return empty jika cache juga kosong
-                    return@withContext emptyList()
+                // **NON-BLOCKING INITIAL SYNC**: Return empty dulu, fetch di background
+                Log.d(TAG, "⚡ [NON-BLOCKING INITIAL SYNC] Cache empty, starting background fetch...")
+                
+                // Background fetch (non-blocking)
+                CoroutineScope(Dispatchers.IO + SupervisorJob()).launch {
+                    try {
+                        // **OPTIMASI**: Initial sync hanya ambil data hari ini (bukan 7 hari)
+                        val todayDate = java.time.Instant.now()
+                            .atZone(java.time.ZoneOffset.UTC)
+                            .toLocalDate()
+                            .toString()
+                        
+                        Log.d(TAG, "🔥 [BACKGROUND INITIAL SYNC] Fetching resi records for today: $todayDate")
+                        val remoteRecords = barcodeSupabaseService.getBarcodeResiSince(todayDate)
+                        
+                        if (remoteRecords.isNotEmpty()) {
+                            Log.d(TAG, "✅ [BACKGROUND INITIAL SYNC] Retrieved ${remoteRecords.size} resi records from Supabase")
+                            BarcodeCacheManager.initializeCache(remoteRecords, emptyList())
+                            BarcodeCacheManager.setLastResiSyncTime(System.currentTimeMillis())
+                            Log.d(TAG, "✅ [BACKGROUND INITIAL SYNC] Cache initialized with ${remoteRecords.size} records")
+                        } else {
+                            Log.d(TAG, "ℹ️ [BACKGROUND INITIAL SYNC] No resi records found for today")
+                        }
+                    } catch (networkError: Exception) {
+                        Log.w(TAG, "⚠️ [BACKGROUND INITIAL SYNC] Failed (offline?): ${networkError.message}")
+                    }
                 }
+                
+                // Return empty immediately (non-blocking)
+                return@withContext emptyList()
             }
             
             // Return cache (instant response)
@@ -558,24 +575,41 @@ class EnhancedRepository(private val context: Context) {
                     }
                 }
             } else if (cachedRecords.isEmpty()) {
-                // **INITIAL SYNC**: Jika cache kosong, lakukan full fetch (blocking untuk pertama kali)
-                Log.d(TAG, "🔥 [INITIAL SYNC] Cache empty, performing full fetch...")
-                try {
-                    val remoteRecords = barcodeSupabaseService.getAllBarcodeExpedisi()
-                    Log.d(TAG, "✅ Retrieved ${remoteRecords.size} expedisi records from Supabase")
-                    val resiRecords = BarcodeCacheManager.getAllResiRecords()
-                    if (resiRecords.isEmpty()) {
-                        BarcodeCacheManager.initializeCache(emptyList(), remoteRecords)
-                    } else {
-                        BarcodeCacheManager.refreshCache(emptyList(), remoteRecords)
+                // **NON-BLOCKING INITIAL SYNC**: Return empty dulu, fetch di background
+                Log.d(TAG, "⚡ [NON-BLOCKING INITIAL SYNC] Cache empty, starting background fetch...")
+                
+                // Background fetch (non-blocking)
+                CoroutineScope(Dispatchers.IO + SupervisorJob()).launch {
+                    try {
+                        // **OPTIMASI**: Initial sync hanya ambil data hari ini (bukan 7 hari)
+                        val todayDate = java.time.Instant.now()
+                            .atZone(java.time.ZoneOffset.UTC)
+                            .toLocalDate()
+                            .toString()
+                        
+                        Log.d(TAG, "🔥 [BACKGROUND INITIAL SYNC] Fetching expedisi records for today: $todayDate")
+                        val remoteRecords = barcodeSupabaseService.getBarcodeExpedisiSince(todayDate)
+                        
+                        if (remoteRecords.isNotEmpty()) {
+                            Log.d(TAG, "✅ [BACKGROUND INITIAL SYNC] Retrieved ${remoteRecords.size} expedisi records from Supabase")
+                            val resiRecords = BarcodeCacheManager.getAllResiRecords()
+                            if (resiRecords.isEmpty()) {
+                                BarcodeCacheManager.initializeCache(emptyList(), remoteRecords)
+                            } else {
+                                BarcodeCacheManager.refreshCache(emptyList(), remoteRecords)
+                            }
+                            BarcodeCacheManager.setLastExpedisiSyncTime(System.currentTimeMillis())
+                            Log.d(TAG, "✅ [BACKGROUND INITIAL SYNC] Cache initialized with ${remoteRecords.size} expedisi records")
+                        } else {
+                            Log.d(TAG, "ℹ️ [BACKGROUND INITIAL SYNC] No expedisi records found for today")
+                        }
+                    } catch (networkError: Exception) {
+                        Log.w(TAG, "⚠️ [BACKGROUND INITIAL SYNC] Failed (offline?): ${networkError.message}")
                     }
-                    BarcodeCacheManager.setLastExpedisiSyncTime(System.currentTimeMillis())
-                    return@withContext remoteRecords
-                } catch (networkError: Exception) {
-                    Log.w(TAG, "⚠️ Initial sync failed (offline?): ${networkError.message}")
-                    // Return empty jika cache juga kosong
-                    return@withContext emptyList()
                 }
+                
+                // Return empty immediately (non-blocking)
+                return@withContext emptyList()
             }
             
             // Return cache (instant response)
