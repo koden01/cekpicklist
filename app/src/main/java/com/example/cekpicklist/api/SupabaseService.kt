@@ -310,15 +310,16 @@ class SupabaseService {
                             val qtyScan = distinctEpcs.size
                             
                             // **VERIFIKASI MAPPING**: Log EPC-article mapping saat batch load
-                            Log.d("SupabaseService", "🔍 BATCH Grouped Article: ${firstItem.articleName} ${firstItem.size} - qtyPl: ${firstItem.qtyPl}, qtyScan: $qtyScan")
+                            // **PERBAIKAN**: Gunakan totalQtyPl (bukan firstItem.qtyPl) untuk konsistensi
+                            Log.d("SupabaseService", "🔍 BATCH Grouped Article: ${firstItem.articleName} ${firstItem.size} - qtyPl: $totalQtyPl (from ${itemGroup.size} records), qtyScan: $qtyScan")
                             
-                            // **VERIFIKASI KRITIS**: Cek apakah qtyScan sesuai dengan qtyPl
-                            if (qtyScan < firstItem.qtyPl) {
-                                Log.w("SupabaseService", "⚠️ BATCH INCOMPLETE ITEM: ${firstItem.articleName} ${firstItem.size} - qtyScan($qtyScan) < qtyPl(${firstItem.qtyPl})")
-                            } else if (qtyScan > firstItem.qtyPl) {
-                                Log.w("SupabaseService", "⚠️ BATCH OVERSCAN ITEM: ${firstItem.articleName} ${firstItem.size} - qtyScan($qtyScan) > qtyPl(${firstItem.qtyPl})")
+                            // **VERIFIKASI KRITIS**: Cek apakah qtyScan sesuai dengan totalQtyPl (bukan firstItem.qtyPl)
+                            if (qtyScan < totalQtyPl) {
+                                Log.w("SupabaseService", "⚠️ BATCH INCOMPLETE ITEM: ${firstItem.articleName} ${firstItem.size} - qtyScan($qtyScan) < qtyPl($totalQtyPl)")
+                            } else if (qtyScan > totalQtyPl) {
+                                Log.w("SupabaseService", "⚠️ BATCH OVERSCAN ITEM: ${firstItem.articleName} ${firstItem.size} - qtyScan($qtyScan) > qtyPl($totalQtyPl)")
                             } else {
-                                Log.d("SupabaseService", "✅ BATCH COMPLETE ITEM: ${firstItem.articleName} ${firstItem.size} - qtyScan($qtyScan) = qtyPl(${firstItem.qtyPl})")
+                                Log.d("SupabaseService", "✅ BATCH COMPLETE ITEM: ${firstItem.articleName} ${firstItem.size} - qtyScan($qtyScan) = qtyPl($totalQtyPl)")
                             }
                             
                             if (articleScans.isNotEmpty()) {
@@ -973,22 +974,19 @@ class SupabaseService {
                 val jsonArray = org.json.JSONArray()
 
                 items.forEach { item ->
+                    // **PERBAIKAN**: Hanya kirim kolom yang ada di tabel picklist_scan
+                    // Kolom yang ada: no_picklist, product_id, article_id, article_name, size, epc, notrans, created_at
                     val jsonObject = org.json.JSONObject().apply {
                         put("no_picklist", notrans)
                         put("notrans", notrans)
-                        put("product_id", item.productId)
+                        put("product_id", item.productId ?: "")
                         put("article_id", item.articleId)
                         put("article_name", item.articleName)
                         put("size", item.size)
                         put("epc", item.epc)
-                        put("brand", item.brand)
-                        put("category", item.category)
-                        put("sub_category", item.subCategory)
-                        put("color", item.color)
-                        put("gender", item.gender)
-                        put("warehouse", item.warehouse)
-                        put("tag_status", item.tagStatus)
                         put("created_at", getCurrentTimestamp())
+                        // **HAPUS**: brand, category, sub_category, color, gender, warehouse, tag_status
+                        // (kolom-kolom ini tidak ada di tabel picklist_scan)
                     }
                     jsonArray.put(jsonObject)
                 }

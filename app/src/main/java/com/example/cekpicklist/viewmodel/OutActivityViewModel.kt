@@ -56,33 +56,32 @@ class OutActivityViewModel(application: Application) : AndroidViewModel(applicat
     fun addScannedItem(epc: String, articleId: String, articleName: String, size: String, qty: Int) {
         Logger.PicklistInput.d("Adding scanned item: $epc -> $articleName $size")
         
-        // Check if item already exists
+        // **PERBAIKAN**: Cek apakah item sudah ada - hanya tambah item baru (tidak ada penghitungan ulang)
         val existingItem = scannedItemsList.find { it.epc == epc }
         if (existingItem != null) {
-            // Replace with updated qty
-            val updated = existingItem.copy(qty = existingItem.qty + qty)
-            scannedItemsList.replaceAll { if (it.epc == epc) updated else it }
-            Logger.PicklistInput.d("Updated existing item: ${existingItem.articleName} qty: ${updated.qty}")
-        } else {
-            // Add new item
-            val newItem = OutActivityItem(
-                epc = epc,
-                articleId = articleId,
-                articleName = articleName,
-                size = size,
-                qty = qty,
-                productId = "", // Will be filled by lookup
-                brand = "",
-                category = "",
-                subCategory = "",
-                color = "",
-                gender = "",
-                warehouse = "",
-                tagStatus = "VALID"
-            )
-            scannedItemsList.add(newItem)
-            Logger.PicklistInput.d("Added new item: ${newItem.articleName} qty: ${newItem.qty}")
+            // Item sudah ada, tidak perlu ditambahkan lagi (tidak ada penghitungan ulang)
+            Logger.PicklistInput.d("Item already exists, skipping duplicate: ${existingItem.articleName} qty: ${existingItem.qty}")
+            return
         }
+        
+        // Add new item (hanya untuk EPC unik)
+        val newItem = OutActivityItem(
+            epc = epc,
+            articleId = articleId,
+            articleName = articleName,
+            size = size,
+            qty = qty,
+            productId = "", // Will be filled by lookup
+            brand = "",
+            category = "",
+            subCategory = "",
+            color = "",
+            gender = "",
+            warehouse = "",
+            tagStatus = "VALID"
+        )
+        scannedItemsList.add(newItem)
+        Logger.PicklistInput.d("Added new unique item: ${newItem.articleName} qty: ${newItem.qty}")
         
         _scannedItems.value = scannedItemsList.toList()
     }
@@ -145,6 +144,12 @@ class OutActivityViewModel(application: Application) : AndroidViewModel(applicat
     fun handleRfidDetected(epc: String) {
         Logger.PicklistInput.d("RFID detected: $epc")
         
+        // **PERBAIKAN**: Cek apakah EPC sudah ada di scannedItemsList
+        if (scannedItemsList.any { it.epc == epc }) {
+            Logger.PicklistInput.d("RFID already in scanned items, skipping: $epc")
+            return
+        }
+        
         // Perform lookup for the EPC
         viewModelScope.launch {
             try {
@@ -166,5 +171,42 @@ class OutActivityViewModel(application: Application) : AndroidViewModel(applicat
                 _errorMessage.value = "Error lookup: ${e.message}"
             }
         }
+    }
+    
+    /**
+     * Add scanned item from cache (RfidScanManager lookup result)
+     * Hanya menambahkan item baru, tidak menambah qty untuk item yang sudah ada
+     */
+    fun addScannedItemFromCache(epc: String, productInfo: com.example.cekpicklist.api.NirwanaApiService.ProductInfo) {
+        Logger.PicklistInput.d("Adding scanned item from cache: $epc -> ${productInfo.articleName} ${productInfo.size}")
+        
+        // Check if item already exists
+        val existingItem = scannedItemsList.find { it.epc == epc }
+        if (existingItem != null) {
+            // Item sudah ada, tidak perlu ditambahkan lagi (qty tetap sama)
+            Logger.PicklistInput.d("Item already exists, skipping duplicate: ${existingItem.articleName} qty: ${existingItem.qty}")
+            return
+        }
+        
+        // Add new item from cache (hanya jika belum ada)
+        val newItem = OutActivityItem(
+            epc = epc,
+            articleId = productInfo.articleId,
+            articleName = productInfo.articleName,
+            size = productInfo.size,
+            qty = 1,
+            productId = productInfo.productId,
+            brand = productInfo.brand,
+            category = productInfo.category,
+            subCategory = productInfo.subCategory,
+            color = productInfo.color,
+            gender = productInfo.gender,
+            warehouse = productInfo.warehouse,
+            tagStatus = productInfo.tagStatus
+        )
+        scannedItemsList.add(newItem)
+        Logger.PicklistInput.d("Added new item from cache: ${newItem.articleName} qty: ${newItem.qty}")
+        
+        _scannedItems.value = scannedItemsList.toList()
     }
 }

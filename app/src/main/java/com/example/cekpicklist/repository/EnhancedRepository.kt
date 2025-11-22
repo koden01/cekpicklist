@@ -446,45 +446,43 @@ class EnhancedRepository(private val context: Context) {
             // **STEP 2: BACKGROUND SYNC** - Sync di background tanpa blocking (incremental)
             // Hanya sync jika cache valid (untuk menghindari full fetch saat pertama kali)
             if (cachedRecords.isNotEmpty() && BarcodeCacheManager.isResiCacheValid()) {
-                // Background incremental sync (non-blocking)
+                // Background daily sync (non-blocking)
                 CoroutineScope(Dispatchers.IO + SupervisorJob()).launch {
                     try {
-                        performIncrementalResiSync()
+                        performDailyResiSync()
                     } catch (e: Exception) {
                         Log.w(TAG, "⚠️ Background sync failed (non-critical): ${e.message}")
                     }
                 }
             } else if (cachedRecords.isEmpty()) {
-                // **NON-BLOCKING INITIAL SYNC**: Return empty dulu, fetch di background
-                Log.d(TAG, "⚡ [NON-BLOCKING INITIAL SYNC] Cache empty, starting background fetch...")
+                // **BLOCKING INITIAL SYNC**: Fetch langsung agar cepat
+                Log.d(TAG, "🔥 [INITIAL SYNC] Cache empty, fetching 7 days data (blocking)...")
                 
-                // Background fetch (non-blocking)
-                CoroutineScope(Dispatchers.IO + SupervisorJob()).launch {
-                    try {
-                        // **OPTIMASI**: Initial sync hanya ambil data hari ini (bukan 7 hari)
-                        val todayDate = java.time.Instant.now()
-                            .atZone(java.time.ZoneOffset.UTC)
-                            .toLocalDate()
-                            .toString()
-                        
-                        Log.d(TAG, "🔥 [BACKGROUND INITIAL SYNC] Fetching resi records for today: $todayDate")
-                        val remoteRecords = barcodeSupabaseService.getBarcodeResiSince(todayDate)
-                        
-                        if (remoteRecords.isNotEmpty()) {
-                            Log.d(TAG, "✅ [BACKGROUND INITIAL SYNC] Retrieved ${remoteRecords.size} resi records from Supabase")
-                            BarcodeCacheManager.initializeCache(remoteRecords, emptyList())
-                            BarcodeCacheManager.setLastResiSyncTime(System.currentTimeMillis())
-                            Log.d(TAG, "✅ [BACKGROUND INITIAL SYNC] Cache initialized with ${remoteRecords.size} records")
-                        } else {
-                            Log.d(TAG, "ℹ️ [BACKGROUND INITIAL SYNC] No resi records found for today")
-                        }
-                    } catch (networkError: Exception) {
-                        Log.w(TAG, "⚠️ [BACKGROUND INITIAL SYNC] Failed (offline?): ${networkError.message}")
+                try {
+                    // **SIMPLE**: Initial sync ambil semua data 7 hari terakhir
+                    val sevenDaysAgo = java.time.Instant.now()
+                        .atZone(java.time.ZoneOffset.UTC)
+                        .toLocalDate()
+                        .minusDays(6)
+                        .toString()
+                    
+                    Log.d(TAG, "🔥 [INITIAL SYNC] Fetching resi records for last 7 days: $sevenDaysAgo")
+                    val remoteRecords = barcodeSupabaseService.getBarcodeResiSince(sevenDaysAgo)
+                    
+                    if (remoteRecords.isNotEmpty()) {
+                        Log.d(TAG, "✅ [INITIAL SYNC] Retrieved ${remoteRecords.size} resi records from Supabase (7 days)")
+                        BarcodeCacheManager.initializeCache(remoteRecords, emptyList())
+                        BarcodeCacheManager.setLastResiSyncTime(System.currentTimeMillis())
+                        Log.d(TAG, "✅ [INITIAL SYNC] Cache initialized with ${remoteRecords.size} records")
+                        return@withContext remoteRecords  // ✅ Langsung return data
+                    } else {
+                        Log.d(TAG, "ℹ️ [INITIAL SYNC] No resi records found for last 7 days")
+                        return@withContext emptyList()
                     }
+                } catch (networkError: Exception) {
+                    Log.w(TAG, "⚠️ [INITIAL SYNC] Failed (offline?): ${networkError.message}")
+                    return@withContext emptyList()
                 }
-                
-                // Return empty immediately (non-blocking)
-                return@withContext emptyList()
             }
             
             // Return cache (instant response)
@@ -503,49 +501,105 @@ class EnhancedRepository(private val context: Context) {
     }
     
     /**
-     * **SMART SYNC**: Incremental sync untuk resi records (hanya data yang berubah)
-     * Menggunakan timestamp-based query untuk menghemat bandwidth
+     * **INCREMENTAL SYNC DENGAN BATCH VERIFICATION**: Sync data dan hapus yang dihapus sekaligus
+     * - Incremental sync: Hanya data baru/modified (hemat bandwidth)
+     * - Batch verification: Verify resi yang "missing" untuk delete detection (akurat & hemat)
+     * - Cache selalu up-to-date dengan bandwidth minimal
      */
-    private suspend fun performIncrementalResiSync() = withContext(Dispatchers.IO) {
+    internal suspend fun performDailyResiSync() = withContext(Dispatchers.IO) {
         try {
+            // 1. Cleanup data > 7 hari dari cache
+            BarcodeCacheManager.cleanupOldData()
+            
+            // 2. Ambil cache resi saat ini
+            val cachedResi = BarcodeCacheManager.getAllResiRecords()
+            val cachedResiSet = cachedResi.map { it.Resi.trim().uppercase() }.toSet()
+            
+            // 3. Query data dari Supabase (incremental untuk hemat bandwidth)
             val lastSyncTime = BarcodeCacheManager.getLastResiSyncTime()
-            val sinceDate = if (lastSyncTime > 0) {
-                // Convert timestamp ke ISO date (YYYY-MM-DD) untuk query
-                BarcodeCacheManager.timestampToIsoDate(lastSyncTime)
+            val now = System.currentTimeMillis()
+            
+            val supabaseResi = if (lastSyncTime == 0L) {
+                // Cache kosong: fetch 7 hari (hanya sekali saat initial load)
+                Log.d(TAG, "🔄 [INITIAL SYNC] Cache empty, fetching 7 days data...")
+                val sevenDaysAgo = java.time.Instant.now()
+                    .atZone(java.time.ZoneOffset.UTC)
+                    .toLocalDate()
+                    .minusDays(6)
+                    .toString()
+                barcodeSupabaseService.getBarcodeResiSince(sevenDaysAgo)
             } else {
-                // Jika belum pernah sync, ambil 7 hari terakhir
-                java.time.Instant.now().atZone(java.time.ZoneOffset.UTC).toLocalDate().minusDays(6).toString()
+                // Incremental: hanya data baru/modified sejak last sync (HEMAT BANDWIDTH)
+                val sinceDate = BarcodeCacheManager.timestampToIsoDate(lastSyncTime)
+                Log.d(TAG, "🔄 [INCREMENTAL SYNC] Fetching resi records since: $sinceDate")
+                barcodeSupabaseService.getBarcodeResiSince(sinceDate)
             }
             
-            Log.d(TAG, "🔄 [INCREMENTAL SYNC] Fetching resi records since: $sinceDate (lastSync: ${if (lastSyncTime > 0) "${(System.currentTimeMillis() - lastSyncTime) / 1000}s ago" else "never"})")
+            val supabaseResiSet = supabaseResi.map { it.Resi.trim().uppercase() }.toSet()
             
-            // **BANDWIDTH OPTIMIZATION**: Hanya fetch data yang berubah sejak last sync
-            val deltaRecords = barcodeSupabaseService.getBarcodeResiSince(sinceDate)
+            // 4. Tambah/update data yang ada di Supabase
+            if (supabaseResi.isNotEmpty()) {
+                Log.d(TAG, "📥 [SYNC] Retrieved ${supabaseResi.size} resi records from Supabase")
+                supabaseResi.forEach { record ->
+                    BarcodeCacheManager.addResiRecord(record)  // Upsert (tambah jika baru, update jika sudah ada)
+                }
+            }
             
-            if (deltaRecords.isNotEmpty()) {
-                Log.d(TAG, "📥 [INCREMENTAL SYNC] Retrieved ${deltaRecords.size} new/updated resi records")
+            // 5. DELETE DETECTION DENGAN BATCH VERIFICATION (HEMAT & AKURAT)
+            // Resi yang ada di cache tapi tidak ada di hasil incremental
+            val potentiallyDeleted = cachedResiSet - supabaseResiSet
+            
+            if (potentiallyDeleted.isNotEmpty()) {
+                Log.d(TAG, "🔍 [DELETE DETECTION] Found ${potentiallyDeleted.size} resi potentially deleted, verifying...")
                 
-                // Merge delta ke cache (upsert)
-                deltaRecords.forEach { record ->
-                    BarcodeCacheManager.addResiRecord(record)
+                // Batch verification: Cek apakah resi benar-benar tidak ada di tbl_resi
+                val potentiallyDeletedList = potentiallyDeleted.toList()
+                val existsInResi = try {
+                    barcodeSupabaseService.batchCheckResiExists(potentiallyDeletedList)
+                } catch (e: Exception) {
+                    Log.w(TAG, "⚠️ Error during batch verification: ${e.message}")
+                    // Jika error, assume semua exists (safe default)
+                    potentiallyDeletedList.associateWith { true }
                 }
                 
-                // Update sync timestamp
-                BarcodeCacheManager.setLastResiSyncTime(System.currentTimeMillis())
-                Log.d(TAG, "✅ [INCREMENTAL SYNC] Cache updated with ${deltaRecords.size} new records")
-            } else {
-                Log.d(TAG, "✅ [INCREMENTAL SYNC] No changes detected (cache up-to-date)")
+                // Hapus hanya resi yang benar-benar tidak ada di tbl_resi
+                var removedCount = 0
+                potentiallyDeletedList.forEach { resi ->
+                    val exists = existsInResi.getOrDefault(resi, false)
+                    if (!exists) {
+                        // Resi benar-benar tidak ada di tbl_resi, hapus dari cache
+                        val existsInCache = cachedResi.any { 
+                            it.Resi.trim().uppercase() == resi 
+                        }
+                        if (existsInCache) {
+                            BarcodeCacheManager.removeResiRecord(resi)
+                            removedCount++
+                            Log.d(TAG, "🗑️ Removed deleted resi from cache: $resi")
+                        }
+                    } else {
+                        Log.d(TAG, "✅ Resi $resi still exists in tbl_resi (false positive avoided)")
+                    }
+                }
+                
+                if (removedCount > 0) {
+                    Log.d(TAG, "✅ [DELETE DETECTION] Removed $removedCount deleted resi from cache")
+                } else {
+                    Log.d(TAG, "✅ [DELETE DETECTION] No deleted resi found (all still exist)")
+                }
             }
+            
+            // 6. Update sync timestamp
+            BarcodeCacheManager.setLastResiSyncTime(now)
+            
+            val finalCacheSize = BarcodeCacheManager.getAllResiRecords().size
+            Log.d(TAG, "✅ [SYNC] Cache sync completed: ${supabaseResi.size} added/updated, total: $finalCacheSize records")
+            
         } catch (e: NetworkException) {
-            // Network error: koneksi gagal, jangan anggap sebagai "no changes"
-            Log.w(TAG, "⚠️ [INCREMENTAL SYNC] Network error (connection failed): ${e.message}")
-            // Jangan update sync timestamp karena sync gagal
+            Log.w(TAG, "⚠️ [SYNC] Network error (connection failed): ${e.message}")
         } catch (e: CancellationException) {
-            // Re-throw cancellation untuk proper coroutine handling
             throw e
         } catch (e: Exception) {
-            // Non-critical error, log saja (tidak throw)
-            Log.w(TAG, "⚠️ Incremental sync failed (non-critical): ${e.message}")
+            Log.w(TAG, "⚠️ Sync failed (non-critical): ${e.message}")
         }
     }
     
@@ -563,13 +617,13 @@ class EnhancedRepository(private val context: Context) {
             val cachedRecords = BarcodeCacheManager.getAllExpedisiRecords()
             Log.d(TAG, "📦 [OFFLINE-FIRST] Returning cached expedisi records: ${cachedRecords.size} (instant)")
             
-            // **STEP 2: BACKGROUND SYNC** - Sync di background tanpa blocking (incremental)
-            // Hanya sync jika cache valid (untuk menghindari full fetch saat pertama kali)
+            // **STEP 2: BACKGROUND SYNC** - Sync di background tanpa blocking
+            // Selalu sync semua data flag="NO" untuk memastikan cache selalu sama dengan Supabase
             if (cachedRecords.isNotEmpty() && BarcodeCacheManager.isExpedisiCacheValid()) {
-                // Background incremental sync (non-blocking)
+                // Background daily sync (non-blocking)
                 CoroutineScope(Dispatchers.IO + SupervisorJob()).launch {
                     try {
-                        performIncrementalExpedisiSync()
+                        performDailyExpedisiSync()
                     } catch (e: Exception) {
                         Log.w(TAG, "⚠️ Background sync failed (non-critical): ${e.message}")
                     }
@@ -581,17 +635,12 @@ class EnhancedRepository(private val context: Context) {
                 // Background fetch (non-blocking)
                 CoroutineScope(Dispatchers.IO + SupervisorJob()).launch {
                     try {
-                        // **OPTIMASI**: Initial sync hanya ambil data hari ini (bukan 7 hari)
-                        val todayDate = java.time.Instant.now()
-                            .atZone(java.time.ZoneOffset.UTC)
-                            .toLocalDate()
-                            .toString()
-                        
-                        Log.d(TAG, "🔥 [BACKGROUND INITIAL SYNC] Fetching expedisi records for today: $todayDate")
-                        val remoteRecords = barcodeSupabaseService.getBarcodeExpedisiSince(todayDate)
+                        // **SIMPLE**: Initial sync ambil semua data flag="NO" dari Supabase
+                        Log.d(TAG, "🔥 [BACKGROUND INITIAL SYNC] Fetching all expedisi records with flag=NO")
+                        val remoteRecords = barcodeSupabaseService.getAllBarcodeExpedisi()
                         
                         if (remoteRecords.isNotEmpty()) {
-                            Log.d(TAG, "✅ [BACKGROUND INITIAL SYNC] Retrieved ${remoteRecords.size} expedisi records from Supabase")
+                            Log.d(TAG, "✅ [BACKGROUND INITIAL SYNC] Retrieved ${remoteRecords.size} expedisi records from Supabase (flag=NO)")
                             val resiRecords = BarcodeCacheManager.getAllResiRecords()
                             if (resiRecords.isEmpty()) {
                                 BarcodeCacheManager.initializeCache(emptyList(), remoteRecords)
@@ -601,7 +650,7 @@ class EnhancedRepository(private val context: Context) {
                             BarcodeCacheManager.setLastExpedisiSyncTime(System.currentTimeMillis())
                             Log.d(TAG, "✅ [BACKGROUND INITIAL SYNC] Cache initialized with ${remoteRecords.size} expedisi records")
                         } else {
-                            Log.d(TAG, "ℹ️ [BACKGROUND INITIAL SYNC] No expedisi records found for today")
+                            Log.d(TAG, "ℹ️ [BACKGROUND INITIAL SYNC] No expedisi records found with flag=NO")
                         }
                     } catch (networkError: Exception) {
                         Log.w(TAG, "⚠️ [BACKGROUND INITIAL SYNC] Failed (offline?): ${networkError.message}")
@@ -628,55 +677,60 @@ class EnhancedRepository(private val context: Context) {
     }
     
     /**
-     * **SMART SYNC**: Incremental sync untuk expedisi records (hanya data yang berubah)
-     * Menggunakan timestamp-based query untuk menghemat bandwidth
+     * **INCREMENTAL SYNC**: Hanya sync data yang berubah (bandwidth efficient)
+     * Pengambilan semua flag="NO" HANYA jika cache kosong (di initial load)
+     * Setelah cache ada, hanya sync incremental (data yang berubah)
      */
-    private suspend fun performIncrementalExpedisiSync() = withContext(Dispatchers.IO) {
+    internal suspend fun performDailyExpedisiSync() = withContext(Dispatchers.IO) {
         try {
             val lastSyncTime = BarcodeCacheManager.getLastExpedisiSyncTime()
-            val sinceDate = if (lastSyncTime > 0) {
-                // Convert timestamp ke ISO date (YYYY-MM-DD) untuk query
-                BarcodeCacheManager.timestampToIsoDate(lastSyncTime)
+            val now = System.currentTimeMillis()
+            
+            if (lastSyncTime == 0L) {
+                // Cache kosong: fetch semua flag="NO" (hanya sekali saat initial load)
+                Log.d(TAG, "🔄 [INITIAL SYNC] Cache empty, fetching all flag=NO records...")
+                val flagNoRecords = barcodeSupabaseService.getAllBarcodeExpedisi()
+                flagNoRecords.forEach { BarcodeCacheManager.addExpedisiRecord(it) }
+                BarcodeCacheManager.setLastExpedisiSyncTime(now)
+                Log.d(TAG, "✅ [INITIAL SYNC] Expedisi cache initialized with ${flagNoRecords.size} records (flag=NO)")
             } else {
-                // Jika belum pernah sync, ambil 7 hari terakhir
-                java.time.Instant.now().atZone(java.time.ZoneOffset.UTC).toLocalDate().minusDays(6).toString()
-            }
-            
-            Log.d(TAG, "🔄 [INCREMENTAL SYNC] Fetching expedisi records since: $sinceDate (lastSync: ${if (lastSyncTime > 0) "${(System.currentTimeMillis() - lastSyncTime) / 1000}s ago" else "never"})")
-            
-            // **BANDWIDTH OPTIMIZATION**: Hanya fetch data yang berubah sejak last sync
-            val deltaRecords = barcodeSupabaseService.getBarcodeExpedisiSince(sinceDate)
-            
-            if (deltaRecords.isNotEmpty()) {
-                Log.d(TAG, "📥 [INCREMENTAL SYNC] Retrieved ${deltaRecords.size} new/updated expedisi records")
+                // Incremental: hanya data yang berubah sejak last sync
+                val sinceDate = BarcodeCacheManager.timestampToIsoDate(lastSyncTime)
+                Log.d(TAG, "🔄 [INCREMENTAL SYNC] Fetching expedisi records since: $sinceDate")
+                val deltaRecords = barcodeSupabaseService.getBarcodeExpedisiSince(sinceDate)
                 
-                // Merge delta ke cache (upsert, hanya flag=NO)
-                deltaRecords.forEach { record ->
-                    // Hanya cache data dengan flag=NO
-                    if (record.flag.uppercase() == "NO") {
+                if (deltaRecords.isNotEmpty()) {
+                    Log.d(TAG, "📥 [INCREMENTAL SYNC] Retrieved ${deltaRecords.size} new/updated expedisi records")
+                    val cachedExpedisi = BarcodeCacheManager.getAllExpedisiRecords()
+                    val cachedResiSet = cachedExpedisi.map { it.resino.trim().uppercase() }.toSet()
+                    val deltaResiSet = deltaRecords.map { it.resino.trim().uppercase() }.toSet()
+                    val newResi = deltaResiSet - cachedResiSet
+                    val deletedResi = cachedResiSet - deltaResiSet
+                    
+                    // Update: hanya flag="NO"
+                    deltaRecords.filter { it.flag.uppercase() == "NO" }.forEach { record ->
                         BarcodeCacheManager.addExpedisiRecord(record)
-                    } else {
-                        // Jika flag berubah ke YES, hapus dari cache
+                    }
+                    // Delete: flag berubah ke "YES" atau dihapus
+                    deltaRecords.filter { it.flag.uppercase() != "NO" }.forEach { record ->
                         BarcodeCacheManager.removeExpedisiRecord(record.resino)
                     }
+                    deletedResi.forEach { resino ->
+                        BarcodeCacheManager.removeExpedisiRecord(resino)
+                    }
+                    
+                    BarcodeCacheManager.setLastExpedisiSyncTime(now)
+                    Log.d(TAG, "✅ [INCREMENTAL SYNC] Expedisi cache updated: +${newResi.size} new, -${deletedResi.size} removed")
+                } else {
+                    Log.d(TAG, "✅ [INCREMENTAL SYNC] No changes detected")
                 }
-                
-                // Update sync timestamp
-                BarcodeCacheManager.setLastExpedisiSyncTime(System.currentTimeMillis())
-                Log.d(TAG, "✅ [INCREMENTAL SYNC] Cache updated with ${deltaRecords.size} new records")
-            } else {
-                Log.d(TAG, "✅ [INCREMENTAL SYNC] No changes detected (cache up-to-date)")
             }
         } catch (e: NetworkException) {
-            // Network error: koneksi gagal, jangan anggap sebagai "no changes"
-            Log.w(TAG, "⚠️ [INCREMENTAL SYNC] Network error (connection failed): ${e.message}")
-            // Jangan update sync timestamp karena sync gagal
+            Log.w(TAG, "⚠️ [SYNC] Network error (connection failed): ${e.message}")
         } catch (e: CancellationException) {
-            // Re-throw cancellation untuk proper coroutine handling
             throw e
         } catch (e: Exception) {
-            // Non-critical error, log saja (tidak throw)
-            Log.w(TAG, "⚠️ Incremental sync failed (non-critical): ${e.message}")
+            Log.w(TAG, "⚠️ Sync failed (non-critical): ${e.message}")
         }
     }
     
@@ -809,16 +863,16 @@ class EnhancedRepository(private val context: Context) {
     
     /**
      * Background sync untuk barcode data
+     * Sync sudah include delete detection (cache selalu up-to-date)
      */
     private suspend fun performBarcodeBackgroundSync() {
         try {
             Log.d(TAG, "🔄 Performing background sync for barcode data...")
-            // Supabase-only: tidak melakukan sync ke Room
             
-            // Deteksi dan hapus data yang dihapus di Supabase
-            detectAndRemoveDeletedResi()
+            // Sync resi (sudah include delete detection di dalamnya)
+            performDailyResiSync()
             
-            Log.d(TAG, "✅ Background sync completed (Supabase-only mode)")
+            Log.d(TAG, "✅ Background sync completed (cache up-to-date)")
         } catch (e: Exception) {
             Log.e(TAG, "❌ Background sync failed for barcode data: ${e.message}", e)
         }
@@ -842,260 +896,98 @@ class EnhancedRepository(private val context: Context) {
     }
     
     /**
-     * **SINKRONISASI DUA ARAH**: Bandingkan cache dengan Supabase
-     * - Hapus data yang dihapus di Supabase dari cache
-     * - Tambahkan data baru dari Supabase ke cache
-     * Dijalankan di background setiap 60 detik untuk menjaga cache tetap sinkron dengan Supabase
+     * **DELETE DETECTION**: Deteksi resi yang dihapus dari tbl_resi
+     * - Query 7 hari dari tbl_resi untuk compare dengan cache
+     * - Batch verification untuk memastikan resi benar-benar tidak ada
+     * - Hapus dari cache resi jika resi tidak ada di tbl_resi
+     * Dijalankan di background setiap 60 detik untuk menjaga cache tetap sinkron
      */
     suspend fun detectAndRemoveDeletedResi() = withContext(Dispatchers.IO) {
         try {
-            Log.d(TAG, "🔍 [Background] Detecting deleted resi from Supabase (TIMESTAMP-BASED)...")
+            Log.d(TAG, "🔍 [DELETE DETECTION] Detecting deleted resi from tbl_resi...")
             
-            // **OPTIMASI BANDWIDTH**: Gunakan timestamp-based fetch untuk hanya ambil perubahan
-            val lastSyncTime = BarcodeCacheManager.getLastResiSyncTime()
-            val sinceDate = BarcodeCacheManager.timestampToIsoDate(lastSyncTime)
-            
-            Log.d(TAG, "📅 Last sync time: ${if (lastSyncTime == 0L) "Never (initial sync)" else "${(System.currentTimeMillis() - lastSyncTime) / 1000}s ago"}")
-            Log.d(TAG, "📅 Fetching data since: $sinceDate")
-            
-            // 1. Ambil semua resi dari cache (7 hari terakhir)
+            // 1. Ambil cache resi (7 hari terakhir)
             val cachedResi = BarcodeCacheManager.getAllResiRecords()
             val cachedResiSet = cachedResi.map { it.Resi.trim().uppercase() }.toSet()
             
-            Log.d(TAG, "📦 Cache contains ${cachedResiSet.size} resi records")
+            Log.d(TAG, "📦 Cache resi contains ${cachedResiSet.size} records")
             
-            // 2. **OPTIMASI**: Ambil HANYA data yang berubah sejak lastSyncTime dari Supabase
+            // 2. Query 7 hari dari tbl_resi untuk compare (bukan dari cache expedisi)
+            val sevenDaysAgo = java.time.Instant.now()
+                .atZone(java.time.ZoneOffset.UTC)
+                .toLocalDate()
+                .minusDays(6)
+                .toString()
+            
             val supabaseResi = try {
-                if (lastSyncTime == 0L) {
-                    // Initial sync: ambil semua data (7 hari terakhir)
-                    Log.d(TAG, "🔄 Initial sync: fetching all data from last 7 days")
-                    barcodeSupabaseService.getAllBarcodeResi()
-                } else {
-                    // Incremental sync: ambil hanya data baru/modified sejak lastSyncTime
-                    Log.d(TAG, "🔄 Incremental sync: fetching only changes since $sinceDate")
-                    barcodeSupabaseService.getBarcodeResiSince(sinceDate)
-                }
+                Log.d(TAG, "📥 Querying tbl_resi for last 7 days: $sevenDaysAgo")
+                barcodeSupabaseService.getBarcodeResiSince(sevenDaysAgo)
             } catch (e: NetworkException) {
-                // Network error: koneksi gagal, tidak bisa compare dengan Supabase
-                Log.w(TAG, "⚠️ [Background] Network error while fetching from Supabase: ${e.message}")
-                Log.w(TAG, "⚠️ [Background] Skipping deleted resi detection (cannot verify with Supabase)")
-                // Return early, jangan retry semua record saat koneksi gagal
+                Log.w(TAG, "⚠️ Network error querying tbl_resi: ${e.message}")
                 return@withContext
-            } catch (e: CancellationException) {
-                // Re-throw cancellation untuk proper coroutine handling
-                throw e
             } catch (e: Exception) {
-                // Error lain, log dan skip
-                Log.w(TAG, "⚠️ [Background] Error fetching from Supabase: ${e.message}")
+                Log.w(TAG, "⚠️ Error querying tbl_resi: ${e.message}")
                 return@withContext
             }
             
             val supabaseResiSet = supabaseResi.map { it.Resi.trim().uppercase() }.toSet()
+            Log.d(TAG, "☁️ Supabase tbl_resi contains ${supabaseResiSet.size} records (7 days)")
             
-            Log.d(TAG, "☁️ Supabase contains ${supabaseResiSet.size} resi records (${if (lastSyncTime == 0L) "full sync" else "incremental"})")
-            
-            // 3. Bandingkan: resi yang ada di cache tapi tidak ada di Supabase
-            // Bisa jadi: (a) dihapus di Supabase, atau (b) gagal sync ke Supabase (harus di-retry)
+            // 3. Compare: Resi yang ada di cache tapi tidak ada di Supabase
             val missingInSupabase = cachedResiSet - supabaseResiSet
             
-            // **DETECT FAILED SYNC**: Jika resi ada di cache tapi tidak di Supabase, coba retry save
-            val deletedResi = if (missingInSupabase.isNotEmpty()) {
-                Log.d(TAG, "🔄 Found ${missingInSupabase.size} resi in cache but not in Supabase (possible failed sync), retrying...")
+            if (missingInSupabase.isNotEmpty()) {
+                Log.d(TAG, "🔍 Found ${missingInSupabase.size} resi in cache but not in Supabase, verifying...")
                 
-                // Ambil record dari cache untuk retry
-                val recordsToRetry = cachedResi.filter { 
-                    missingInSupabase.contains(it.Resi.trim().uppercase()) 
-                }
-                
-                // Retry save untuk setiap record yang gagal sync
-                var successCount = 0
-                var failedCount = 0
-                
-                recordsToRetry.forEach { record ->
-                    try {
-                        // Hanya log retry attempt jika banyak item atau verbose logging
-                        if (recordsToRetry.size <= 5) {
-                            Log.d(TAG, "🔄 Retrying save for resi: ${record.Resi}")
-                        }
-                        val retrySuccess = barcodeSupabaseService.saveBarcodeScan(record)
-                        if (retrySuccess) {
-                            // **PERBAIKAN**: retrySuccess bisa true karena:
-                            // 1. Berhasil insert baru (200-299), atau
-                            // 2. Data sudah ada (409 - duplicate key)
-                            // Keduanya dianggap success
-                            successCount++
-                            // Tidak log setiap success individual untuk mengurangi noise
-                            // Hanya log summary di akhir
-                        } else {
-                            failedCount++
-                            Log.w(TAG, "⚠️ [Retry] Failed to sync resi: ${record.Resi}, will retry again later")
-                        }
-                    } catch (e: NetworkException) {
-                        // Network error: koneksi masih gagal, skip retry untuk record ini
-                        failedCount++
-                        Log.w(TAG, "⚠️ [Retry] Network error syncing resi ${record.Resi}: ${e.message} (will retry later)")
-                    } catch (e: CancellationException) {
-                        // Re-throw cancellation untuk proper coroutine handling
-                        throw e
-                    } catch (e: Exception) {
-                        failedCount++
-                        Log.e(TAG, "❌ [Retry] Error syncing resi ${record.Resi}: ${e.message}", e)
-                    }
-                }
-                
-                Log.d(TAG, "📊 Retry summary: $successCount success (including duplicates), $failedCount failed")
-                
-                // **PERBAIKAN**: Setelah retry dengan 409 handling, perlu re-fetch untuk cek status
-                // Tapi tunggu sedikit lebih lama untuk memastikan Supabase sudah fully updated
-                // delay() akan throw CancellationException jika coroutine di-cancel, yang akan di-handle oleh catch block di atas
-                delay(1000) // Increased delay untuk memastikan data sudah ter-index
-                
-                // Re-fetch untuk verify status setelah retry
-                // Gunakan query incremental sync untuk cek data yang sudah ter-sync
-                val retryCheck = try {
-                    barcodeSupabaseService.getBarcodeResiSince(sinceDate)
-                } catch (e: NetworkException) {
-                    // Network error: tidak bisa verify, skip verification
-                    Log.w(TAG, "⚠️ Network error during retry verification: ${e.message}, skipping verification")
-                    emptyList()
-                } catch (e: CancellationException) {
-                    // Re-throw cancellation untuk proper coroutine handling
-                    throw e
+                // 4. Batch verification: Cek apakah resi benar-benar tidak ada di tbl_resi
+                val missingResiList = missingInSupabase.toList()
+                val existsInResi = try {
+                    barcodeSupabaseService.batchCheckResiExists(missingResiList)
                 } catch (e: Exception) {
-                    Log.w(TAG, "⚠️ Error during retry verification: ${e.message}, using empty list")
-                    emptyList()
+                    Log.w(TAG, "⚠️ Error during batch verification: ${e.message}")
+                    // Jika error, assume semua exists (safe default)
+                    missingResiList.associateWith { true }
                 }
                 
-                val supabaseResiAfterRetry = retryCheck.map { it.Resi.trim().uppercase() }.toSet()
-                
-                // Hanya yang benar-benar tidak ada di Supabase (setelah retry) = dihapus
-                val confirmedDeleted = cachedResiSet - supabaseResiAfterRetry
-                
-                if (confirmedDeleted.isNotEmpty()) {
-                    Log.d(TAG, "🗑️ Confirmed ${confirmedDeleted.size} deleted resi (still missing after retry)")
-                } else if (missingInSupabase.isNotEmpty()) {
-                    Log.d(TAG, "✅ All missing resi have been resolved (either synced or already existed)")
-                }
-                
-                confirmedDeleted
-            } else {
-                // Tidak ada missing data, jadi tidak ada yang perlu di-retry atau dihapus
-                emptySet<String>()
-            }
-            
-            // 4. Deteksi data baru: resi yang ada di Supabase tapi tidak ada di cache = baru
-            val newResi = supabaseResiSet - cachedResiSet
-            
-            // 5. Hapus data yang dihapus di Supabase dari cache
-            // **LOGIKA BISNIS**: Jika resi dihapus dari tbl_resi, flag di expedisi harus kembali ke "NO"
-            if (deletedResi.isNotEmpty()) {
-                Log.d(TAG, "🗑️ Found ${deletedResi.size} deleted resi in cache (removed from Supabase), processing...")
-                
-                var flagUpdatedCount = 0
-                var flagUpdateFailedCount = 0
-                
-                deletedResi.forEach { resi ->
-                    // Hapus dari cache resi
-                    BarcodeCacheManager.removeResiRecord(resi)
-                    
-                    // **LOGIKA BISNIS**: Update flag di expedisi kembali ke "NO" agar resi bisa di-scan lagi
-                    try {
-                        val updateSuccess = barcodeSupabaseService.updateExpedisiFlag(resino = resi, flag = "NO")
-                        if (updateSuccess) {
-                            flagUpdatedCount++
-                            Log.d(TAG, "✅ Updated flag to 'NO' for resino: $resi")
-                            
-                            // **CACHE UPDATE**: Ambil record expedisi yang sudah di-update dan tambahkan ke cache
-                            // (jika flag=NO, record harus ada di cache expedisi)
-                            CoroutineScope(Dispatchers.IO + SupervisorJob()).launch {
-                                try {
-                                    // Fetch expedisi record yang baru di-update
-                                    val expedisiRecords = barcodeSupabaseService.getBarcodeExpedisiSince(
-                                        BarcodeCacheManager.timestampToIsoDate(System.currentTimeMillis() - 60000) // 1 menit terakhir
-                                    )
-                                    val updatedRecord = expedisiRecords.find { 
-                                        it.resino.trim().uppercase() == resi.trim().uppercase() && 
-                                        it.flag.uppercase() == "NO" 
-                                    }
-                                    
-                                    if (updatedRecord != null) {
-                                        BarcodeCacheManager.addExpedisiRecord(updatedRecord)
-                                        Log.d(TAG, "✅ Added resino back to expedisi cache: $resi")
-                                    }
-                                } catch (e: Exception) {
-                                    Log.w(TAG, "⚠️ Error fetching updated expedisi record for $resi: ${e.message}")
-                                }
-                            }
-                        } else {
-                            flagUpdateFailedCount++
-                            Log.w(TAG, "⚠️ Failed to update flag to 'NO' for resino: $resi")
+                // 5. Hapus resi yang benar-benar tidak ada di tbl_resi
+                var removedCount = 0
+                missingResiList.forEach { resi ->
+                    val exists = existsInResi.getOrDefault(resi, false)
+                    if (!exists) {
+                        // Resi benar-benar tidak ada di tbl_resi, hapus dari cache
+                        val existsInCache = cachedResi.any { 
+                            it.Resi.trim().uppercase() == resi 
                         }
-                    } catch (e: NetworkException) {
-                        // Network error: koneksi gagal, skip update flag untuk resi ini
-                        flagUpdateFailedCount++
-                        Log.w(TAG, "⚠️ Network error updating flag for resino $resi: ${e.message} (will retry later)")
-                    } catch (e: CancellationException) {
-                        // Re-throw cancellation untuk proper coroutine handling
-                        throw e
-                    } catch (e: Exception) {
-                        flagUpdateFailedCount++
-                        Log.e(TAG, "❌ Error updating flag for resino $resi: ${e.message}", e)
+                        if (existsInCache) {
+                            BarcodeCacheManager.removeResiRecord(resi)
+                            removedCount++
+                            Log.d(TAG, "🗑️ Removed deleted resi from cache: $resi")
+                        }
+                    } else {
+                        Log.d(TAG, "✅ Resi $resi still exists in tbl_resi (false positive avoided)")
                     }
                 }
                 
-                Log.d(TAG, "✅ Removed ${deletedResi.size} deleted resi from cache:")
-                Log.d(TAG, "   - Flag updated to 'NO': $flagUpdatedCount")
-                if (flagUpdateFailedCount > 0) {
-                    Log.w(TAG, "   - Flag update failed: $flagUpdateFailedCount")
-                }
-                deletedResi.take(10).forEach { resi ->
-                    Log.d(TAG, "   - $resi")
-                }
-                if (deletedResi.size > 10) {
-                    Log.d(TAG, "   ... and ${deletedResi.size - 10} more")
-                }
-            }
-            
-            // 6. Tambahkan data baru dari Supabase ke cache
-            if (newResi.isNotEmpty()) {
-                Log.d(TAG, "🆕 Found ${newResi.size} new resi in Supabase (not in cache), adding to cache...")
+                // 6. ❌ TIDAK update flag (trigger sudah handle)
+                // Trigger di Supabase akan otomatis update flag menjadi "NO" saat resi dihapus
                 
-                // Ambil full record dari Supabase untuk data baru
-                val newResiRecords = supabaseResi.filter { 
-                    newResi.contains(it.Resi.trim().uppercase()) 
+                if (removedCount > 0) {
+                    Log.d(TAG, "✅ Removed $removedCount deleted resi from cache")
+                } else {
+                    Log.d(TAG, "✅ No deleted resi found (all still exist in tbl_resi)")
                 }
-                
-                newResiRecords.forEach { record ->
-                    // Filter hanya data dalam window 7 hari
-                    if (isWithinLast7Days(record.created)) {
-                        BarcodeCacheManager.addResiRecord(record)
-                    }
-                }
-                
-                Log.d(TAG, "✅ Added ${newResiRecords.size} new resi records to cache:")
-                newResi.take(10).forEach { resi ->
-                    Log.d(TAG, "   - $resi")
-                }
-                if (newResi.size > 10) {
-                    Log.d(TAG, "   ... and ${newResi.size - 10} more")
-                }
+            } else {
+                Log.d(TAG, "✅ No deleted resi detected (cache in sync with tbl_resi)")
             }
-            
-            // 7. **OPTIMASI**: Update lastSyncTime setelah sync berhasil
-            val currentTime = System.currentTimeMillis()
-            BarcodeCacheManager.setLastResiSyncTime(currentTime)
-            Log.d(TAG, "💾 Updated last sync time: ${java.time.Instant.ofEpochMilli(currentTime).atZone(java.time.ZoneOffset.UTC).toLocalDate()}")
-            
-            if (deletedResi.isEmpty() && newResi.isEmpty()) {
-                Log.d(TAG, "✅ Cache is in sync with Supabase (no deletions, no new data)")
-            }
-            
+        } catch (e: NetworkException) {
+            // Network error: koneksi gagal
+            Log.w(TAG, "⚠️ [DELETE DETECTION] Network error (connection failed): ${e.message}")
         } catch (e: CancellationException) {
             // Re-throw cancellation untuk proper coroutine handling
-            // Ini normal behavior saat coroutine di-cancel (misalnya saat app di-close atau sync dihentikan)
             throw e
         } catch (e: Exception) {
-            Log.e(TAG, "❌ Error detecting deleted resi: ${e.message}", e)
+            // Non-critical error, log saja (tidak throw)
+            Log.w(TAG, "⚠️ Delete detection failed (non-critical): ${e.message}")
         }
     }
     

@@ -943,6 +943,82 @@ class BarcodeSupabaseService {
     }
     
     /**
+     * **BATCH VERIFICATION**: Cek apakah multiple resi ada di tbl_resi (query sekaligus)
+     * Menggunakan IN clause untuk efisiensi
+     * 
+     * @param resiList List resi yang akan di-cek
+     * @return Map<Resi, Boolean> - true jika ada, false jika tidak ada
+     */
+    suspend fun batchCheckResiExists(resiList: List<String>): Map<String, Boolean> = withContext(Dispatchers.IO) {
+        try {
+            if (resiList.isEmpty()) {
+                return@withContext emptyMap()
+            }
+            
+            Log.d(TAG, "🔍 [BATCH] Checking ${resiList.size} resi existence in tbl_resi...")
+            
+            // Batch query dengan IN clause (limit 1000 per batch untuk Supabase)
+            val batchSize = 1000
+            val resultMap = mutableMapOf<String, Boolean>()
+            
+            // Initialize semua resi dengan false (default: tidak ada)
+            resiList.forEach { resi ->
+                resultMap[resi.trim().uppercase()] = false
+            }
+            
+            // Process dalam batch (Supabase limit 1000)
+            resiList.chunked(batchSize).forEach { batch ->
+                try {
+                    // Build IN clause: Resi IN ('SPX123','SPX456',...)
+                    val resiInClause = batch.joinToString(",") { 
+                        "'${it.trim().uppercase()}'" 
+                    }
+                    
+                    val url = URL("$supabaseUrl/rest/v1/tbl_resi?select=Resi&Resi=in.($resiInClause)")
+                    val connection = url.openConnection() as HttpURLConnection
+                    connection.connectTimeout = 10000
+                    connection.readTimeout = 15000
+                    connection.requestMethod = "GET"
+                    connection.setRequestProperty("apikey", supabaseKey)
+                    connection.setRequestProperty("Authorization", "Bearer $supabaseKey")
+                    connection.setRequestProperty("Content-Type", "application/json")
+                    
+                    val responseCode = connection.responseCode
+                    if (responseCode == HttpURLConnection.HTTP_OK) {
+                        val response = connection.inputStream.bufferedReader().use { it.readText() }
+                        val jsonArray = JSONArray(response)
+                        
+                        // Mark resi yang ada sebagai true
+                        for (i in 0 until jsonArray.length()) {
+                            val jsonObject = jsonArray.getJSONObject(i)
+                            val resi = jsonObject.optString("Resi", "").trim().uppercase()
+                            if (resi.isNotEmpty()) {
+                                resultMap[resi] = true
+                            }
+                        }
+                        
+                        Log.d(TAG, "✅ [BATCH] Found ${jsonArray.length()} resi in tbl_resi (batch of ${batch.size})")
+                    } else {
+                        Log.e(TAG, "❌ [BATCH] Error checking resi existence: HTTP $responseCode")
+                    }
+                    connection.disconnect()
+                } catch (e: Exception) {
+                    Log.e(TAG, "❌ [BATCH] Error checking resi batch: ${e.message}", e)
+                }
+            }
+            
+            val existsCount = resultMap.values.count { it }
+            Log.d(TAG, "✅ [BATCH] Verification complete: ${existsCount}/${resiList.size} resi exist in tbl_resi")
+            
+            resultMap
+        } catch (e: Exception) {
+            Log.e(TAG, "❌ [BATCH] Error batch checking resi existence: ${e.message}", e)
+            // Return default (all false) jika error
+            resiList.associateWith { false }
+        }
+    }
+    
+    /**
      * **FLAG-BASED SYNC**: Get semua barcode expedisi data dengan flag = "NO"
      */
     suspend fun getAllBarcodeExpedisi(): List<BarcodeSessionRecord> = withContext(Dispatchers.IO) {

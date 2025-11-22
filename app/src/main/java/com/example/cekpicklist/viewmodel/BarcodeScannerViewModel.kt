@@ -641,13 +641,16 @@ class BarcodeScannerViewModel(application: Application) : AndroidViewModel(appli
                 // Note: Network sync terjadi di background (non-blocking)
                 // Jika network gagal, background sync akan retry otomatis (tidak perlu handle di sini)
                 
-                // **NON-BLOCKING**: Update flag di background (tidak blocking UI)
+                // ❌ TIDAK perlu update flag (trigger di Supabase sudah handle)
+                // Trigger di Supabase akan otomatis update flag menjadi "YES" saat resi di-save
+                // Hapus dari cache expedisi karena flag akan menjadi "YES" (tidak perlu di cache)
                 viewModelScope.launch(Dispatchers.IO) {
                     try {
-                        updateExpedisiFlag(barcode)
-                        Log.d(TAG, "✅ Flag updated in background for: $barcode")
+                        // Hapus dari cache expedisi (karena flag akan menjadi "YES" oleh trigger)
+                        BarcodeCacheManager.removeExpedisiRecord(barcode)
+                        Log.d(TAG, "✅ Removed from expedisi cache (flag updated by trigger): $barcode")
                     } catch (e: Exception) {
-                        Log.e(TAG, "❌ Error updating flag in background: ${e.message}", e)
+                        Log.e(TAG, "❌ Error removing from expedisi cache: ${e.message}", e)
                     }
                 }
                 

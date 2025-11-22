@@ -109,24 +109,18 @@ class BackgroundSyncManager(
                 Log.d(TAG, "📭 No pending operations to sync")
             }
             
-            // 2. Deteksi penghapusan data di Supabase (jika enhancedRepository tersedia)
+            // 2. Sync barcode data (jika enhancedRepository tersedia)
+            // Sync sudah include delete detection (cache selalu up-to-date)
             if (enhancedRepository != null) {
                 try {
-                    // Deteksi penghapusan untuk tbl_resi
-                    enhancedRepository.detectAndRemoveDeletedResi()
+                    // Sync barcode data (resi dan expedisi sudah include delete detection)
+                    // Memanggil performDailyResiSync dan performDailyExpedisiSync langsung
+                    enhancedRepository.performDailyResiSync()
+                    enhancedRepository.performDailyExpedisiSync()
                 } catch (e: CancellationException) {
                     throw e // Re-throw untuk menghentikan coroutine dengan benar
                 } catch (e: Exception) {
-                    Log.e(TAG, "❌ Error detecting deleted resi: ${e.message}", e)
-                }
-                
-                try {
-                    // Deteksi penghapusan untuk tbl_expedisi
-                    enhancedRepository.detectAndRemoveDeletedExpedisi()
-                } catch (e: CancellationException) {
-                    throw e // Re-throw untuk menghentikan coroutine dengan benar
-                } catch (e: Exception) {
-                    Log.e(TAG, "❌ Error detecting deleted expedisi: ${e.message}", e)
+                    Log.e(TAG, "❌ Error syncing barcode data: ${e.message}", e)
                 }
                 
                 // 3. Cleanup data lama (> 7 hari) - Cron job style (setiap 24 jam)

@@ -5,6 +5,7 @@ import android.os.Bundle
 import androidx.lifecycle.ViewModelProvider
 import androidx.recyclerview.widget.LinearLayoutManager
 import com.example.cekpicklist.adapter.OutActivityAdapter
+import com.example.cekpicklist.api.NirwanaApiService
 import com.example.cekpicklist.base.BaseRfidActivity
 import com.example.cekpicklist.databinding.ActivityOutBinding
 import com.example.cekpicklist.utils.Logger
@@ -213,7 +214,34 @@ class OutActivity : BaseRfidActivity() {
     // ================= BaseRfidActivity Callbacks =================
     override fun handleRfidDetected(epc: String, rssi: Int) {
         Logger.PicklistInput.d("RFID detected: $epc (RSSI: $rssi)")
-        viewModel.handleRfidDetected(epc)
+        
+        // **PERBAIKAN**: Cek apakah EPC sudah ada di scannedItemsList
+        val currentScannedItems = viewModel.scannedItems.value ?: emptyList()
+        if (currentScannedItems.any { it.epc == epc }) {
+            Logger.PicklistInput.d("RFID already in scanned items, skipping: $epc")
+            return
+        }
+        
+        // **PERBAIKAN**: Cek cache RfidScanManager dulu sebelum melakukan lookup
+        val cachedProduct: NirwanaApiService.ProductInfo? = rfidScanManager.getLookupResultForEpc(epc)
+        if (cachedProduct != null) {
+            Logger.PicklistInput.d("RFID found in cache: $epc -> ${cachedProduct.articleName}")
+            
+            // Jika ada di cache dan bukan NOT_FOUND, langsung gunakan
+            if (cachedProduct.articleName != "NOT_FOUND" && cachedProduct.articleName.isNotEmpty()) {
+                viewModel.addScannedItemFromCache(
+                    epc = epc,
+                    productInfo = cachedProduct
+                )
+            } else {
+                Logger.PicklistInput.w("RFID found in cache but marked as NOT_FOUND: $epc")
+                viewModel.handleRfidDetected(epc) // Fallback ke lookup manual
+            }
+        } else {
+            // Belum ada di cache, tunggu lookup dari RfidScanManager atau lakukan lookup manual
+            Logger.PicklistInput.d("RFID not in cache, will lookup: $epc")
+            viewModel.handleRfidDetected(epc)
+        }
     }
     
     override fun handleScanStateChanged(isScanning: Boolean) {
@@ -234,7 +262,33 @@ class OutActivity : BaseRfidActivity() {
     
     override fun handleLookupRequired(rfidList: List<String>) {
         Logger.PicklistInput.d("Lookup required for ${rfidList.size} RFID(s)")
-        // This will be handled by the ViewModel's RFID lookup system
+        
+        // **PERBAIKAN**: Hanya proses EPC yang BELUM ada di scannedItemsList
+        val currentScannedItems = viewModel.scannedItems.value ?: emptyList()
+        val existingEpcs = currentScannedItems.map { it.epc }.toSet()
+        
+        val newEpcs = rfidList.filter { epc -> !existingEpcs.contains(epc) }
+        
+        if (newEpcs.isEmpty()) {
+            Logger.PicklistInput.d("All RFIDs already in scanned items, skipping")
+            return
+        }
+        
+        Logger.PicklistInput.d("Processing ${newEpcs.size} new RFID(s) (${rfidList.size - newEpcs.size} already in list)")
+        
+        // **PERBAIKAN**: Hanya proses EPC yang benar-benar baru
+        newEpcs.forEach { epc ->
+            val productInfo: NirwanaApiService.ProductInfo? = rfidScanManager.getLookupResultForEpc(epc)
+            if (productInfo != null && productInfo.articleName != "NOT_FOUND" && productInfo.articleName.isNotEmpty()) {
+                Logger.PicklistInput.d("Processing lookup result for NEW EPC: $epc -> ${productInfo.articleName}")
+                viewModel.addScannedItemFromCache(
+                    epc = epc,
+                    productInfo = productInfo
+                )
+            } else {
+                Logger.PicklistInput.w("Lookup result for $epc is NOT_FOUND or empty")
+            }
+        }
     }
     
     override fun handleDataCleared() {
@@ -249,7 +303,10 @@ class OutActivity : BaseRfidActivity() {
             .setMessage("Apakah Anda yakin ingin menghapus semua item yang sudah di-scan?")
             .setPositiveButton("Ya, Hapus") { _, _ ->
                 Logger.PicklistInput.d("User confirmed clear all")
+                // **PERBAIKAN**: Clear cache RfidScanManager juga
+                rfidScanManager.clearAllData()
                 viewModel.clearAllItems()
+                Logger.PicklistInput.d("Cleared all items and RFID cache")
             }
             .setNegativeButton("Batal", null)
             .show()
