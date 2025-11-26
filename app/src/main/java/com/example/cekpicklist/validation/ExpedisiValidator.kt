@@ -235,31 +235,35 @@ class ExpedisiValidator(
      * Check if resi exists in tbl_resi
      * **PENTING**: Menggunakan cache-first strategy (tidak query langsung ke Supabase)
      * - Cache tbl_resi berisi data 7 hari terakhir
-     * - Fast lookup dari memory (ConcurrentHashMap)
+     * - Fast lookup dari memory (ConcurrentHashMap) - O(1) lookup
+     * **OPTIMASI**: Menggunakan getResiRecord() untuk O(1) HashMap lookup, bukan linear search
+     * **PERFORMA**: Memory lookup sangat cepat (nanoseconds), tidak perlu withContext
      */
-    private suspend fun checkResiInDatabase(resi: String): ResiDetails? = withContext(Dispatchers.IO) {
+    private fun checkResiInDatabase(resi: String): ResiDetails? {
         try {
-            val resiCache = BarcodeCacheManager.getAllResiRecords()
-            if (resiCache.isEmpty()) {
-                Log.w(TAG, "⚠️ Resi cache empty - offline validation not ready yet.")
-                return@withContext null
-            }
-
+            // **OPTIMASI**: Gunakan O(1) HashMap lookup langsung, bukan getAllResiRecords() + find()
+            // Memory lookup sangat cepat, tidak perlu suspend/withContext
             val normalizedResi = resi.trim().uppercase()
-            val resiRecord = resiCache.find { it.Resi.trim().uppercase() == normalizedResi }
+            val resiRecord = BarcodeCacheManager.getResiRecord(normalizedResi)
             
-            resiRecord?.let {
-                ResiDetails(
-                    Resi = it.Resi,
-                    created = it.created,
-                    Keterangan = it.Keterangan,
-                    nokarung = it.nokarung,
-                    schedule = it.schedule
-                )
+            if (resiRecord == null) {
+                // Cache mungkin kosong atau resi tidak ditemukan
+                if (BarcodeCacheManager.getAllResiRecords().isEmpty()) {
+                    Log.w(TAG, "⚠️ Resi cache empty - offline validation not ready yet.")
+                }
+                return null
             }
+            
+            return ResiDetails(
+                Resi = resiRecord.Resi,
+                created = resiRecord.created,
+                Keterangan = resiRecord.Keterangan,
+                nokarung = resiRecord.nokarung,
+                schedule = resiRecord.schedule
+            )
         } catch (e: Exception) {
             Log.e(TAG, "❌ Error checking resi in database: ${e.message}", e)
-            null
+            return null
         }
     }
     
@@ -307,33 +311,37 @@ class ExpedisiValidator(
     /**
      * Check if resi exists in tbl_expedisi (cache-first, flag=NO)
      * Menggunakan cache untuk performa cepat
+     * **OPTIMASI**: Menggunakan getExpedisiRecordByResino() untuk O(1) HashMap lookup, bukan linear search
+     * **PERFORMA**: Memory lookup sangat cepat (nanoseconds), tidak perlu withContext
      */
-    private suspend fun checkExpedisiInDatabase(resi: String): ExpedisiRecord? = withContext(Dispatchers.IO) {
+    private fun checkExpedisiInDatabase(resi: String): ExpedisiRecord? {
         try {
-            val expedisiCache = BarcodeCacheManager.getAllExpedisiRecords()
-            if (expedisiCache.isEmpty()) {
-                Log.w(TAG, "⚠️ Expedisi cache empty - offline validation not ready yet.")
-                return@withContext null
-            }
-
+            // **OPTIMASI**: Gunakan O(1) HashMap lookup langsung, bukan getAllExpedisiRecords() + find()
+            // Memory lookup sangat cepat, tidak perlu suspend/withContext
             val normalizedResi = resi.trim().uppercase()
-            val expedisiRecord = expedisiCache.find { it.resino.trim().uppercase() == normalizedResi }
+            val expedisiRecord = BarcodeCacheManager.getExpedisiRecordByResino(normalizedResi)
             
-            expedisiRecord?.let {
-                ExpedisiRecord(
-                    resino = it.resino.orEmpty(),
-                    orderno = it.orderno,
-                    chanelsales = it.chanelsales,
-                    couriername = it.couriername,
-                    created = it.created.orEmpty(),
-                    datetrans = it.datetrans,
-                    flag = it.flag,
-                    cekfu = it.cekfu
-                )
+            if (expedisiRecord == null) {
+                // Cache mungkin kosong atau resi tidak ditemukan
+                if (BarcodeCacheManager.getAllExpedisiRecords().isEmpty()) {
+                    Log.w(TAG, "⚠️ Expedisi cache empty - offline validation not ready yet.")
+                }
+                return null
             }
+            
+            return ExpedisiRecord(
+                resino = expedisiRecord.resino.orEmpty(),
+                orderno = expedisiRecord.orderno,
+                chanelsales = expedisiRecord.chanelsales,
+                couriername = expedisiRecord.couriername,
+                created = expedisiRecord.created.orEmpty(),
+                datetrans = expedisiRecord.datetrans,
+                flag = expedisiRecord.flag,
+                cekfu = expedisiRecord.cekfu
+            )
         } catch (e: Exception) {
             Log.e(TAG, "❌ Error checking expedisi in database: ${e.message}", e)
-            null
+            return null
         }
     }
     

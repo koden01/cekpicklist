@@ -25,6 +25,7 @@ import kotlinx.coroutines.launch
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import android.util.Log
+import android.widget.ImageButton
 
 class BarcodeInputFragment : Fragment() {
 
@@ -37,6 +38,7 @@ class BarcodeInputFragment : Fragment() {
     private lateinit var spinnerKarung: Spinner
     private lateinit var etBarcodeInput: EditText
     private lateinit var progressBar: ProgressBar
+    private lateinit var btnSyncBarcode: ImageButton
     private lateinit var audioManager: BarcodeAudioManager
     private lateinit var expedisiValidator: ExpedisiValidator
     
@@ -44,6 +46,8 @@ class BarcodeInputFragment : Fragment() {
     private var scannerInputBuffer = ""
     private var lastKeyPressTime = 0L
     private val SCANNER_TIMEOUT_MS = 500L
+    private var isProcessingScan = false
+    private var isSyncingMaster = false
 
     override fun onCreateView(
         inflater: LayoutInflater,
@@ -56,9 +60,10 @@ class BarcodeInputFragment : Fragment() {
     private fun updateTodayUnique() {
         viewLifecycleOwner.lifecycleScope.launch {
             try {
-                val uniqueCount = viewModel.getTodayUniqueExpedisiCount()
-                val scanCount = viewModel.getTodayResiScanCount()
-                tvTodayUnique.text = "transaksi hari ini : $uniqueCount  scan : $scanCount"
+                val remaining = viewModel.getTodayUniqueExpedisiCount()   // sekarang = flag NO hari ini (Room)
+                val scanCount = viewModel.getTodayResiScanCount()         // sekarang = scan hari ini schedule=ontime (Room)
+                val total = remaining + scanCount
+                tvTodayUnique.text = "sisa : $remaining  scan : $scanCount = $total"
             } catch (e: Exception) {
                 Log.e("BarcodeInputFragment", "❌ Error updating today unique: ${e.message}")
             }
@@ -103,6 +108,7 @@ class BarcodeInputFragment : Fragment() {
         spinnerKarung = view.findViewById(R.id.spinnerKarung)
         etBarcodeInput = view.findViewById(R.id.etBarcodeInput)
         progressBar = view.findViewById(R.id.progressBar)
+        btnSyncBarcode = view.findViewById(R.id.btnSyncBarcode)
         // Disable soft keyboard popup; keep focus for hardware scanner
         try {
             etBarcodeInput.showSoftInputOnFocus = false
@@ -318,7 +324,14 @@ class BarcodeInputFragment : Fragment() {
 
         // Observe processing state to show/hide loading indicator
         viewModel.isScanning.observe(viewLifecycleOwner) { isProcessing ->
-            progressBar.visibility = if (isProcessing) View.VISIBLE else View.GONE
+            isProcessingScan = isProcessing == true
+            refreshLoadingIndicator()
+        }
+
+        viewModel.isSyncingMasterData.observe(viewLifecycleOwner) { syncing ->
+            isSyncingMaster = syncing == true
+            btnSyncBarcode.isEnabled = !isSyncingMaster
+            refreshLoadingIndicator()
         }
     }
 
@@ -381,6 +394,24 @@ class BarcodeInputFragment : Fragment() {
                 false
             }
         }
+
+        btnSyncBarcode.setOnClickListener {
+            Toast.makeText(requireContext(), "Sinkronisasi master barcode...", Toast.LENGTH_SHORT).show()
+            viewModel.syncBarcodeMasterData { success ->
+                if (!isAdded) return@syncBarcodeMasterData
+                if (success) {
+                    Toast.makeText(requireContext(), "Data barcode berhasil diperbarui", Toast.LENGTH_SHORT).show()
+                    setupSpinners()
+                    updateTodayUnique()
+                } else {
+                    Toast.makeText(requireContext(), "Gagal sync barcode, cek koneksi", Toast.LENGTH_SHORT).show()
+                }
+            }
+        }
+    }
+
+    private fun refreshLoadingIndicator() {
+        progressBar.visibility = if (isProcessingScan || isSyncingMaster) View.VISIBLE else View.GONE
     }
 
     private fun processScannedBarcode(barcode: String) {
@@ -538,33 +569,6 @@ class BarcodeInputFragment : Fragment() {
         }
     }
 
-    /**
-     * Force refresh data dari Supabase
-     */
-    private fun forceRefreshData() {
-        lifecycleScope.launch {
-            try {
-                Log.d("BarcodeInputFragment", "🔄 Force refreshing barcode data...")
-                
-                val success = viewModel.forceRefreshData()
-                if (success) {
-                    Toast.makeText(requireContext(), "✅ Data berhasil di-refresh", Toast.LENGTH_SHORT).show()
-                    
-                    // Reload data setelah refresh
-                    setupSpinners()
-                    updateExpeditionInfo()
-                    updateTodayUnique()
-                    
-                    Log.d("BarcodeInputFragment", "✅ Force refresh completed successfully")
-                } else {
-                    Toast.makeText(requireContext(), "❌ Gagal refresh data", Toast.LENGTH_SHORT).show()
-                }
-            } catch (e: Exception) {
-                Log.e("BarcodeInputFragment", "❌ Error force refreshing data: ${e.message}", e)
-                Toast.makeText(requireContext(), "❌ Error: ${e.message}", Toast.LENGTH_SHORT).show()
-            }
-        }
-    }
 
     /**
      * Debug data untuk troubleshooting

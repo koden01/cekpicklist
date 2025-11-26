@@ -391,25 +391,25 @@ class RfidScanManager(
      * Dipanggil saat stop scanning atau grace period selesai
      */
     private fun triggerLookupForAllUniqueRfids() {
-        val allUniqueRfids = getAllUniqueRfids()
-        if (allUniqueRfids.isNotEmpty()) {
-            Log.d(tag, "🔥 Triggering lookup for ${allUniqueRfids.size} unique RFIDs after stop")
+        val uniqueRfids = getAllUniqueRfids()  // **STANDAR**: Konsisten dengan activity lain
+        if (uniqueRfids.isNotEmpty()) {
+            Log.d(tag, "🔥 Triggering lookup for ${uniqueRfids.size} unique RFIDs after stop")
 
             // **OPTIMASI**: Cek apakah semua EPC sudah ada di cache
-            val cachedCount = allUniqueRfids.count { epcToProduct.containsKey(it) }
-            if (cachedCount == allUniqueRfids.size) {
+            val cachedCount = uniqueRfids.count { epcToProduct.containsKey(it) }
+            if (cachedCount == uniqueRfids.size) {
                 Log.d(tag, "⚡ All EPCs already cached - immediate UI update")
                 // Langsung notify UI tanpa API call
                 activity.runOnUiThread {
                     try {
-                        onLookupRequired?.invoke(allUniqueRfids)
+                        onLookupRequired?.invoke(uniqueRfids)
                     } catch (t: Throwable) {
                         Log.e(tag, "❌ UI notify failed: ${t.message}")
                     }
                 }
             } else {
-                Log.d(tag, "🔄 ${cachedCount}/${allUniqueRfids.size} EPCs cached - performing lookup")
-                performBatchLookup(allUniqueRfids)
+                Log.d(tag, "🔄 ${cachedCount}/${uniqueRfids.size} EPCs cached - performing lookup")
+                performBatchLookup(uniqueRfids)
             }
         } else {
             Log.d(tag, "ℹ️ No unique RFIDs to lookup")

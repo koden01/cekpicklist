@@ -1282,10 +1282,91 @@ class NirwanaApiService {
             
         } catch (e: Exception) {
             Log.e(TAG, "❌ Error during relocation update: ${e.message}", e)
-                return@withContext com.example.cekpicklist.data.RelocationUpdateResponse(false, "Error: ${e.message}")
+            return@withContext com.example.cekpicklist.data.RelocationUpdateResponse(false, "Error: ${e.message}")
         }
     }
-    
+
+    /**
+     * Update tag status berdasarkan daftar EPC saja (tanpa warehouse_id).
+     * Digunakan khusus untuk UpdateTagSold (SOLD) dari Out Activity / Picklist.
+     * PUT /tag/flag/update
+     */
+    suspend fun updateTagStatusByRfids(request: com.example.cekpicklist.data.TagStatusUpdateRequest): com.example.cekpicklist.data.RelocationUpdateResponse = withContext(Dispatchers.IO) {
+        try {
+            v("Updating tag status by RFIDs only: $request")
+
+            val authHeader = getAuthHeader()
+            if (authHeader == null) {
+                Log.e(TAG, "❌ Failed to get authentication token")
+                return@withContext com.example.cekpicklist.data.RelocationUpdateResponse(false, "Failed to get auth token")
+            }
+
+            val updateUrl = "$baseUrl/tag/flag/update"
+
+            val url = URL(updateUrl)
+            val connection = url.openConnection() as HttpURLConnection
+
+            connection.requestMethod = "PUT"
+            connection.setRequestProperty("Authorization", authHeader)
+            connection.setRequestProperty("Accept", "application/json")
+            connection.setRequestProperty("Content-Type", "application/json")
+            connection.connectTimeout = CONNECT_TIMEOUT
+            connection.readTimeout = READ_TIMEOUT
+            connection.doOutput = true
+
+            val jsonBody = """
+                {
+                    "tag_status": "${request.tag_status}",
+                    "rfid_list": [${request.rfid_list.joinToString(",") { "\"$it\"" }}]
+                }
+            """.trimIndent()
+
+            if (VERBOSE_LOGS && LOG_HTTP_BODIES) {
+                Log.i(TAG, "🔥 ===== TAG STATUS UPDATE (RFID ONLY) REQUEST START =====")
+                Log.i(TAG, "🔥 Request URL: $updateUrl")
+                Log.i(TAG, "🔥 Request Method: PUT")
+                Log.i(TAG, "🔥 Request Headers: Authorization=$authHeader")
+                Log.i(TAG, "🔥 Request Body:")
+                Log.i(TAG, jsonBody)
+                Log.i(TAG, "🔥 ===== TAG STATUS UPDATE (RFID ONLY) REQUEST END =====")
+            }
+
+            val writer = java.io.OutputStreamWriter(connection.outputStream)
+            writer.write(jsonBody)
+            writer.flush()
+            writer.close()
+
+            val responseCode = connection.responseCode
+            Log.d(TAG, "📦 Tag status (RFID only) update response code: $responseCode")
+
+            if (responseCode == HttpURLConnection.HTTP_OK) {
+                val responseBody = connection.inputStream.bufferedReader().use { it.readText() }
+
+                if (VERBOSE_LOGS && LOG_HTTP_BODIES) {
+                    Log.i(TAG, "🔥 ===== TAG STATUS UPDATE (RFID ONLY) RESPONSE START =====")
+                    Log.i(TAG, "🔥 Response Code: $responseCode")
+                    Log.i(TAG, "🔥 Response Body:")
+                    Log.i(TAG, responseBody)
+                    Log.i(TAG, "🔥 ===== TAG STATUS UPDATE (RFID ONLY) RESPONSE END =====")
+                }
+
+                val jsonObject = org.json.JSONObject(responseBody)
+                val message = jsonObject.optString("message", "Update successful")
+
+                Log.d(TAG, "✅ Tag status (RFID only) update successful: $message")
+                return@withContext com.example.cekpicklist.data.RelocationUpdateResponse(true, message)
+            } else {
+                val errorBody = connection.errorStream?.bufferedReader()?.use { it.readText() } ?: "No error body"
+                Log.e(TAG, "❌ Tag status (RFID only) update failed with code $responseCode: $errorBody")
+                return@withContext com.example.cekpicklist.data.RelocationUpdateResponse(false, "Update failed: $errorBody")
+            }
+
+        } catch (e: Exception) {
+            Log.e(TAG, "❌ Error during tag status (RFID only) update: ${e.message}", e)
+            return@withContext com.example.cekpicklist.data.RelocationUpdateResponse(false, "Error: ${e.message}")
+        }
+    }
+
     /**
      * Get list warehouses dari master data
      * GET /master/warehouses

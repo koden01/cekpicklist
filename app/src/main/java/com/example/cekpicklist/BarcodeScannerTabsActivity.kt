@@ -13,7 +13,6 @@ import android.widget.Toast
 import androidx.appcompat.app.AppCompatActivity
 import androidx.lifecycle.ViewModelProvider
 import androidx.lifecycle.lifecycleScope
-import androidx.swiperefreshlayout.widget.SwipeRefreshLayout
 import com.example.cekpicklist.adapter.BarcodeViewPagerAdapter
 import com.example.cekpicklist.utils.BarcodeAudioManager
 import com.example.cekpicklist.viewmodel.BarcodeScannerViewModel
@@ -49,15 +48,12 @@ class BarcodeScannerTabsActivity : AppCompatActivity() {
     private lateinit var navDashboard: LinearLayout
     private lateinit var navHistory: LinearLayout
     private lateinit var contentFrame: View
-    private lateinit var swipeRefreshLayout: SwipeRefreshLayout
 
     private var scannerBroadcastReceiver: BroadcastReceiver? = null
     private val useBroadcastInput: Boolean = true
     private val isBroadcastEnabled: Boolean = true
     // One-shot latch: izinkan SATU broadcast setelah KeyUp 293, lalu reset
     @Volatile private var allowNextBroadcast: Boolean = false
-    private var lastAutoRefreshMs: Long = 0L
-    private val AUTO_REFRESH_INTERVAL_MS = 30_000L
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -107,27 +103,8 @@ class BarcodeScannerTabsActivity : AppCompatActivity() {
             Log.d(TAG, "✅ Scanner broadcast receiver registered")
         }
 
-        // **OPTIMASI**: Auto-refresh ringan saat kembali ke Activity (debounce 30 detik)
-        // Hanya refresh jika cache expired, tidak perlu force refresh jika cache masih valid
-        val now = System.currentTimeMillis()
-        val cacheStillValid = BarcodeCacheManager.isResiCacheValid() && 
-                             BarcodeCacheManager.isExpedisiCacheValid() &&
-                             BarcodeCacheManager.getAllResiRecords().isNotEmpty() &&
-                             BarcodeCacheManager.getAllExpedisiRecords().isNotEmpty()
-        
-        if (now - lastAutoRefreshMs > AUTO_REFRESH_INTERVAL_MS && !cacheStillValid) {
-            lastAutoRefreshMs = now
-            lifecycleScope.launch {
-                try {
-                    Log.d(TAG, "🔄 Auto-refresh onResume (cache expired)")
-                    viewModel.forceRefreshData()
-                } catch (e: Exception) {
-                    Log.w(TAG, "⚠️ Auto-refresh failed: ${e.message}")
-                }
-            }
-        } else if (cacheStillValid) {
-            Log.d(TAG, "⚡ Cache still valid, skipping auto-refresh onResume")
-        }
+        // **ROOM-ONLY**: Tidak ada auto-refresh, data hanya dari Room
+        // User harus melakukan sync manual untuk update data dari Supabase
     }
 
     override fun onPause() {
@@ -152,9 +129,6 @@ class BarcodeScannerTabsActivity : AppCompatActivity() {
     private fun setupViewModel() {
         viewModel = ViewModelProvider(this)[BarcodeScannerViewModel::class.java]
         
-        // Initialize background sync
-        viewModel.initializeBackgroundSync()
-        
         // Initialize expedisi validator (PENTING: untuk validasi NOT_FOUND)
         viewModel.initializeExpedisiValidator(this)
         
@@ -175,10 +149,6 @@ class BarcodeScannerTabsActivity : AppCompatActivity() {
         navDashboard = findViewById(R.id.navDashboard)
         navHistory = findViewById(R.id.navHistory)
         contentFrame = findViewById(R.id.contentFrame)
-        swipeRefreshLayout = findViewById(R.id.swipeRefreshLayout)
-        
-        // Setup SwipeRefreshLayout
-        setupSwipeRefresh()
         
         // Set click listeners for navbar items
         navInput.setOnClickListener { 
@@ -198,50 +168,6 @@ class BarcodeScannerTabsActivity : AppCompatActivity() {
         Log.d(TAG, "🧭 Navbar setup completed")
     }
 
-    /**
-     * Setup SwipeRefreshLayout untuk refresh data
-     */
-    private fun setupSwipeRefresh() {
-        swipeRefreshLayout.setOnRefreshListener {
-            Log.d(TAG, "🔄 Swipe refresh triggered")
-            forceRefreshData()
-        }
-        
-        // Set warna refresh indicator
-        swipeRefreshLayout.setColorSchemeResources(
-            android.R.color.holo_blue_bright,
-            android.R.color.holo_green_light,
-            android.R.color.holo_orange_light,
-            android.R.color.holo_red_light
-        )
-        
-        Log.d(TAG, "✅ SwipeRefreshLayout setup completed")
-    }
-
-    /**
-     * Force refresh data dari Supabase
-     */
-    private fun forceRefreshData() {
-        lifecycleScope.launch {
-            try {
-                Log.d(TAG, "🔄 Force refreshing barcode data...")
-                
-                val success = viewModel.forceRefreshData()
-                if (success) {
-                    Toast.makeText(this@BarcodeScannerTabsActivity, "✅ Data berhasil di-refresh", Toast.LENGTH_SHORT).show()
-                    Log.d(TAG, "✅ Force refresh completed successfully")
-                } else {
-                    Toast.makeText(this@BarcodeScannerTabsActivity, "❌ Gagal refresh data", Toast.LENGTH_SHORT).show()
-                }
-            } catch (e: Exception) {
-                Log.e(TAG, "❌ Error force refreshing data: ${e.message}", e)
-                Toast.makeText(this@BarcodeScannerTabsActivity, "❌ Error: ${e.message}", Toast.LENGTH_SHORT).show()
-            } finally {
-                // Stop refresh indicator
-                swipeRefreshLayout.isRefreshing = false
-            }
-        }
-    }
 
     private var currentTabPosition = -1  // Track current tab to prevent unnecessary switches
     

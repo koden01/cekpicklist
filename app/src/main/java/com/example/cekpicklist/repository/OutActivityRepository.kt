@@ -36,12 +36,17 @@ class OutActivityRepository(application: Application) {
             incrementTransactionCounterForToday()
 
             // Setelah submit, langsung update tag status ke SOLD per-warehouse
+            // **PERBAIKAN**: Update tag status tidak mempengaruhi success submit (data sudah tersimpan di Supabase)
             val soldPosted = updateTagStatusSold(items)
             if (!soldPosted) {
-                Logger.PicklistInput.w("Posting SOLD tag status returned partial/false result")
+                Logger.PicklistInput.w("⚠️ Posting SOLD tag status returned partial/false result, but data already saved to Supabase")
+            } else {
+                Logger.PicklistInput.d("✅ SOLD tag status updated successfully")
             }
 
-            supabaseSaved && soldPosted
+            // Return true jika Supabase save berhasil (tag status update adalah opsional)
+            // Tag status bisa di-update manual nanti jika diperlukan
+            supabaseSaved
             
         } catch (e: Exception) {
             Logger.PicklistInput.e("Error submitting out activity: ${e.message}")
@@ -91,38 +96,55 @@ class OutActivityRepository(application: Application) {
 
     /**
      * Update tag status menjadi SOLD ke endpoint /tag/flag/update.
-     * Dikelompokkan per warehouse_id untuk efisiensi payload.
+     * Menggunakan UpdateTagSold yang dapat dipanggil dari activity mana saja.
      */
     suspend fun updateTagStatusSold(items: List<OutActivityItem>): Boolean = withContext(Dispatchers.IO) {
         try {
-            if (items.isEmpty()) return@withContext true
-
-            // Group by warehouse (kosongkan group tanpa warehouse)
-            val groups = items.filter { !it.warehouse.isNullOrEmpty() }
-                .groupBy { it.warehouse ?: "" }
-
-            var allOk = true
-            for ((warehouseId, groupItems) in groups) {
-                val rfids = groupItems.map { it.epc }.distinct()
-                if (rfids.isEmpty()) continue
-
-                val request = RelocationUpdateRequest(
-                    warehouse_id = warehouseId,
-                    tag_status = "SOLD",
-                    rfid_list = rfids
-                )
-
-                val response = nirwanaApiService.updateRelocationTagStatus(request)
-                if (!response.success) {
-                    Logger.PicklistInput.e("Failed to update SOLD status for warehouse=$warehouseId: ${response.message}")
-                    allOk = false
-                } else {
-                    Logger.PicklistInput.d("SOLD status posted for warehouse=$warehouseId, rfids=${rfids.size}")
-                }
+            if (items.isEmpty()) {
+                Logger.PicklistInput.w("updateTagStatusSold: No items to update")
+                return@withContext true
             }
+
+            // **LOGGING**: Log semua items dan warehouse mereka
+            val itemsWithoutWarehouse = items.filter { it.warehouse.isNullOrEmpty() }
+            if (itemsWithoutWarehouse.isNotEmpty()) {
+                Logger.PicklistInput.w("⚠️ ${itemsWithoutWarehouse.size} items without warehouse (will be skipped): ${itemsWithoutWarehouse.map { it.epc }}")
+            }
+
+            // Convert items ke format Pair<warehouseId, rfid> untuk UpdateTagSold
+            val itemsForUpdate = items
+                .filter { !it.warehouse.isNullOrEmpty() }
+                .map { it.warehouse!! to it.epc }
+
+            if (itemsForUpdate.isEmpty()) {
+                Logger.PicklistInput.e("❌ No items with valid warehouse found! Total items: ${items.size}, items without warehouse: ${itemsWithoutWarehouse.size}")
+                return@withContext false
+            }
+
+            Logger.PicklistInput.d("📦 Updating SOLD status for ${itemsForUpdate.size} items using UpdateTagSold")
+
+            // Gunakan UpdateTagSold untuk update
+            val results = com.example.cekpicklist.utils.UpdateTagSold.updateTagSoldFromItems(itemsForUpdate)
+
+            // Check hasil update
+            val successCount = results.values.count { it.first }
+            val totalCount = results.size
+            val allOk = successCount == totalCount && totalCount > 0
+
+            if (!allOk) {
+                Logger.PicklistInput.e("❌ Some SOLD status updates failed: $successCount/$totalCount succeeded")
+                results.forEach { (warehouse, result) ->
+                    if (!result.first) {
+                        Logger.PicklistInput.e("❌ Warehouse $warehouse: ${result.second}")
+                    }
+                }
+            } else {
+                Logger.PicklistInput.d("✅ All SOLD status updates completed successfully: $successCount/$totalCount warehouse(s)")
+            }
+            
             allOk
         } catch (e: Exception) {
-            Logger.PicklistInput.e("Error posting SOLD tag status: ${e.message}", e)
+            Logger.PicklistInput.e("❌ Error posting SOLD tag status: ${e.message}", e)
             false
         }
     }
@@ -182,3 +204,4 @@ class OutActivityRepository(application: Application) {
         prefs.edit().putString("last_date", today).putInt("transaction_count", nextNumber).apply()
     }
 }
+

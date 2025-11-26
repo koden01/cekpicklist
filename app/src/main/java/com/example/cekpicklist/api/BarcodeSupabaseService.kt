@@ -15,6 +15,7 @@ import java.io.InputStreamReader
 import java.io.OutputStreamWriter
 import java.net.ConnectException
 import java.net.SocketTimeoutException
+import java.time.Instant
 
 /**
  * Custom exception untuk network error (koneksi gagal/timeout)
@@ -38,6 +39,32 @@ class BarcodeSupabaseService {
     // Supabase configuration dari BarcodeSupabaseConfig (database terpisah)
     private val supabaseUrl = BarcodeSupabaseConfig.SUPABASE_URL
     private val supabaseKey = BarcodeSupabaseConfig.SUPABASE_ANON_KEY
+
+    private val RESI_SELECT_COLUMNS = listOf(
+        "Resi",
+        "created",
+        "Keterangan",
+        "nokarung",
+        "schedule",
+        "deleted_at",
+        "version",
+        "last_modified_by"
+    ).joinToString(",")
+
+    private val EXPEDISI_SELECT_COLUMNS = listOf(
+        "orderno",
+        "datetrans",
+        "chanelsales",
+        "couriername",
+        "resino",
+        "created",
+        "flag",
+        "cekfu",
+        "update_at",
+        "deleted_at",
+        "version",
+        "last_modified_by"
+    ).joinToString(",")
     
     /**
      * Data class untuk barcode scan record
@@ -49,7 +76,11 @@ class BarcodeSupabaseService {
         val created: String? = null, // Created timestamp
         val Keterangan: String? = null, // Description/Scanner type
         val nokarung: String? = null, // Karung number
-        val schedule: String? = null // Schedule status: 'ontime', 'late', 'batal'
+        val schedule: String? = null, // Schedule status: 'ontime', 'late', 'batal'
+        val updated_at: String? = null, // Last update timestamp
+        val deleted_at: String? = null, // Soft delete marker
+        val version: Int? = null, // Row version for conflict detection
+        val last_modified_by: String? = null // Device/user identifier
     )
     
     /**
@@ -66,8 +97,57 @@ class BarcodeSupabaseService {
         val created: String? = null, // Created timestamp
         val flag: String = "NO", // Flag status
         val cekfu: Boolean = false, // Check follow up
-        val update_at: String? = null // Update timestamp untuk cache invalidation
+        val update_at: String? = null, // Update timestamp untuk cache invalidation
+        val deleted_at: String? = null, // Soft delete marker
+        val version: Int? = null, // Row version untuk multi-device
+        val last_modified_by: String? = null // Device/user identifier
     )
+
+    private fun JSONObject.optionalString(key: String): String? {
+        // Check if key exists and is not JSON null
+        if (!has(key) || isNull(key)) {
+            return null
+        }
+        val value = optString(key, "")
+        return if (value.isEmpty()) null else value
+    }
+
+    private fun JSONObject.optionalInt(key: String): Int? {
+        return if (has(key) && !isNull(key)) optInt(key) else null
+    }
+
+    private fun JSONObject.toBarcodeScanRecord(): BarcodeScanRecord {
+        return BarcodeScanRecord(
+            id = optionalString("id"),
+            Resi = optString("Resi") ?: "",
+            created = optionalString("created"),
+            Keterangan = optionalString("Keterangan"),
+            nokarung = optionalString("nokarung"),
+            schedule = optionalString("schedule"),
+            updated_at = null, // Kolom updated_at tidak ada di Supabase tbl_resi
+            deleted_at = optionalString("deleted_at"),
+            version = optionalInt("version"),
+            last_modified_by = optionalString("last_modified_by")
+        )
+    }
+
+    private fun JSONObject.toBarcodeSessionRecord(): BarcodeSessionRecord {
+        return BarcodeSessionRecord(
+            id = optionalString("id"),
+            orderno = optString("orderno") ?: "",
+            datetrans = optString("datetrans") ?: "",
+            chanelsales = optionalString("chanelsales"),
+            couriername = optionalString("couriername"),
+            resino = optString("resino") ?: "",
+            created = optionalString("created"),
+            flag = optString("flag") ?: "NO",
+            cekfu = optBoolean("cekfu", false),
+            update_at = optionalString("update_at"),
+            deleted_at = optionalString("deleted_at"),
+            version = optionalInt("version"),
+            last_modified_by = optionalString("last_modified_by")
+        )
+    }
     
     
     /**
@@ -344,16 +424,28 @@ class BarcodeSupabaseService {
             val url = URL("$supabaseUrl/rest/v1/tbl_resi?Resi=eq.$resi")
             val connection = url.openConnection() as HttpURLConnection
             
-            connection.requestMethod = "DELETE"
+            connection.requestMethod = "PATCH"
             connection.setRequestProperty("apikey", supabaseKey)
             connection.setRequestProperty("Authorization", "Bearer $supabaseKey")
             connection.setRequestProperty("Content-Type", "application/json")
             connection.setRequestProperty("Prefer", "return=minimal")
+            connection.doOutput = true
+
+            val payload = JSONObject().apply {
+                put("deleted_at", Instant.now().toString())
+            }
+
+            connection.outputStream.use { output ->
+                OutputStreamWriter(output).use { writer ->
+                    writer.write(payload.toString())
+                    writer.flush()
+                }
+            }
             
             val responseCode = connection.responseCode
             Log.d(TAG, "🗑️ Delete barcode resi response code: $responseCode")
             
-            val success = responseCode == HttpURLConnection.HTTP_OK || responseCode == HttpURLConnection.HTTP_NO_CONTENT || responseCode == 204
+            val success = responseCode in 200..299
             if (success) {
                 Log.d(TAG, "✅ Barcode resi deleted successfully: $resi")
             } else {
@@ -379,7 +471,8 @@ class BarcodeSupabaseService {
         try {
             Log.d(TAG, "📜 Getting barcode scan history for date: $date, limit: $limit")
             
-            val queryUrl = "$supabaseUrl/rest/v1/tbl_resi?created=gte.$date&order=created.desc&limit=$limit"
+            val encodedDate = URLEncoder.encode(date, "UTF-8")
+            val queryUrl = "$supabaseUrl/rest/v1/tbl_resi?select=$RESI_SELECT_COLUMNS&deleted_at=is.null&created=gte.$encodedDate&order=created.desc&limit=$limit"
             
             val url = URL(queryUrl)
             val connection = url.openConnection() as HttpURLConnection
@@ -399,15 +492,10 @@ class BarcodeSupabaseService {
                 val records = mutableListOf<BarcodeScanRecord>()
                 for (i in 0 until jsonArray.length()) {
                     val jsonObject = jsonArray.getJSONObject(i)
-                    val record = BarcodeScanRecord(
-                        id = jsonObject.optString("id")?.takeIf { it.isNotEmpty() },
-                        Resi = jsonObject.getString("Resi"),
-                        created = jsonObject.optString("created")?.takeIf { it.isNotEmpty() },
-                        Keterangan = jsonObject.optString("Keterangan")?.takeIf { it.isNotEmpty() },
-                        nokarung = jsonObject.optString("nokarung")?.takeIf { it.isNotEmpty() },
-                        schedule = jsonObject.optString("schedule")?.takeIf { it.isNotEmpty() }
-                    )
-                    records.add(record)
+                    val record = jsonObject.toBarcodeScanRecord()
+                    if (record.deleted_at == null) {
+                        records.add(record)
+                    }
                 }
                 
                 Log.d(TAG, "📜 Retrieved ${records.size} barcode scan records")
@@ -455,7 +543,8 @@ class BarcodeSupabaseService {
             Log.d(TAG, "🔍 Fetching unique courier names from tbl_expedisi...")
             
             val todayDate = getTodayDate()
-            val queryUrl = "$supabaseUrl/rest/v1/tbl_expedisi?select=couriername&couriername=not.is.null&created=gte.$todayDate&order=couriername.asc"
+            val encodedDate = URLEncoder.encode(todayDate, "UTF-8")
+            val queryUrl = "$supabaseUrl/rest/v1/tbl_expedisi?select=couriername&couriername=not.is.null&flag=eq.NO&deleted_at=is.null&created=gte.$encodedDate&order=couriername.asc"
             
             val connection = URL(queryUrl).openConnection() as HttpURLConnection
             connection.requestMethod = "GET"
@@ -503,8 +592,10 @@ class BarcodeSupabaseService {
             val limit = 1000
             var hasMore = true
             
+            val encodedCourier = URLEncoder.encode(courier, "UTF-8")
+            val encodedDate = URLEncoder.encode(todayDate, "UTF-8")
             while (hasMore) {
-                val url = URL("$supabaseUrl/rest/v1/tbl_expedisi?couriername=eq.${java.net.URLEncoder.encode(courier, "UTF-8")}&created=gte.$todayDate&order=created.desc&limit=$limit&offset=$offset")
+                val url = URL("$supabaseUrl/rest/v1/tbl_expedisi?select=id&couriername=eq.$encodedCourier&deleted_at=is.null&created=gte.$encodedDate&order=created.desc&limit=$limit&offset=$offset")
                 val connection = url.openConnection() as HttpURLConnection
                 connection.requestMethod = "GET"
                 connection.setRequestProperty("apikey", BarcodeSupabaseConfig.SUPABASE_ANON_KEY)
@@ -536,15 +627,22 @@ class BarcodeSupabaseService {
      */
     suspend fun getAllBarcodeResi(): List<BarcodeScanRecord> = withContext(Dispatchers.IO) {
         try {
+            // **SYNC MANUAL**: Ambil data 7 hari terakhir (termasuk hari ini)
             val sevenDaysAgoDate = getSevenDaysAgoDate()
+            Log.d(TAG, "📅 Fetching resi data from: $sevenDaysAgoDate (7 days ago, including today)")
             // **PERBAIKAN**: Menggunakan pagination untuk mengatasi limit 1000 Supabase
             val allRecords = mutableListOf<BarcodeScanRecord>()
             var offset = 0
             val limit = 1000 // Supabase limit maksimal per request
             var hasMoreData = true
             
+            val encodedDate = URLEncoder.encode(sevenDaysAgoDate, "UTF-8")
             while (hasMoreData) {
-                val url = URL("${BarcodeSupabaseConfig.SUPABASE_URL}/rest/v1/tbl_resi?created=gte.$sevenDaysAgoDate&order=created.desc&limit=$limit&offset=$offset")
+                // Query: 7 hari terakhir termasuk hari ini
+                // Catatan: Filter deleted_at dilakukan di aplikasi karena filter Supabase tidak bekerja dengan benar
+                val queryUrl = "${BarcodeSupabaseConfig.SUPABASE_URL}/rest/v1/tbl_resi?select=$RESI_SELECT_COLUMNS&created=gte.$encodedDate&order=created.desc&limit=$limit&offset=$offset"
+                Log.d(TAG, "🔍 Query URL: $queryUrl")
+                val url = URL(queryUrl)
                 
                 val connection = url.openConnection() as HttpURLConnection
                 connection.connectTimeout = 10000 // 10 detik connection timeout (optimized for faster failure)
@@ -554,25 +652,60 @@ class BarcodeSupabaseService {
                 connection.setRequestProperty("Authorization", "Bearer ${BarcodeSupabaseConfig.SUPABASE_ANON_KEY}")
                 connection.setRequestProperty("Content-Type", "application/json")
                 
-                val responseCode = connection.responseCode
+                val responseCode = try {
+                    connection.responseCode
+                } catch (e: Exception) {
+                    Log.e(TAG, "❌ Error getting response code (connection failed): ${e.message}", e)
+                    connection.disconnect()
+                    hasMoreData = false
+                    -1 // Return -1 to indicate connection error
+                }
+                
+                if (responseCode == -1) {
+                    // Connection failed, stop pagination
+                    break
+                }
+                
                 if (responseCode == HttpURLConnection.HTTP_OK) {
                     val response = connection.inputStream.bufferedReader().use { it.readText() }
                     val jsonArray = JSONArray(response)
+                    Log.d(TAG, "📥 Raw response: ${jsonArray.length()} records from Supabase")
                     
                     val batchRecords = mutableListOf<BarcodeScanRecord>()
+                    var validCount = 0
+                    var deletedCount = 0
                     for (i in 0 until jsonArray.length()) {
                         val jsonObject = jsonArray.getJSONObject(i)
                         
-                        val record = BarcodeScanRecord(
-                            id = jsonObject.optString("id")?.takeIf { it.isNotEmpty() },
-                            Resi = jsonObject.optString("Resi") ?: "",
-                            created = jsonObject.optString("created")?.takeIf { it.isNotEmpty() },
-                            Keterangan = jsonObject.optString("Keterangan")?.takeIf { it.isNotEmpty() },
-                            nokarung = jsonObject.optString("nokarung")?.takeIf { it.isNotEmpty() },
-                            schedule = jsonObject.optString("schedule")?.takeIf { it.isNotEmpty() }
-                        )
-                        batchRecords.add(record)
+                        // Debug: Check raw JSON value for deleted_at
+                        val rawDeletedAt = if (jsonObject.has("deleted_at")) {
+                            if (jsonObject.isNull("deleted_at")) {
+                                "JSON_NULL"
+                            } else {
+                                jsonObject.optString("deleted_at", "MISSING")
+                            }
+                        } else {
+                            "KEY_MISSING"
+                        }
+                        
+                        val record = jsonObject.toBarcodeScanRecord()
+                        if (record.deleted_at == null) {
+                            batchRecords.add(record)
+                            validCount++
+                            if (validCount <= 3) { // Log first 3 valid records
+                                Log.d(TAG, "✅ Valid resi: ${record.Resi} (raw_deleted_at=$rawDeletedAt, parsed_deleted_at=null)")
+                            }
+                        } else {
+                            deletedCount++
+                            if (deletedCount <= 5) { // Log first 5 deleted records only
+                                Log.d(TAG, "⏭️ Skipping deleted resi: ${record.Resi} (raw_deleted_at=$rawDeletedAt, parsed_deleted_at=${record.deleted_at})")
+                            }
+                        }
                     }
+                    if (deletedCount > 5) {
+                        Log.d(TAG, "⏭️ ... and ${deletedCount - 5} more deleted resi records")
+                    }
+                    Log.d(TAG, "📊 Resi batch stats: valid=$validCount, deleted=$deletedCount, total=${jsonArray.length()}")
                     
                     allRecords.addAll(batchRecords)
                     Log.d(TAG, "📦 Retrieved ${batchRecords.size} resi records (offset=$offset, total=${allRecords.size})")
@@ -582,7 +715,32 @@ class BarcodeSupabaseService {
                     offset += limit
                     
                 } else {
+                    // HTTP -1 biasanya berarti connection timeout atau network error
+                    if (responseCode == -1) {
+                        Log.e(TAG, "❌ Connection failed (HTTP -1): Timeout or network error. Check internet connection.")
+                        // Coba baca error stream untuk info lebih detail
+                        try {
+                            val errorStream = connection.errorStream
+                            if (errorStream != null) {
+                                val errorResponse = errorStream.bufferedReader().use { it.readText() }
+                                Log.e(TAG, "Error response: $errorResponse")
+                            }
+                        } catch (e: Exception) {
+                            // Ignore error reading error stream
+                        }
+                } else {
                     Log.e(TAG, "❌ Error getting barcode resi batch: HTTP $responseCode")
+                        // Coba baca error stream untuk info lebih detail
+                        try {
+                            val errorStream = connection.errorStream
+                            if (errorStream != null) {
+                                val errorResponse = errorStream.bufferedReader().use { it.readText() }
+                                Log.e(TAG, "Error response: $errorResponse")
+                            }
+                        } catch (e: Exception) {
+                            // Ignore error reading error stream
+                        }
+                    }
                     hasMoreData = false
                 }
                 
@@ -621,7 +779,7 @@ class BarcodeSupabaseService {
     }
 
     /**
-     * Incremental: ambil barcode resi sejak tanggal (YYYY-MM-DD) tertentu
+     * Incremental: ambil barcode resi sejak updated_at tertentu (ISO timestamp)
      */
     suspend fun getBarcodeResiSince(sinceDate: String): List<BarcodeScanRecord> = withContext(Dispatchers.IO) {
         try {
@@ -629,8 +787,9 @@ class BarcodeSupabaseService {
             var offset = 0
             val limit = 1000
             var hasMoreData = true
+            val encodedSince = URLEncoder.encode(sinceDate, "UTF-8")
             while (hasMoreData) {
-                val url = URL("${BarcodeSupabaseConfig.SUPABASE_URL}/rest/v1/tbl_resi?created=gte.$sinceDate&order=created.desc&limit=$limit&offset=$offset")
+                val url = URL("${BarcodeSupabaseConfig.SUPABASE_URL}/rest/v1/tbl_resi?select=$RESI_SELECT_COLUMNS&updated_at=gte.$encodedSince&order=updated_at.desc&limit=$limit&offset=$offset")
                 val connection = url.openConnection() as HttpURLConnection
                 connection.connectTimeout = 10000 // 10 detik (optimized for faster failure)
                 connection.readTimeout = 15000 // 15 detik (optimized for faster failure)
@@ -644,16 +803,7 @@ class BarcodeSupabaseService {
                     val jsonArray = JSONArray(response)
                     for (i in 0 until jsonArray.length()) {
                         val jsonObject = jsonArray.getJSONObject(i)
-                        allRecords.add(
-                            BarcodeScanRecord(
-                                id = jsonObject.optString("id").takeIf { it.isNotEmpty() },
-                                Resi = jsonObject.optString("Resi") ?: "",
-                                created = jsonObject.optString("created").takeIf { it.isNotEmpty() },
-                                Keterangan = jsonObject.optString("Keterangan").takeIf { it.isNotEmpty() },
-                                nokarung = jsonObject.optString("nokarung").takeIf { it.isNotEmpty() },
-                                schedule = jsonObject.optString("schedule").takeIf { it.isNotEmpty() }
-                            )
-                        )
+                        allRecords.add(jsonObject.toBarcodeScanRecord())
                     }
                     hasMoreData = jsonArray.length() == limit
                     offset += limit
@@ -690,7 +840,7 @@ class BarcodeSupabaseService {
     }
 
     /**
-     * Incremental: ambil expedisi (flag=NO) sejak tanggal (YYYY-MM-DD) tertentu
+     * Incremental: ambil expedisi yang berubah sejak update_at tertentu (ISO timestamp)
      */
     suspend fun getBarcodeExpedisiSince(sinceDate: String): List<BarcodeSessionRecord> = withContext(Dispatchers.IO) {
         try {
@@ -698,9 +848,9 @@ class BarcodeSupabaseService {
             var offset = 0
             val limit = 1000
             var hasMoreData = true
-            val selectCols = "orderno,datetrans,chanelsales,couriername,resino,created,flag,cekfu"
+            val encodedSince = URLEncoder.encode(sinceDate, "UTF-8")
             while (hasMoreData) {
-                val url = URL("${BarcodeSupabaseConfig.SUPABASE_URL}/rest/v1/tbl_expedisi?select=$selectCols&flag=eq.NO&created=gte.$sinceDate&order=created.desc&limit=$limit&offset=$offset")
+                val url = URL("${BarcodeSupabaseConfig.SUPABASE_URL}/rest/v1/tbl_expedisi?select=$EXPEDISI_SELECT_COLUMNS&update_at=gte.$encodedSince&order=update_at.desc&limit=$limit&offset=$offset")
                 val connection = url.openConnection() as HttpURLConnection
                 connection.connectTimeout = 10000 // 10 detik (optimized for faster failure)
                 connection.readTimeout = 15000 // 15 detik (optimized for faster failure)
@@ -714,19 +864,7 @@ class BarcodeSupabaseService {
                     val jsonArray = JSONArray(response)
                     for (i in 0 until jsonArray.length()) {
                         val jsonObject = jsonArray.getJSONObject(i)
-                        allRecords.add(
-                            BarcodeSessionRecord(
-                                id = jsonObject.optString("id").takeIf { it.isNotEmpty() },
-                                orderno = jsonObject.optString("orderno") ?: "",
-                                datetrans = jsonObject.optString("datetrans") ?: "",
-                                chanelsales = jsonObject.optString("chanelsales").takeIf { it.isNotEmpty() },
-                                couriername = jsonObject.optString("couriername").takeIf { it.isNotEmpty() },
-                                resino = jsonObject.optString("resino") ?: "",
-                                created = jsonObject.optString("created").takeIf { it.isNotEmpty() },
-                                flag = jsonObject.optString("flag") ?: "NO",
-                                cekfu = jsonObject.optBoolean("cekfu", false)
-                            )
-                        )
+                        allRecords.add(jsonObject.toBarcodeSessionRecord())
                     }
                     hasMoreData = jsonArray.length() == limit
                     offset += limit
@@ -765,7 +903,8 @@ class BarcodeSupabaseService {
     suspend fun testJoinQuery(): String = withContext(Dispatchers.IO) {
         try {
             val todayDate = getTodayDate()
-            val url = URL("${BarcodeSupabaseConfig.SUPABASE_URL}/rest/v1/tbl_resi?created=gte.$todayDate&limit=5")
+            val encodedDate = URLEncoder.encode(todayDate, "UTF-8")
+            val url = URL("${BarcodeSupabaseConfig.SUPABASE_URL}/rest/v1/tbl_resi?select=$RESI_SELECT_COLUMNS&deleted_at=is.null&created=gte.$encodedDate&limit=5")
             
             val connection = url.openConnection() as HttpURLConnection
             connection.connectTimeout = 30000
@@ -801,9 +940,10 @@ class BarcodeSupabaseService {
             val limit = 1000
             var hasMore = true
             val selectCols = "resino"
+            val encodedDate = URLEncoder.encode(todayDate, "UTF-8")
 
             while (hasMore) {
-                val url = URL("$supabaseUrl/rest/v1/tbl_expedisi?select=$selectCols&created=gte.$todayDate&order=created.desc&limit=$limit&offset=$offset")
+                val url = URL("$supabaseUrl/rest/v1/tbl_expedisi?select=$selectCols&deleted_at=is.null&created=gte.$encodedDate&order=created.desc&limit=$limit&offset=$offset")
                 val conn = url.openConnection() as HttpURLConnection
                 conn.requestMethod = "GET"
                 conn.setRequestProperty("apikey", BarcodeSupabaseConfig.SUPABASE_ANON_KEY)
@@ -850,11 +990,12 @@ class BarcodeSupabaseService {
             val limit = 1000
             var hasMore = true
             val selectCols = "id"
+            val encodedDate = URLEncoder.encode(todayDate, "UTF-8")
 
             // Filter: created >= todayDate AND schedule IN ('ontime', 'batal')
             // PostgREST syntax: or(schedule.eq.ontime,schedule.eq.batal)
             while (hasMore) {
-                val filterParams = "select=$selectCols&created=gte.$todayDate&or=(schedule.eq.ontime,schedule.eq.batal)&order=created.desc&limit=$limit&offset=$offset"
+                val filterParams = "select=$selectCols&deleted_at=is.null&created=gte.$encodedDate&or=(schedule.eq.ontime,schedule.eq.batal)&order=created.desc&limit=$limit&offset=$offset"
                 val url = URL("$supabaseUrl/rest/v1/tbl_resi?$filterParams")
                 val conn = url.openConnection() as HttpURLConnection
                 conn.requestMethod = "GET"
@@ -894,8 +1035,8 @@ class BarcodeSupabaseService {
         try {
             Log.d(TAG, "🔍 [Supabase-First] Checking resi '$resino' in tbl_expedisi (direct query)...")
             
-            val selectCols = "orderno,datetrans,chanelsales,couriername,resino,created,flag,cekfu,update_at"
-            val url = URL("$supabaseUrl/rest/v1/tbl_expedisi?select=$selectCols&resino=eq.$resino&limit=1")
+            val selectCols = EXPEDISI_SELECT_COLUMNS
+            val url = URL("$supabaseUrl/rest/v1/tbl_expedisi?select=$selectCols&deleted_at=is.null&resino=eq.$resino&limit=1")
             val connection = url.openConnection() as HttpURLConnection
             connection.connectTimeout = 10000 // 10 detik untuk validasi cepat
             connection.readTimeout = 15000
@@ -911,18 +1052,7 @@ class BarcodeSupabaseService {
                 
                 if (jsonArray.length() > 0) {
                     val jsonObject = jsonArray.getJSONObject(0)
-                    val record = BarcodeSessionRecord(
-                        id = jsonObject.optString("id")?.takeIf { it.isNotEmpty() },
-                        orderno = jsonObject.optString("orderno") ?: "",
-                        datetrans = jsonObject.optString("datetrans") ?: "",
-                        chanelsales = jsonObject.optString("chanelsales")?.takeIf { it.isNotEmpty() },
-                        couriername = jsonObject.optString("couriername")?.takeIf { it.isNotEmpty() },
-                        resino = jsonObject.optString("resino") ?: "",
-                        created = jsonObject.optString("created")?.takeIf { it.isNotEmpty() },
-                        flag = jsonObject.optString("flag") ?: "NO",
-                        cekfu = jsonObject.optBoolean("cekfu", false),
-                        update_at = jsonObject.optString("update_at")?.takeIf { it.isNotEmpty() }
-                    )
+                    val record = jsonObject.toBarcodeSessionRecord()
                     Log.d(TAG, "✅ [Supabase-First] Found resi '$resino' in tbl_expedisi: flag=${record.flag}")
                     connection.disconnect()
                     return@withContext record
@@ -974,7 +1104,7 @@ class BarcodeSupabaseService {
                         "'${it.trim().uppercase()}'" 
                     }
                     
-                    val url = URL("$supabaseUrl/rest/v1/tbl_resi?select=Resi&Resi=in.($resiInClause)")
+                    val url = URL("$supabaseUrl/rest/v1/tbl_resi?select=Resi&deleted_at=is.null&Resi=in.($resiInClause)")
                     val connection = url.openConnection() as HttpURLConnection
                     connection.connectTimeout = 10000
                     connection.readTimeout = 15000
@@ -1023,6 +1153,7 @@ class BarcodeSupabaseService {
      */
     suspend fun getAllBarcodeExpedisi(): List<BarcodeSessionRecord> = withContext(Dispatchers.IO) {
         try {
+            Log.d(TAG, "📅 Fetching expedisi data with flag=NO and deleted_at=is.null")
             // **PERBAIKAN**: Mengambil semua data dengan flag = "NO" menggunakan pagination untuk mengatasi limit 1000 Supabase
             val allRecords = mutableListOf<BarcodeSessionRecord>()
             var offset = 0
@@ -1030,8 +1161,11 @@ class BarcodeSupabaseService {
             var hasMoreData = true
             
             while (hasMoreData) {
-                val selectCols = "orderno,datetrans,chanelsales,couriername,resino,created,flag,cekfu,update_at"
-                val url = URL("${BarcodeSupabaseConfig.SUPABASE_URL}/rest/v1/tbl_expedisi?select=$selectCols&flag=eq.NO&order=created.desc&limit=$limit&offset=$offset")
+                // **SYNC MANUAL**: Ambil semua data dengan flag=NO tanpa filter tanggal
+                // Catatan: Filter deleted_at dilakukan di aplikasi karena filter Supabase tidak bekerja dengan benar
+                val queryUrl = "${BarcodeSupabaseConfig.SUPABASE_URL}/rest/v1/tbl_expedisi?select=$EXPEDISI_SELECT_COLUMNS&flag=eq.NO&order=update_at.desc&limit=$limit&offset=$offset"
+                Log.d(TAG, "🔍 Query URL: $queryUrl")
+                val url = URL(queryUrl)
                 
                 val connection = url.openConnection() as HttpURLConnection
                 connection.connectTimeout = 10000 // 10 detik connection timeout (optimized for faster failure)
@@ -1041,38 +1175,106 @@ class BarcodeSupabaseService {
                 connection.setRequestProperty("Authorization", "Bearer ${BarcodeSupabaseConfig.SUPABASE_ANON_KEY}")
                 connection.setRequestProperty("Content-Type", "application/json")
                 
-                val responseCode = connection.responseCode
+                val responseCode = try {
+                    connection.responseCode
+                } catch (e: Exception) {
+                    Log.e(TAG, "❌ Error getting response code (connection failed): ${e.message}", e)
+                    connection.disconnect()
+                    hasMoreData = false
+                    -1 // Return -1 to indicate connection error
+                }
+                
+                if (responseCode == -1) {
+                    // Connection failed, stop pagination
+                    break
+                }
+                
                 if (responseCode == HttpURLConnection.HTTP_OK) {
                     val response = connection.inputStream.bufferedReader().use { it.readText() }
                     val jsonArray = JSONArray(response)
+                    Log.d(TAG, "📥 Raw response: ${jsonArray.length()} expedisi records from Supabase")
                     
                     val batchRecords = mutableListOf<BarcodeSessionRecord>()
+                    var skippedFlag = 0
+                    var skippedDeleted = 0
+                    var loggedDeleted = 0
+                    var validCount = 0
                     for (i in 0 until jsonArray.length()) {
                         val jsonObject = jsonArray.getJSONObject(i)
-                        val record = BarcodeSessionRecord(
-                            id = jsonObject.optString("id")?.takeIf { it.isNotEmpty() },
-                            orderno = jsonObject.optString("orderno") ?: "",
-                            datetrans = jsonObject.optString("datetrans") ?: "",
-                            chanelsales = jsonObject.optString("chanelsales")?.takeIf { it.isNotEmpty() },
-                            couriername = jsonObject.optString("couriername")?.takeIf { it.isNotEmpty() },
-                            resino = jsonObject.optString("resino") ?: "",
-                            created = jsonObject.optString("created")?.takeIf { it.isNotEmpty() },
-                            flag = jsonObject.optString("flag") ?: "NO",
-                            cekfu = jsonObject.optBoolean("cekfu", false),
-                            update_at = jsonObject.optString("update_at")?.takeIf { it.isNotEmpty() }
-                        )
-                        batchRecords.add(record)
+                        
+                        // Debug: Check raw JSON value for deleted_at
+                        val rawDeletedAt = if (jsonObject.has("deleted_at")) {
+                            if (jsonObject.isNull("deleted_at")) {
+                                "JSON_NULL"
+                            } else {
+                                jsonObject.optString("deleted_at", "MISSING")
+                            }
+                        } else {
+                            "KEY_MISSING"
+                        }
+                        
+                        val record = jsonObject.toBarcodeSessionRecord()
+                        if (record.flag.uppercase() != "NO") {
+                            skippedFlag++
+                            if (skippedFlag <= 3) { // Log first 3 flag mismatches only
+                                Log.d(TAG, "⏭️ Skipping expedisi (flag=${record.flag}): ${record.resino}")
+                            }
+                        } else if (record.deleted_at != null) {
+                            skippedDeleted++
+                            loggedDeleted++
+                            if (loggedDeleted <= 5) { // Log first 5 deleted records only
+                                Log.d(TAG, "⏭️ Skipping deleted expedisi: ${record.resino} (raw_deleted_at=$rawDeletedAt, parsed_deleted_at=${record.deleted_at})")
+                            }
+                        } else {
+                            batchRecords.add(record)
+                            validCount++
+                            if (validCount <= 3) { // Log first 3 valid records
+                                Log.d(TAG, "✅ Valid expedisi: ${record.resino} (raw_deleted_at=$rawDeletedAt, parsed_deleted_at=null)")
+                            }
+                        }
                     }
+                    if (skippedFlag > 3) {
+                        Log.d(TAG, "⏭️ ... and ${skippedFlag - 3} more expedisi records with wrong flag")
+                    }
+                    if (loggedDeleted > 5) {
+                        Log.d(TAG, "⏭️ ... and ${loggedDeleted - 5} more deleted expedisi records")
+                    }
+                    Log.d(TAG, "📊 Expedisi batch stats: valid=${batchRecords.size}, deleted=$skippedDeleted, wrong_flag=$skippedFlag, total=${jsonArray.length()}")
                     
                     allRecords.addAll(batchRecords)
-                    Log.d(TAG, "📦 Retrieved ${batchRecords.size} expedisi records (offset=$offset, total=${allRecords.size})")
+                    Log.d(TAG, "📦 Retrieved ${batchRecords.size} expedisi records (offset=$offset, total=${allRecords.size}, skipped: flag=$skippedFlag, deleted=$skippedDeleted)")
                     
                     // Cek apakah masih ada data lagi
                     hasMoreData = batchRecords.size == limit
                     offset += limit
                     
                 } else {
+                    // HTTP -1 biasanya berarti connection timeout atau network error
+                    if (responseCode == -1) {
+                        Log.e(TAG, "❌ Connection failed (HTTP -1): Timeout or network error. Check internet connection.")
+                        // Coba baca error stream untuk info lebih detail
+                        try {
+                            val errorStream = connection.errorStream
+                            if (errorStream != null) {
+                                val errorResponse = errorStream.bufferedReader().use { it.readText() }
+                                Log.e(TAG, "Error response: $errorResponse")
+                            }
+                        } catch (e: Exception) {
+                            // Ignore error reading error stream
+                        }
+                } else {
                     Log.e(TAG, "❌ Error getting barcode expedisi batch: HTTP $responseCode")
+                        // Coba baca error stream untuk info lebih detail
+                        try {
+                            val errorStream = connection.errorStream
+                            if (errorStream != null) {
+                                val errorResponse = errorStream.bufferedReader().use { it.readText() }
+                                Log.e(TAG, "Error response: $errorResponse")
+                            }
+                        } catch (e: Exception) {
+                            // Ignore error reading error stream
+                        }
+                    }
                     hasMoreData = false
                 }
                 
@@ -1113,7 +1315,7 @@ class BarcodeSupabaseService {
             Log.d(TAG, "🔍 Fetching latest update_at from tbl_expedisi...")
             
             val selectCols = "update_at"
-            val url = URL("${BarcodeSupabaseConfig.SUPABASE_URL}/rest/v1/tbl_expedisi?select=$selectCols&flag=eq.NO&order=update_at.desc&limit=1")
+            val url = URL("${BarcodeSupabaseConfig.SUPABASE_URL}/rest/v1/tbl_expedisi?select=$selectCols&flag=eq.NO&deleted_at=is.null&order=update_at.desc&limit=1")
             
             val connection = url.openConnection() as HttpURLConnection
             connection.connectTimeout = 10000 // 10 detik

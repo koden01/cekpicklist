@@ -299,11 +299,11 @@ class CekPicklistActivity : BaseRfidActivity() {
     }
 
     override fun handleGracePeriodCompleted() {
-        val rfids = getAllUniqueRfids()
-        if (rfids.isNotEmpty()) {
+        val uniqueRfids = getAllUniqueRfids()  // **STANDAR**: Konsisten dengan activity lain
+        if (uniqueRfids.isNotEmpty()) {
             lifecycleScope.launch {
                 try {
-                    viewModel.performBatchLookup(rfids)
+                    viewModel.performBatchLookup(uniqueRfids)
                 } catch (e: Exception) {
         Log.e(TAG, "❌ Error performBatchLookup after grace period: ${e.message}")
                 }
@@ -365,22 +365,26 @@ class CekPicklistActivity : BaseRfidActivity() {
      */
     private fun navigateBackToPicklistInput() {
         Log.d(TAG, "🔥 Navigasi kembali ke PicklistInputActivity")
-        
-        // **PERBAIKAN**: Clear overscan dan non-picklist sebelum kembali
-        viewModel.clearRfidAndResetToInitialState()
-        
-        // **PERBAIKAN**: Jangan clear UI manual - biarkan observer yang update UI
-        // picklistAdapter.updateItems(emptyList()) // ❌ DIHAPUS - menyebabkan race condition
-        // updateSummaryCards(0, 0) // ❌ DIHAPUS - akan di-update oleh observer
-        
-        // Reset completion animation flag
-        hasShownCompletionAnimation = false
-        
-        // Navigasi ke PicklistInputActivity dengan flags untuk mencegah multiple instances
-        val intent = Intent(this, HalamanAwalActivity::class.java)
-        intent.flags = Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_SINGLE_TOP
-        startActivity(intent)
-        finish()
+
+        // Jalankan submit + update SOLD di coroutine Activity dan TUNGGU sebelum finish,
+        // supaya coroutine tidak ikut ter-cancel saat ViewModel di-cleared.
+        Log.d(TAG, "💾 Back press detected - saving data to Supabase before navigation...")
+        lifecycleScope.launch {
+            // Submit data + update SOLD (batch, sekali jalan)
+            viewModel.saveDataToSupabaseOnCompletion()
+
+            // **PERBAIKAN**: Clear overscan dan non-picklist sebelum kembali
+            viewModel.clearRfidAndResetToInitialState()
+
+            // Reset completion animation flag
+            hasShownCompletionAnimation = false
+
+            // Navigasi ke PicklistInputActivity dengan flags untuk mencegah multiple instances
+            val intent = Intent(this@CekPicklistActivity, HalamanAwalActivity::class.java)
+            intent.flags = Intent.FLAG_ACTIVITY_CLEAR_TOP or Intent.FLAG_ACTIVITY_SINGLE_TOP
+            startActivity(intent)
+            finish()
+        }
     }
     
     /**
@@ -641,15 +645,15 @@ class CekPicklistActivity : BaseRfidActivity() {
                 if (item != null) {
                     val summary = viewModel.getForeignGroupSummary(item.id)
                     if (summary != null) {
-                        Log.d(TAG, "ℹ️ Foreign group swiped – showing detail dialog instead of deleting")
-                        showForeignArticleDialog(summary)
+                        Log.d(TAG, "🗑️ Foreign group swiped – removing ALL EPCs and hiding group from list")
+                        // Hapus semua EPC untuk foreign group ini, lalu rebuild list di ViewModel
+                        viewModel.removeAllRfidForForeignGroup(item.id, rfidScanManager)
                     } else {
                         Log.d(TAG, "🔥 Item swiped to delete: ${item.articleName} ${item.size}")
                         handleItemDelete(item)
                     }
                 }
-                // Biarkan ViewModel yang mengatur data; kembalikan tampilan untuk menghindari posisi kosong sementara
-                picklistAdapter.notifyItemChanged(position)
+                // Biarkan ViewModel yang mengatur data; adapter akan di-update lewat observer filteredItems
             }
         }
 
@@ -1495,6 +1499,7 @@ class CekPicklistActivity : BaseRfidActivity() {
     
     /**
      * Check completion status and show animation if all items are complete
+     * **PERBAIKAN BARU**: Tambahkan validasi tag status TAGGED dan warehouse RETAIL
      */
     private fun checkCompletionStatus(filteredItems: List<PicklistItem>) {
         Log.d(TAG, "🔥 checkCompletionStatus called with ${filteredItems.size} filtered items")
@@ -1511,6 +1516,46 @@ class CekPicklistActivity : BaseRfidActivity() {
         val overscanItems = filteredItems.filter { it.qtyPl > 0 && it.qtyScan > it.qtyPl }
         
         Log.d(TAG, "🔥 Filtered items: ${picklistItems.size} picklist items, ${nonPicklistItems.size} non-picklist items, ${overscanItems.size} overscan items")
+        
+        // **PERBAIKAN BARU**: Akses processedRfidData untuk validasi tag status dan warehouse
+        val processedData = viewModel.processedRfidData.value ?: emptyList()
+        val normalizedRetailName = "RETAIL"
+        val normalizedRetailCode = "03010301"
+        val normalizedTagStatus = "TAGGED"
+        
+        // **PERBAIKAN BARU**: Cek validasi tag status dan warehouse untuk picklist items
+        val invalidTagStatusItems = mutableListOf<PicklistItem>()
+        val invalidWarehouseItems = mutableListOf<PicklistItem>()
+        
+        picklistItems.forEach { item ->
+            // Cari ProcessedRfidData yang sesuai dengan PicklistItem berdasarkan articleId dan size
+            val relatedProcessedData = processedData.filter { 
+                it.articleId == item.articleId && it.size == item.size 
+            }
+            
+            if (relatedProcessedData.isNotEmpty()) {
+                // Cek apakah ada EPC yang tidak TAGGED atau bukan RETAIL
+                val hasNonTagged = relatedProcessedData.any { 
+                    it.nirwanaTagStatus.trim().uppercase() != normalizedTagStatus 
+                }
+                val hasNonRetail = relatedProcessedData.any { 
+                    val warehouseValue = it.warehouse.trim().uppercase()
+                    warehouseValue != normalizedRetailName && warehouseValue != normalizedRetailCode
+                }
+                
+                if (hasNonTagged) {
+                    invalidTagStatusItems.add(item)
+                    Log.d(TAG, "🚫 Invalid tag status item: ${item.articleName} ${item.size} - has non-TAGGED EPCs")
+                }
+                if (hasNonRetail) {
+                    invalidWarehouseItems.add(item)
+                    Log.d(TAG, "🚫 Invalid warehouse item: ${item.articleName} ${item.size} - has non-RETAIL EPCs")
+                }
+            } else {
+                // Jika tidak ada processedData untuk item ini, anggap tidak valid
+                Log.w(TAG, "⚠️ No processedData found for picklist item: ${item.articleName} ${item.size}")
+            }
+        }
         
         // Log detail setiap picklist item
         picklistItems.forEach { item ->
@@ -1539,13 +1584,15 @@ class CekPicklistActivity : BaseRfidActivity() {
         val hasNonPicklistItems = nonPicklistItems.isNotEmpty()
         val hasOverscanItems = overscanItems.isNotEmpty()
         val hasIncompletePicklistItems = picklistItems.any { !it.isComplete() }
+        val hasInvalidTagStatusItems = invalidTagStatusItems.isNotEmpty()
+        val hasInvalidWarehouseItems = invalidWarehouseItems.isNotEmpty()
         
         Log.d(TAG, "🔥 Completion check: ${picklistItems.size} picklist items remaining, hasIncomplete=$hasIncompletePicklistItems")
-        Log.d(TAG, "🔥 Blocking conditions: hasNonPicklist=$hasNonPicklistItems, hasOverscan=$hasOverscanItems, hasIncomplete=$hasIncompletePicklistItems")
+        Log.d(TAG, "🔥 Blocking conditions: hasNonPicklist=$hasNonPicklistItems, hasOverscan=$hasOverscanItems, hasIncomplete=$hasIncompletePicklistItems, hasInvalidTagStatus=$hasInvalidTagStatusItems, hasInvalidWarehouse=$hasInvalidWarehouseItems")
         
-        // **PERBAIKAN KRITIS**: Hanya trigger animasi jika TIDAK ada picklist items yang belum complete DAN TIDAK ada non-picklist atau overscan
-        if (!hasIncompletePicklistItems && !hasNonPicklistItems && !hasOverscanItems) {
-            Log.d(TAG, "🎉 All picklist items completed with no non-picklist or overscan items! Showing completion animation")
+        // **PERBAIKAN KRITIS**: Hanya trigger animasi jika TIDAK ada picklist items yang belum complete, TIDAK ada non-picklist atau overscan, DAN semua EPC TAGGED dan RETAIL
+        if (!hasIncompletePicklistItems && !hasNonPicklistItems && !hasOverscanItems && !hasInvalidTagStatusItems && !hasInvalidWarehouseItems) {
+            Log.d(TAG, "🎉 All picklist items completed with no non-picklist, overscan, invalid tag status, or invalid warehouse items! Showing completion animation")
             hasShownCompletionAnimation = true
             showCompletionAnimation()
         } else {
@@ -1553,6 +1600,8 @@ class CekPicklistActivity : BaseRfidActivity() {
             if (hasIncompletePicklistItems) blockingReasons.add("has incomplete picklist items")
             if (hasNonPicklistItems) blockingReasons.add("has non-picklist items")
             if (hasOverscanItems) blockingReasons.add("has overscan items")
+            if (hasInvalidTagStatusItems) blockingReasons.add("has non-TAGGED items")
+            if (hasInvalidWarehouseItems) blockingReasons.add("has non-RETAIL items")
             
             Log.d(TAG, "🔥 Completion blocked: ${blockingReasons.joinToString(", ")}")
         }
@@ -1593,10 +1642,12 @@ class CekPicklistActivity : BaseRfidActivity() {
      */
     private fun showCompletionAnimation() {
         Log.d("MainActivity", "🔥 Menampilkan animasi completion dengan overlay yang memenuhi layar")
-        
+
         // **PERBAIKAN KRITIS**: Save data baru ke Supabase SEBELUM update status
         Log.d(TAG, "💾 Saving new data to Supabase before completion...")
-        viewModel.saveDataToSupabaseOnCompletion()
+        lifecycleScope.launch {
+            viewModel.saveDataToSupabaseOnCompletion()
+        }
         
         // **PERBAIKAN BARU**: Update status picklist ke "completed" di database
         // **DISABLED**: Kolom 'status' tidak ada di tabel picklist

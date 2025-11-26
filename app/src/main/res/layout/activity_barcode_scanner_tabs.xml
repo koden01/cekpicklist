@@ -108,19 +108,12 @@
 
     </LinearLayout>
 
-    <!-- Content Area with SwipeRefresh -->
-    <androidx.swiperefreshlayout.widget.SwipeRefreshLayout
-        android:id="@+id/swipeRefreshLayout"
+    <!-- Content Area -->
+    <FrameLayout
+        android:id="@+id/contentFrame"
         android:layout_width="match_parent"
         android:layout_height="0dp"
         android:layout_marginTop="16dp"
-        android:layout_weight="1">
-
-        <FrameLayout
-            android:id="@+id/contentFrame"
-            android:layout_width="match_parent"
-            android:layout_height="match_parent" />
-
-    </androidx.swiperefreshlayout.widget.SwipeRefreshLayout>
+        android:layout_weight="1" />
 
 </LinearLayout>

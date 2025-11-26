@@ -70,7 +70,7 @@ class RelocationViewModel(application: Application) : AndroidViewModel(applicati
     val selectedTagStatus: LiveData<TagStatus?> = _selectedTagStatus
     
     // State variables
-    private val scannedRfids = mutableSetOf<String>()  // **PERBAIKAN**: Kembalikan ke Set untuk menyimpan hanya RFID unik
+    private val uniqueRfids = mutableSetOf<String>()  // **STANDAR**: RFID unique collection (konsisten dengan activity lain)
     private val validRfids = mutableSetOf<String>()
     private var isStopping: Boolean = false
     private var isLookupRunning: Boolean = false
@@ -90,12 +90,12 @@ class RelocationViewModel(application: Application) : AndroidViewModel(applicati
      * @return Boolean - true jika RFID unik (baru), false jika sudah ada
      */
     fun addRfid(epc: String): Boolean {
-        val isNewRfid = scannedRfids.add(epc)  // **PERBAIKAN**: Hanya tambahkan RFID unik
+        val isNewRfid = uniqueRfids.add(epc)  // **STANDAR**: Hanya tambahkan RFID unik
         if (isNewRfid) {
-            Log.d("RelocationViewModel", "🔥 RFID added (UNIQUE): $epc (total unique: ${scannedRfids.size})")
+            Log.d("RelocationViewModel", "🔥 RFID added (UNIQUE): $epc (total unique: ${uniqueRfids.size})")
             updateRfidCounters()
         } else {
-            Log.d("RelocationViewModel", "ℹ️ RFID already exists: $epc (total unique: ${scannedRfids.size})")
+            Log.d("RelocationViewModel", "ℹ️ RFID already exists: $epc (total unique: ${uniqueRfids.size})")
         }
         return isNewRfid
     }
@@ -104,7 +104,7 @@ class RelocationViewModel(application: Application) : AndroidViewModel(applicati
      * Hapus RFID dari list
      */
     fun removeRfid(epc: String) {
-        val removed = scannedRfids.remove(epc)  // **PERBAIKAN**: Hapus RFID unik
+        val removed = uniqueRfids.remove(epc)  // **STANDAR**: Hapus RFID unik
         validRfids.remove(epc)
         Log.d("RelocationViewModel", "🔥 RFID removed: $epc (removed: $removed)")
         updateRfidCounters()
@@ -148,7 +148,7 @@ class RelocationViewModel(application: Application) : AndroidViewModel(applicati
      * Clear semua RFID yang di-scan (untuk memulai ulang scanning)
      */
     fun clearAllRfids() {
-        scannedRfids.clear()
+        uniqueRfids.clear()
         validRfids.clear()
         _relocationItems.value = emptyList()
         updateRfidCounters()
@@ -166,9 +166,9 @@ class RelocationViewModel(application: Application) : AndroidViewModel(applicati
             item.epc.split(",").map { it.trim() }.filter { it.isNotEmpty() }
         }
         
-        // Update scannedRfids - hanya simpan yang valid
-        scannedRfids.clear()
-        scannedRfids.addAll(allValidRfids)
+        // Update uniqueRfids - hanya simpan yang valid
+        uniqueRfids.clear()
+        uniqueRfids.addAll(allValidRfids)
         
         // Update validRfids
         validRfids.clear()
@@ -197,7 +197,7 @@ class RelocationViewModel(application: Application) : AndroidViewModel(applicati
      * Clear semua data dan reset ke state awal (setelah submit berhasil)
      */
     fun clearAllAndReset() {
-        scannedRfids.clear()
+        uniqueRfids.clear()
         validRfids.clear()
         _relocationItems.value = emptyList()
         _errorMessage.value = ""
@@ -223,7 +223,7 @@ class RelocationViewModel(application: Application) : AndroidViewModel(applicati
         // - Valid = total qty valid (sum qty untuk group isValid)
         // - INVALID = total qty tidak valid (unique - valid)
         val items = _relocationItems.value ?: emptyList()
-        val totalUnique = scannedRfids.size
+        val totalUnique = uniqueRfids.size
         val totalValidQty = items.filter { it.isValid }.sumOf { it.qty }
         val totalInvalidQty = (totalUnique - totalValidQty).coerceAtLeast(0)
 
@@ -241,7 +241,7 @@ class RelocationViewModel(application: Application) : AndroidViewModel(applicati
      * Lookup dengan finalization window agar EPC yang terlambat tetap ter-lookup
      */
     fun lookupWithFinalizationWindow(tagStatus: String) {
-        if (scannedRfids.isEmpty()) {
+        if (uniqueRfids.isEmpty()) {
             _errorMessage.value = "Tidak ada RFID yang di-scan"
             return
         }
@@ -262,13 +262,13 @@ class RelocationViewModel(application: Application) : AndroidViewModel(applicati
                 _isLoading.value = true
                 _errorMessage.value = ""
 
-                val postedSnapshot = scannedRfids.toSet()
+                val postedSnapshot = uniqueRfids.toSet()
                 Log.d("RelocationViewModel", "🛑 Finalization start - postedSnapshot size: ${postedSnapshot.size}")
 
                 // Grace period untuk menangkap EPC yang terlambat
                 delay(250)
 
-                val finalUnique = scannedRfids.toSet()
+                val finalUnique = uniqueRfids.toSet()
                 val delta = finalUnique.minus(postedSnapshot)
                 Log.d("RelocationViewModel", "🛑 Finalization end - finalUnique: ${finalUnique.size}, delta: ${delta.size}")
 
@@ -306,7 +306,7 @@ class RelocationViewModel(application: Application) : AndroidViewModel(applicati
         // **DETAILED LOGGING**
         Log.d("RelocationViewModel", "🔥 === API RESPONSE ===")
         Log.d("RelocationViewModel", "🔥 Products count from API: ${products.size}")
-        Log.d("RelocationViewModel", "🔥 Total RFIDs scanned: ${scannedRfids.size}")
+        Log.d("RelocationViewModel", "🔥 Total RFIDs scanned: ${uniqueRfids.size}")
         products.forEachIndexed { index, product ->
             Log.d("RelocationViewModel", "🔥 API Product $index: EPC=${product.rfidList.firstOrNull()}, ArticleID=${product.articleId}, ArticleName=${product.articleName}")
             if (product.articleId == "NA" || product.articleName == "NA") {
@@ -410,7 +410,7 @@ class RelocationViewModel(application: Application) : AndroidViewModel(applicati
             val invalidCount = items.size - validCount
             val naCount = items.count { it.articleName == "NA" || it.articleId == "NA" }
 
-            val totalUnique = scannedRfids.size
+            val totalUnique = uniqueRfids.size
             val totalValid = validRfids.size
             val totalNa = totalUnique - totalValid
 
@@ -427,7 +427,7 @@ class RelocationViewModel(application: Application) : AndroidViewModel(applicati
             if (ENABLE_MISSING_EPC_TEST) {
                 try {
                     val returnedValid: Set<String> = validRfids.toSet()
-                    val missingEpcs: List<String> = scannedRfids.filter { it !in returnedValid }
+                    val missingEpcs: List<String> = uniqueRfids.filter { it !in returnedValid }
                     val sampleSize = kotlin.math.min(5, missingEpcs.size)
                     Log.d("RelocationViewModel", "🧪 Single-EPC test for missing RFIDs: taking $sampleSize of ${missingEpcs.size}")
 
@@ -500,7 +500,7 @@ class RelocationViewModel(application: Application) : AndroidViewModel(applicati
                     Log.d("RelocationViewModel", "🔥 Submit successful: ${validRfids.size} items updated")
                     _successMessage.value = response.message
                     // Jangan clear data setelah submit agar bisa lookup ulang untuk perpindahan berikutnya
-                    // Biarkan scannedRfids, validRfids, dan _relocationItems tetap ada
+                    // Biarkan uniqueRfids, validRfids, dan _relocationItems tetap ada
                     
                     // Setelah submit berhasil, alihkan konteks ke TARGET sebagai CURRENT dan lakukan lookup ulang
                     try {
@@ -545,7 +545,7 @@ class RelocationViewModel(application: Application) : AndroidViewModel(applicati
     /**
      * Get list RFID yang ter-scan
      */
-    fun getScannedRfids(): List<String> = scannedRfids.toList()
+    fun getScannedRfids(): List<String> = uniqueRfids.toList()
     
     /**
      * Get list RFID yang valid
@@ -894,7 +894,7 @@ class RelocationViewModel(application: Application) : AndroidViewModel(applicati
             _relocationItems.value = sorted
             updateRfidCounters()
 
-            val totalUnique = scannedRfids.size
+            val totalUnique = uniqueRfids.size
             val totalValid = validRfids.size
             val totalNa = totalUnique - totalValid
             
@@ -948,7 +948,7 @@ class RelocationViewModel(application: Application) : AndroidViewModel(applicati
             return
         }
         
-        if (scannedRfids.isEmpty()) {
+        if (uniqueRfids.isEmpty()) {
             Log.d("RelocationViewModel", "🔄 Auto-refresh skipped: No RFID scanned yet")
             return
         }

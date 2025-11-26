@@ -47,9 +47,6 @@ class MyApplication : Application() {
         // Load cache dari database
         loadCacheFromDatabase()
         
-        // Start background sync
-        startBackgroundSync()
-        
         Log.d(TAG, "✅ Application initialized successfully")
     }
     
@@ -86,21 +83,6 @@ class MyApplication : Application() {
      */
     fun getCacheWarmingService(): CacheWarmingService {
         return cacheWarmingService
-    }
-    
-    /**
-     * Start background sync service
-     */
-    private fun startBackgroundSync() {
-        CoroutineScope(SupervisorJob() + Dispatchers.IO).launch {
-            try {
-                Log.d(TAG, "🔄 Starting background sync service...")
-                syncManager.schedulePeriodicSync()
-                Log.d(TAG, "✅ Background sync service started")
-            } catch (e: Exception) {
-                Log.e(TAG, "❌ Error starting background sync service: ${e.message}", e)
-            }
-        }
     }
     
     /**

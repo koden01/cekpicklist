@@ -7,7 +7,6 @@ import androidx.lifecycle.LiveData
 import androidx.lifecycle.MutableLiveData
 import com.example.cekpicklist.cache.PendingOperationsManager
 import com.example.cekpicklist.data.PendingOperationFactory
-import com.example.cekpicklist.sync.BackgroundSyncManager
 import com.example.cekpicklist.validation.ExpedisiValidator
 import com.example.cekpicklist.api.BarcodeExpedisiService
 import com.example.cekpicklist.utils.BarcodeNotificationManager
@@ -19,6 +18,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.async
 import kotlinx.coroutines.coroutineScope
+import kotlinx.coroutines.withContext
 import java.text.SimpleDateFormat
 import java.util.*
 
@@ -53,7 +53,6 @@ class BarcodeScannerViewModel(application: Application) : AndroidViewModel(appli
     
     // Managers
     private val pendingOperationsManager = PendingOperationsManager(application)
-    private lateinit var backgroundSyncManager: BackgroundSyncManager
     private lateinit var expedisiValidator: ExpedisiValidator
     private lateinit var notificationManager: BarcodeNotificationManager
     
@@ -97,6 +96,9 @@ class BarcodeScannerViewModel(application: Application) : AndroidViewModel(appli
     // LiveData for scanning state
     private val _isScanning = MutableLiveData<Boolean>()
     val isScanning: LiveData<Boolean> = _isScanning
+
+    private val _isSyncingMasterData = MutableLiveData(false)
+    val isSyncingMasterData: LiveData<Boolean> = _isSyncingMasterData
     
     // Scan history list - diambil via EnhancedRepository (Supabase-only cache)
     private val _scanHistoryFromDB = MutableLiveData<List<ScanHistoryItem>>()
@@ -130,6 +132,27 @@ class BarcodeScannerViewModel(application: Application) : AndroidViewModel(appli
         
         Log.d(TAG, "📱 BarcodeScannerViewModel initialized with Light Cache strategy")
     }
+
+    fun syncBarcodeMasterData(onComplete: (Boolean) -> Unit = {}) {
+        viewModelScope.launch {
+            try {
+                _isSyncingMasterData.value = true
+                val success = withContext(Dispatchers.IO) {
+                    enhancedRepository.forceBarcodeRoomRefresh()
+                }
+                _isSyncingMasterData.value = false
+                if (success) {
+                    loadScanHistoryFromDatabase()
+                    loadProcessedBarcodesFromDatabase()
+                }
+                onComplete(success)
+            } catch (e: Exception) {
+                _isSyncingMasterData.value = false
+                onComplete(false)
+                Log.e(TAG, "❌ Error syncing barcode master data: ${e.message}", e)
+            }
+        }
+    }
     
     /**
      * Initialize cache secara async saat ViewModel dibuat
@@ -138,19 +161,17 @@ class BarcodeScannerViewModel(application: Application) : AndroidViewModel(appli
     private fun initializeCacheAsync() {
         viewModelScope.launch {
             try {
-                // **OPTIMASI**: Load UI data dulu dari cache yang sudah ada (INSTANT)
+                // **ROOM-ONLY**: Load UI data dari Room (tidak ada auto-fetch dari Supabase)
                 loadScanHistoryFromDatabase()
                 loadProcessedBarcodesFromDatabase()
                 
-                // Check cache terlebih dahulu
+                // Check cache dari Room
                 val cachedResi = BarcodeCacheManager.getAllResiRecords()
                 val cachedExpedisi = BarcodeCacheManager.getAllExpedisiRecords()
-                val resiCacheValid = BarcodeCacheManager.isResiCacheValid()
-                val expedisiCacheValid = BarcodeCacheManager.isExpedisiCacheValid()
                 
-                // **OPTIMASI**: Jika cache ada dan valid, langsung gunakan (tidak perlu network call)
-                if (cachedResi.isNotEmpty() && cachedExpedisi.isNotEmpty() && resiCacheValid && expedisiCacheValid) {
-                    Log.d(TAG, "⚡ Using existing valid cache: ${cachedResi.size} resi, ${cachedExpedisi.size} expedisi (INSTANT)")
+                // **ROOM-ONLY**: Hanya load dari Room, tidak ada auto-fetch
+                if (cachedResi.isNotEmpty() && cachedExpedisi.isNotEmpty()) {
+                    Log.d(TAG, "⚡ Loaded from Room: ${cachedResi.size} resi, ${cachedExpedisi.size} expedisi")
                     
                     // Pre-warm courier names cache dari expedisi cache yang sudah ada
                     val courierNames = BarcodeCacheManager.getUniqueCourierNamesFromCache()
@@ -158,52 +179,8 @@ class BarcodeScannerViewModel(application: Application) : AndroidViewModel(appli
                         BarcodeCacheManager.setCourierNamesCache(courierNames)
                         Log.d(TAG, "⚡ Pre-warmed courier names from existing expedisi cache: ${courierNames.size} couriers")
                     }
-                    
-                    // Cache sudah ready, tidak perlu network call
-                    return@launch
-                }
-                
-                // Cache kosong atau expired - refresh di background (non-blocking)
-                if (cachedResi.isEmpty() || cachedExpedisi.isEmpty() || !resiCacheValid || !expedisiCacheValid) {
-                    Log.d(TAG, "📦 Cache empty or expired, refreshing from Supabase (background, parallel)...")
-                    
-                    // **PARALLEL FETCH**: Load resi dan expedisi secara bersamaan (non-blocking)
-                    viewModelScope.launch(Dispatchers.IO) {
-                        try {
-                            // **PARALLEL**: Fetch resi dan expedisi secara bersamaan
-                            coroutineScope {
-                                val resiDeferred = async {
-                                    enhancedRepository.getBarcodeResiRecords()
-                                }
-                                val expedisiDeferred = async {
-                                    enhancedRepository.getBarcodeExpedisiRecords()
-                                }
-                                
-                                // Wait untuk kedua fetch selesai (parallel execution)
-                                val resiRecords = resiDeferred.await()
-                                val expedisiRecords = expedisiDeferred.await()
-                                
-                                Log.d(TAG, "✅ [PARALLEL FETCH] Retrieved ${resiRecords.size} resi, ${expedisiRecords.size} expedisi")
-                                
-                                // Pre-warm courier names cache dari expedisi records
-                                if (expedisiRecords.isNotEmpty()) {
-                                    val courierNames = BarcodeCacheManager.getUniqueCourierNamesFromCache()
-                                    if (courierNames.isNotEmpty()) {
-                                        BarcodeCacheManager.setCourierNamesCache(courierNames)
-                                        Log.d(TAG, "⚡ Pre-warmed courier names cache: ${courierNames.size} couriers")
-                                    }
-                                }
-                                
-                                // Reload UI data setelah cache di-update
-                                loadScanHistoryFromDatabase()
-                                loadProcessedBarcodesFromDatabase()
-                                
-                                Log.d(TAG, "✅ Cache refreshed: ${resiRecords.size} resi, ${expedisiRecords.size} expedisi")
-                            }
-                        } catch (e: Exception) {
-                            Log.e(TAG, "❌ Error refreshing cache: ${e.message}", e)
-                        }
-                    }
+                } else {
+                    Log.d(TAG, "📦 Room cache empty - data hanya akan tersedia setelah user melakukan sync manual")
                 }
                 
             } catch (e: Exception) {
@@ -221,87 +198,85 @@ class BarcodeScannerViewModel(application: Application) : AndroidViewModel(appli
     private fun loadScanHistoryFromDatabase() {
         viewModelScope.launch {
             try {
-                // Load dari cache manager - lebih cepat
-                val barcodeResiRecords = BarcodeCacheManager.getAllResiRecords()
-                
-                // Jika cache kosong, load dari repository (akan mengisi cache)
-                if (barcodeResiRecords.isEmpty()) {
-                    Log.d(TAG, "📦 Cache empty, loading from repository...")
-                    enhancedRepository.getBarcodeResiRecords()
-                    enhancedRepository.getBarcodeExpedisiRecords()
-                }
-                
-                // Gunakan data dari cache
-                val cachedRecords = BarcodeCacheManager.getAllResiRecords()
-                Log.d(TAG, "📦 Total records in cache: ${cachedRecords.size}")
-                
-                // **PERUBAHAN**: Tampilkan SEMUA data di cache, tidak peduli apakah punya created atau tidak
-                // **SORTING**: Urutkan berdasarkan kolom `created` secara langsung (ISO 8601 string comparison)
-                // **FORMAT**: Kolom `created` di cache adalah sama persis dengan `created` di tbl_resi Supabase
-                // Format yang digunakan: ISO 8601 UTC (contoh: "2024-11-01T10:30:00.000Z" atau "2024-11-01T10:30:00Z")
-                // Alur: ViewModel (Instant.now().toString()) -> Supabase (simpan as-is) -> Ambil (optString, as-is) -> Cache (simpan as-is)
-                var withCreatedCount = 0
-                var withoutCreatedCount = 0
-                val scanHistoryItems = cachedRecords.map { record ->
-                    // Parse created timestamp untuk timestamp field (untuk display)
-                    val timestamp = try {
-                        if (!record.created.isNullOrBlank()) {
-                            try {
-                                // **PERBAIKAN**: Support multiple ISO 8601 formats
-                                // Format 1: "2024-11-01T10:30:00.000Z" (dengan Z)
-                                // Format 2: "2024-11-01T10:30:00.000+00:00" (dengan offset seperti "2025-10-29T09:15:26.678+00:00")
-                                // Format 3: "2024-11-01T10:30:00Z" (tanpa milliseconds)
-                                // **STRATEGI**: Coba parse sebagai OffsetDateTime dulu (untuk format dengan offset), jika gagal baru parse sebagai Instant
-                                val instant = try {
-                                    // Coba parse sebagai OffsetDateTime (untuk format dengan +00:00 atau -00:00)
-                                    java.time.OffsetDateTime.parse(record.created).toInstant()
-                                } catch (_: Exception) {
-                                    // Jika gagal, coba parse sebagai Instant (untuk format dengan Z)
-                                    java.time.Instant.parse(record.created)
+                val historyLoadResult = withContext(Dispatchers.IO) {
+                    // **ROOM-ONLY**: Langsung load dari Room (tidak ada auto-fetch)
+                    val cachedRecords = BarcodeCacheManager.getAllResiRecords()
+                    Log.d(TAG, "📦 Total records in cache: ${cachedRecords.size}")
+                    
+                    // **PERUBAHAN**: Tampilkan SEMUA data di cache, tidak peduli apakah punya created atau tidak
+                    // **SORTING**: Urutkan berdasarkan kolom `created` secara langsung (ISO 8601 string comparison)
+                    // **FORMAT**: Kolom `created` di cache adalah sama persis dengan `created` di tbl_resi Supabase
+                    // Format yang digunakan: ISO 8601 UTC (contoh: "2024-11-01T10:30:00.000Z" atau "2024-11-01T10:30:00Z")
+                    // Alur: ViewModel (Instant.now().toString()) -> Supabase (simpan as-is) -> Ambil (optString, as-is) -> Cache (simpan as-is)
+                    var withCreatedCount = 0
+                    var withoutCreatedCount = 0
+                    val scanHistoryItems = cachedRecords.map { record ->
+                        // Parse created timestamp untuk timestamp field (untuk display)
+                        val timestamp = try {
+                            if (!record.created.isNullOrBlank()) {
+                                try {
+                                    // **PERBAIKAN**: Support multiple ISO 8601 formats
+                                    // Format 1: "2024-11-01T10:30:00.000Z" (dengan Z)
+                                    // Format 2: "2024-11-01T10:30:00.000+00:00" (dengan offset seperti "2025-10-29T09:15:26.678+00:00")
+                                    // Format 3: "2024-11-01T10:30:00Z" (tanpa milliseconds)
+                                    // **STRATEGI**: Coba parse sebagai OffsetDateTime dulu (untuk format dengan offset), jika gagal baru parse sebagai Instant
+                                    val instant = try {
+                                        // Coba parse sebagai OffsetDateTime (untuk format dengan +00:00 atau -00:00)
+                                        java.time.OffsetDateTime.parse(record.created).toInstant()
+                                    } catch (_: Exception) {
+                                        // Jika gagal, coba parse sebagai Instant (untuk format dengan Z)
+                                        java.time.Instant.parse(record.created)
+                                    }
+                                    withCreatedCount++
+                                    instant.toEpochMilli()
+                                } catch (parseError: Exception) {
+                                    // Jika parsing gagal, gunakan fallback timestamp
+                                    withoutCreatedCount++
+                                    Log.w(TAG, "⚠️ Failed to parse created '${record.created}' for resi ${record.Resi}, using fallback timestamp: ${parseError.message}")
+                                    Long.MIN_VALUE // Urutan terakhir
                                 }
-                                withCreatedCount++
-                                instant.toEpochMilli()
-                            } catch (parseError: Exception) {
-                                // Jika parsing gagal, gunakan fallback timestamp
+                            } else {
+                                // Data tanpa created: gunakan fallback timestamp
                                 withoutCreatedCount++
-                                Log.w(TAG, "⚠️ Failed to parse created '${record.created}' for resi ${record.Resi}, using fallback timestamp: ${parseError.message}")
                                 Long.MIN_VALUE // Urutan terakhir
                             }
-                        } else {
-                            // Data tanpa created: gunakan fallback timestamp
+                        } catch (e: Exception) {
+                            // Error parsing: gunakan fallback timestamp
                             withoutCreatedCount++
+                            Log.w(TAG, "⚠️ Unexpected error parsing created for resi ${record.Resi}, using fallback: ${e.message}")
                             Long.MIN_VALUE // Urutan terakhir
                         }
-                    } catch (e: Exception) {
-                        // Error parsing: gunakan fallback timestamp
-                        withoutCreatedCount++
-                        Log.w(TAG, "⚠️ Unexpected error parsing created for resi ${record.Resi}, using fallback: ${e.message}")
-                        Long.MIN_VALUE // Urutan terakhir
+                        
+                        ScanHistoryItem(
+                            Resi = record.Resi,
+                            created = record.created ?: "N/A", // Kolom created sama persis dengan Supabase (tidak dimodifikasi)
+                            Keterangan = record.Keterangan,
+                            nokarung = record.nokarung,
+                            schedule = record.schedule ?: "ontime",
+                            timestamp = timestamp,
+                            status = "success"
+                        )
                     }
                     
-                    ScanHistoryItem(
-                        Resi = record.Resi,
-                        created = record.created ?: "N/A", // Kolom created sama persis dengan Supabase (tidak dimodifikasi)
-                        Keterangan = record.Keterangan,
-                        nokarung = record.nokarung,
-                        schedule = record.schedule ?: "ontime",
-                        timestamp = timestamp,
-                        status = "success"
-                    )
+                    // **SORT: Urutkan dari TERBARU ke LAMA berdasarkan kolom `created` (ISO 8601 string)**
+                    // Sorting menggunakan `created` string secara langsung untuk akurasi maksimal
+                    // Format ISO 8601 (e.g., "2024-11-01T10:30:00.000Z") dapat di-sort sebagai string secara leksikografis
+                    val sortedHistoryItems = scanHistoryItems.sortedWith(compareByDescending<ScanHistoryItem> { item ->
+                        // Prioritas 1: Data dengan created yang valid (bukan "N/A" atau null)
+                        if (!item.created.isNullOrBlank() && item.created != "N/A") {
+                            item.created // Sort berdasarkan created string (ISO 8601 format)
+                        } else {
+                            // Prioritas 2: Data tanpa created (diurutkan terakhir)
+                            "" // Empty string akan selalu di bawah
+                        }
+                    })
+                    
+                    Triple(sortedHistoryItems, withCreatedCount, withoutCreatedCount)
                 }
                 
-                // **SORT: Urutkan dari TERBARU ke LAMA berdasarkan kolom `created` (ISO 8601 string)**
-                // Sorting menggunakan `created` string secara langsung untuk akurasi maksimal
-                // Format ISO 8601 (e.g., "2024-11-01T10:30:00.000Z") dapat di-sort sebagai string secara leksikografis
-                val sortedHistoryItems = scanHistoryItems.sortedWith(compareByDescending<ScanHistoryItem> { item ->
-                    // Prioritas 1: Data dengan created yang valid (bukan "N/A" atau null)
-                    if (!item.created.isNullOrBlank() && item.created != "N/A") {
-                        item.created // Sort berdasarkan created string (ISO 8601 format)
-                    } else {
-                        // Prioritas 2: Data tanpa created (diurutkan terakhir)
-                        "" // Empty string akan selalu di bawah
-                    }
-                })
+                val sortedHistoryItems = historyLoadResult.first
+                val withCreatedCount = historyLoadResult.second
+                val withoutCreatedCount = historyLoadResult.third
                 
                 _scanHistoryFromDB.value = sortedHistoryItems
                 _scanHistory.value = sortedHistoryItems
@@ -320,22 +295,13 @@ class BarcodeScannerViewModel(application: Application) : AndroidViewModel(appli
     private fun loadProcessedBarcodesFromDatabase() {
         viewModelScope.launch {
             try {
-                // Load dari cache manager (HashSet) - sangat cepat
-                val processedResiSet = BarcodeCacheManager.getProcessedResiSet()
-                _processedBarcodesFromDB.value = processedResiSet
-                Log.d(TAG, "📱 Loaded ${processedResiSet.size} processed barcodes from cache (HashSet)")
-                
-                // Jika cache kosong, load dari repository (akan mengisi cache)
-                if (processedResiSet.isEmpty()) {
-                    Log.d(TAG, "📦 Cache empty, loading from repository...")
-                val barcodeResiRecords = enhancedRepository.getBarcodeResiRecords()
-                    val expedisiRecords = enhancedRepository.getBarcodeExpedisiRecords()
-                    
-                    // Cache akan diupdate oleh repository
-                    val updatedSet = BarcodeCacheManager.getProcessedResiSet()
-                    _processedBarcodesFromDB.value = updatedSet
-                    Log.d(TAG, "📱 Updated processed barcodes from repository: ${updatedSet.size}")
+                val processedResult = withContext(Dispatchers.IO) {
+                    // **ROOM-ONLY**: Langsung load dari Room (tidak ada auto-fetch)
+                    BarcodeCacheManager.getProcessedResiSet()
                 }
+                
+                _processedBarcodesFromDB.value = processedResult
+                Log.d(TAG, "📱 Loaded ${processedResult.size} processed barcodes from Room (HashSet)")
             } catch (e: Exception) {
                 Log.e(TAG, "❌ Error loading processed barcodes: ${e.message}")
                 // Fallback to cache if available
@@ -343,19 +309,6 @@ class BarcodeScannerViewModel(application: Application) : AndroidViewModel(appli
                 _processedBarcodesFromDB.value = if (cachedSet.isNotEmpty()) cachedSet else emptySet()
             }
         }
-    }
-    
-    /**
-     * Initialize background sync manager
-     */
-    fun initializeBackgroundSync() {
-        backgroundSyncManager = BackgroundSyncManager(
-            context = getApplication(),
-            pendingOperationsManager = pendingOperationsManager,
-            enhancedRepository = enhancedRepository
-        )
-        backgroundSyncManager.startBackgroundSync()
-        Log.d(TAG, "🔄 Background sync initialized")
     }
     
     /**
@@ -704,26 +657,6 @@ class BarcodeScannerViewModel(application: Application) : AndroidViewModel(appli
      */
     fun getPendingOperationsCount(): Int {
         return pendingOperationsManager.getPendingOperationsCount()
-    }
-    
-    /**
-     * Get sync status
-     */
-    fun getSyncStatus(): Map<String, Any> {
-        return if (::backgroundSyncManager.isInitialized) {
-            backgroundSyncManager.getSyncStatus()
-        } else {
-            mapOf("isSyncing" to false, "pendingOperations" to 0)
-        }
-    }
-    
-    /**
-     * Trigger manual sync
-     */
-    fun triggerManualSync() {
-        if (::backgroundSyncManager.isInitialized) {
-            backgroundSyncManager.forceSyncNow()
-        }
     }
     
     /**
@@ -1194,53 +1127,42 @@ class BarcodeScannerViewModel(application: Application) : AndroidViewModel(appli
     }
 
     /**
-     * Hitung total transaksi hari ini (unique resi) dari cache tbl_expedisi
+     * Hitung SISA hari ini = jumlah resino HARI INI dengan flag = "NO" (dari Room).
      */
     suspend fun getTodayUniqueExpedisiCount(): Int {
         return try {
-            // Supabase-first untuk akurasi real-time; fallback ke cache union jika gagal
-            val fromRemote = enhancedRepository.getTodayUniqueExpedisiCountSupabase()
-            if (fromRemote > 0) return fromRemote
-
-            val today = java.time.Instant.now().atZone(java.time.ZoneOffset.UTC).toLocalDate()
+            val today = java.time.LocalDate.now()
             val expedisi = BarcodeCacheManager.getAllExpedisiRecords()
+
             val setFromExpedisi = expedisi.asSequence()
                 .filter { rec ->
+                    // Hanya flag NO
+                    if (!rec.flag.equals("NO", ignoreCase = true)) return@filter false
+
+                    // Tentukan tanggal referensi (pakai datetrans, fallback ke created)
                     val dateStr = when {
                         !rec.datetrans.isNullOrBlank() -> rec.datetrans
                         !rec.created.isNullOrBlank() -> rec.created
                         else -> null
-                    }
-                    if (dateStr == null) return@filter false
+                    } ?: return@filter false
+
                     try {
                         val part = if (dateStr.length >= 10) dateStr.substring(0, 10) else dateStr
                         java.time.LocalDate.parse(part) == today
-                    } catch (_: Exception) { false }
+                    } catch (_: Exception) {
+                        false
+                    }
                 }
                 .map { it.resino.trim().uppercase() }
                 .toSet()
 
-            val resiRecords = enhancedRepository.getBarcodeResiRecords()
-            val setFromResi = resiRecords.asSequence()
-                .filter { rec ->
-                    try {
-                        val created = rec.created
-                        if (created.isNullOrBlank()) false else {
-                            val part = if (created.length >= 10) created.substring(0, 10) else created
-                            java.time.LocalDate.parse(part) == today
-                        }
-                    } catch (_: Exception) { false }
-                }
-                .map { it.Resi.trim().uppercase() }
-                .toSet()
-
-            (setFromExpedisi + setFromResi).size
+            setFromExpedisi.size
         } catch (_: Exception) { 0 }
     }
 
     /**
-     * Hitung total scan hari ini dari cache tbl_resi
-     * Hanya menghitung scan dengan schedule = "ontime" atau "batal" (kecualikan "late")
+     * Hitung total SCAN HARI INI dari cache tbl_resi
+     * Hanya menghitung scan dengan schedule = "ontime" (kecualikan "late" dan "batal")
      */
     suspend fun getTodayResiScanCount(): Int {
         return try {
@@ -1314,19 +1236,8 @@ class BarcodeScannerViewModel(application: Application) : AndroidViewModel(appli
                 }
             }
             
-            // **BACKGROUND REFRESH**: Refresh di background jika cache expired atau kosong
-            if (fastResult.isNotEmpty() && (!BarcodeCacheManager.isCouriersCacheValid() || cachedExpedisi.isEmpty())) {
-                Log.d(TAG, "🔄 Background refreshing expedisi data...")
-                viewModelScope.launch(Dispatchers.IO) {
-                    try {
-                        val refreshed = enhancedRepository.getUniqueCourierNames()
-                        Log.d(TAG, "✅ Background refresh completed: ${refreshed.size} expedisi")
-                        // UI akan auto-update jika LiveData dipakai
-                    } catch (e: Exception) {
-                        Log.w(TAG, "⚠️ Background refresh failed: ${e.message}")
-                    }
-                }
-            }
+            // **ROOM-ONLY**: Tidak ada background refresh, data hanya dari Room
+            // User harus melakukan sync manual untuk update data dari Supabase
             
             Log.d(TAG, "📋 Loaded ${fastResult.size} expedisi (Local-First)")
             fastResult
@@ -1648,12 +1559,6 @@ class BarcodeScannerViewModel(application: Application) : AndroidViewModel(appli
     
     override fun onCleared() {
         super.onCleared()
-        
-        // Stop background sync
-        if (::backgroundSyncManager.isInitialized) {
-            backgroundSyncManager.stopBackgroundSync()
-        }
-        
         Log.d(TAG, "📱 BarcodeScannerViewModel cleared")
     }
 }

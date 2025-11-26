@@ -99,10 +99,10 @@ class OutActivity : BaseRfidActivity() {
     
     private fun showEpcSelectionDialog(articleId: String, articleName: String, size: String) {
         val data = viewModel.scannedItems.value ?: emptyList()
-        val epcs = data.filter { it.articleId == articleId && it.size.equals(size, true) }
+        val uniqueRfids = data.filter { it.articleId == articleId && it.size.equals(size, true) }
             .map { it.epc }
-            .distinct()
-        if (epcs.isEmpty()) {
+            .distinct()  // **STANDAR**: Konsisten dengan activity lain
+        if (uniqueRfids.isEmpty()) {
             androidx.appcompat.app.AlertDialog.Builder(this)
                 .setTitle("EPC $articleName $size")
                 .setMessage("Tidak ada EPC untuk artikel ini")
@@ -110,7 +110,7 @@ class OutActivity : BaseRfidActivity() {
                 .show()
             return
         }
-        val arr = epcs.toTypedArray()
+        val arr = uniqueRfids.toTypedArray()
         androidx.appcompat.app.AlertDialog.Builder(this)
             .setTitle("Pilih EPC - $articleName $size")
             .setItems(arr) { _, which ->

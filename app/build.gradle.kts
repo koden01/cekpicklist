@@ -1,7 +1,7 @@
 ﻿plugins {
     alias(libs.plugins.android.application)
     alias(libs.plugins.kotlin.android)
-    // id("kotlin-kapt") // Removed: Room Database no longer used
+    id("kotlin-kapt")
 }
 
 android {
@@ -22,8 +22,8 @@ android {
         applicationId = "com.example.cekpicklist"
         minSdk = 30
         targetSdk = 35
-        versionCode = 45
-        versionName = "5.1.30"
+        versionCode = 46
+        versionName = "5.1.31"
 
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         
@@ -109,7 +109,10 @@ dependencies {
     implementation("androidx.media3:media3-ui:1.2.0")
     implementation("androidx.media3:media3-common:1.2.0")
     
-    // Room removed (Supabase-only mode)
+    // Room
+    implementation("androidx.room:room-runtime:2.6.1")
+    implementation("androidx.room:room-ktx:2.6.1")
+    kapt("androidx.room:room-compiler:2.6.1")
     
     // WorkManager untuk background sync
     implementation("androidx.work:work-runtime-ktx:2.9.0")
@@ -151,6 +154,7 @@ dependencies {
     // implementation("com.journeyapps:zxing-android-embedded:4.3.0")
     // implementation("com.google.zxing:core:3.5.2")
 }
+
 
 
 

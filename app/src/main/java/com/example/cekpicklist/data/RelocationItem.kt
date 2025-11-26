@@ -34,6 +34,21 @@ data class RelocationUpdateRequest(
 )
 
 /**
+ * Data class untuk request update tag status TANPA warehouse_id.
+ * Digunakan khusus untuk UpdateTagSold (SOLD) yang tidak membutuhkan pemilihan warehouse di UI.
+ *
+ * Contoh JSON:
+ * {
+ *   "tag_status": "SOLD",
+ *   "rfid_list": ["EPC1", "EPC2"]
+ * }
+ */
+data class TagStatusUpdateRequest(
+    val tag_status: String,
+    val rfid_list: List<String>
+)
+
+/**
  * Data class untuk response update tag status
  */
 data class RelocationUpdateResponse(

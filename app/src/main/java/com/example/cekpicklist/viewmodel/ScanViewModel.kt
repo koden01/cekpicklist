@@ -18,6 +18,7 @@ import com.example.cekpicklist.data.QtyStatus
 import com.example.cekpicklist.repository.Repository
 import com.example.cekpicklist.repository.EnhancedRepository
 import com.example.cekpicklist.api.NirwanaApiService
+import com.example.cekpicklist.utils.UpdateTagSold
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
@@ -474,19 +475,19 @@ class ScanViewModel(application: Application) : AndroidViewModel(application) {
         // Single-only unique-set flow: tidak menggunakan temp collection
         
         // **MODE SEDERHANA**: gunakan Set unik per picklist sebagai satu-satunya sumber kebenaran
-        val uniqueSet = getCurrentUniqueSet()
+        val uniqueRfids = getCurrentUniqueSet()  // **STANDAR**: Konsisten dengan activity lain
         val currentPicklist = currentPicklistNumber
         
         // **DEBUG ENHANCED**: Log detail tentang EPC set dengan informasi lebih lengkap
         Log.d("ScanViewModel", "🔍 EPC Check: $epc")
         Log.d("ScanViewModel", "🔍   Current picklist: $currentPicklist")
-        Log.d("ScanViewModel", "🔍   Unique set size: ${uniqueSet.size}")
-        Log.d("ScanViewModel", "🔍   Unique set contains EPC: ${uniqueSet.contains(epc)}")
+        Log.d("ScanViewModel", "🔍   Unique set size: ${uniqueRfids.size}")
+        Log.d("ScanViewModel", "🔍   Unique set contains EPC: ${uniqueRfids.contains(epc)}")
         Log.d("ScanViewModel", "🔍   Processed EPC set size: ${processedEpcPerPicklist[currentPicklist]?.size ?: 0}")
         
         // **DEBUG ENHANCED**: Log isi unique set untuk debugging
-        if (uniqueSet.isNotEmpty()) {
-            Log.d("ScanViewModel", "🔍   Unique set contents: ${uniqueSet.take(10).joinToString(", ")}${if (uniqueSet.size > 10) "..." else ""}")
+        if (uniqueRfids.isNotEmpty()) {
+            Log.d("ScanViewModel", "🔍   Unique set contents: ${uniqueRfids.take(10).joinToString(", ")}${if (uniqueRfids.size > 10) "..." else ""}")
         } else {
             Log.d("ScanViewModel", "🔍   Unique set is EMPTY - this might be the problem!")
         }
@@ -500,21 +501,21 @@ class ScanViewModel(application: Application) : AndroidViewModel(application) {
         }
         
         // **FALLBACK CHECK**: Jika unique set kosong tapi processed set ada, cek processed set juga
-        if (uniqueSet.isEmpty() && processedSet != null && processedSet.contains(epc)) {
+        if (uniqueRfids.isEmpty() && processedSet != null && processedSet.contains(epc)) {
             Log.d("ScanViewModel", "🔧 FALLBACK: EPC $epc found in processed set - TIDAK ADA SUARA")
             // Seed unique set dengan processed set untuk konsistensi
-            uniqueSet.addAll(processedSet)
-            _rfidDetectionCount.value = uniqueSet.size
+            uniqueRfids.addAll(processedSet)
+            _rfidDetectionCount.value = uniqueRfids.size
             Log.d("ScanViewModel", "🔧 FALLBACK: Seeded unique set with ${processedSet.size} EPCs from processed set")
             return Pair(false, false)
         }
         
-        if (!uniqueSet.add(epc)) {
+        if (!uniqueRfids.add(epc)) {
             Log.d("ScanViewModel", "ℹ️ EPC $epc sudah ada di unique set - TIDAK ADA SUARA")
             return Pair(false, false)
         }
-        _rfidDetectionCount.value = uniqueSet.size
-        Log.d("ScanViewModel", "✅ EPC $epc: BARU - masuk unique set - ADA SUARA (uniqueCount=${uniqueSet.size})")
+        _rfidDetectionCount.value = uniqueRfids.size
+        Log.d("ScanViewModel", "✅ EPC $epc: BARU - masuk unique set - ADA SUARA (uniqueCount=${uniqueRfids.size})")
         lastRfidDetectionTime = currentTime
         
         // Lookup sudah dilakukan oleh RfidScanManager secara otomatis
@@ -548,7 +549,7 @@ class ScanViewModel(application: Application) : AndroidViewModel(application) {
             
             // **PERBAIKAN KRITIS**: Copy RFID collection dan clear untuk batch berikutnya
             // Gunakan distinct untuk menghindari duplikasi saat post ke API
-            val distinctRfidList = emptyList<String>()
+            val uniqueRfids = emptyList<String>()
             
             // **PERBAIKAN KRITIS**: Clear tempRfidCollection SEBELUM processing untuk mencegah interference
             /* removed clear */
@@ -556,43 +557,43 @@ class ScanViewModel(application: Application) : AndroidViewModel(application) {
             
             // **PERBAIKAN BARU**: Filter EPC yang sudah diproses sebelumnya untuk mencegah re-posting
             val currentPicklist = currentPicklistNumber
-            val rfidListToProcess = if (currentPicklist != null) {
+            val rfidList = if (currentPicklist != null) {
                 val processedEpcSet = processedEpcPerPicklist[currentPicklist] ?: mutableSetOf()
                 val appliedSet = appliedEpcPerPicklist[currentPicklist] ?: mutableSetOf()
-                val newEpcs = distinctRfidList.filter { epc ->
+                val newEpcs = uniqueRfids.filter { epc ->
                     !processedEpcSet.contains(epc) &&
                     !appliedSet.contains(epc) &&
                     !inFlightEpcs.contains(epc)
                 }
                 
                 v("ScanViewModel", "🔥 EPC filtering results:")
-                v("ScanViewModel", "🔥   Total distinct EPCs: ${distinctRfidList.size}")
-                v("ScanViewModel", "🔥   Already processed EPCs: ${distinctRfidList.size - newEpcs.size}")
+                v("ScanViewModel", "🔥   Total distinct EPCs: ${uniqueRfids.size}")
+                v("ScanViewModel", "🔥   Already processed EPCs: ${uniqueRfids.size - newEpcs.size}")
                 v("ScanViewModel", "🔥   New EPCs to process: ${newEpcs.size}")
                 
-                if (distinctRfidList.size - newEpcs.size > 0) {
-                    val alreadyProcessedEpcs = distinctRfidList.filter { epc -> processedEpcSet.contains(epc) }
+                if (uniqueRfids.size - newEpcs.size > 0) {
+                    val alreadyProcessedEpcs = uniqueRfids.filter { epc -> processedEpcSet.contains(epc) }
                     v("ScanViewModel", "🔥   Already processed EPCs: ${alreadyProcessedEpcs.joinToString(", ")}")
                 }
                 
                 newEpcs
             } else {
-                distinctRfidList
+                uniqueRfids
             }
             
             // **PERBAIKAN KRITIS**: Jika tidak ada EPC baru, tidak perlu proses
-            if (rfidListToProcess.isEmpty()) {
+            if (rfidList.isEmpty()) {
                 v("ScanViewModel", "🔥 No new EPCs to process (all EPCs already processed)")
                 return
             }
             
-            v("ScanViewModel", "🔥 Processing ${rfidListToProcess.size} new RFID tags (filtered out already processed)")
+            v("ScanViewModel", "🔥 Processing ${rfidList.size} new RFID tags (filtered out already processed)")
             
             // **PERBAIKAN BARU**: Tambahkan EPC yang akan diproses ke processedEpcPerPicklist dan guard appliedEpcPerPicklist
             if (currentPicklist != null) {
                 val processedEpcSet = processedEpcPerPicklist.getOrPut(currentPicklist) { mutableSetOf() }
                 val appliedSet = appliedEpcPerPicklist.getOrPut(currentPicklist) { mutableSetOf() }
-                rfidListToProcess.forEach { epc ->
+                rfidList.forEach { epc ->
                     processedEpcSet.add(epc)
                     appliedSet.add(epc)
                     v("ScanViewModel", "✅ EPC $epc ditambahkan ke processedEpcPerPicklist[$currentPicklist] (permanent block)")
@@ -604,13 +605,13 @@ class ScanViewModel(application: Application) : AndroidViewModel(application) {
             // **PERBAIKAN KRITIS**: Batch lookup ke API Nirwana dengan true background processing
             // Gunakan coroutine terpisah untuk mencegah interference dengan scanning
             val products = try {
-                v("ScanViewModel", "🔥 Starting TRUE BACKGROUND batch lookup for ${rfidListToProcess.size} RFID tags...")
+                v("ScanViewModel", "🔥 Starting TRUE BACKGROUND batch lookup for ${rfidList.size} RFID tags...")
                 v("ScanViewModel", "🔥 This will NOT interfere with ongoing scanning")
                 
                 // **TRUE BACKGROUND**: Gunakan Job independen agar tidak ikut terbatal oleh debounce/parent
                 // Penting: Job() membuat root job baru (tidak menjadi child), sehingga tidak menerima cancel dari parent
                 withContext(Dispatchers.IO + Job()) {
-                    repository.batchLookupRfidList(rfidListToProcess)
+                    repository.batchLookupRfidList(rfidList)
                 }
             } catch (e: kotlinx.coroutines.CancellationException) {
                 v("ScanViewModel", "🔥 Background batch lookup cancelled (normal behavior): ${e.message}")
@@ -630,7 +631,7 @@ class ScanViewModel(application: Application) : AndroidViewModel(application) {
                     Log.d("ScanViewModel", "🔥 Product #${index + 1}: ${product.articleName} ${product.size} (${product.articleId})")
                 }
             v("ScanViewModel", "Products end")
-                Log.d("ScanViewModel", "🚩 ENTER MAPPING: products=${products.size}, epcs=${rfidListToProcess.size}")
+                Log.d("ScanViewModel", "🚩 ENTER MAPPING: products=${products.size}, epcs=${rfidList.size}")
                 
                 // Validasi dan kategorisasi data berdasarkan picklist
                 var currentItems = _picklistItems.value ?: emptyList()
@@ -645,7 +646,7 @@ class ScanViewModel(application: Application) : AndroidViewModel(application) {
                 // **PERBAIKAN KRITIS**: Mapping EPC ke produk menggunakan rfidList dari API response
                 Log.d("ScanViewModel", "🔥 ===== STARTING EPC MAPPING =====")
                 Log.d("ScanViewModel", "🔥 Total products from API: ${products.size}")
-                Log.d("ScanViewModel", "🔥 Total EPCs to process: ${rfidListToProcess.size}")
+                Log.d("ScanViewModel", "🔥 Total EPCs to process: ${rfidList.size}")
                 
                 // **TRACKING EPC**: Buat set untuk melacak EPC yang sudah diproses
                 val processedEpcs = mutableSetOf<String>()
@@ -766,7 +767,7 @@ class ScanViewModel(application: Application) : AndroidViewModel(application) {
                         
                         // **FALLBACK**: Jika tidak ada rfidList, gunakan mapping berdasarkan index (untuk backward compatibility)
                         val productIndex = products.indexOf(product)
-                        val epc = if (productIndex < rfidListToProcess.size) rfidListToProcess[productIndex] else ""
+                        val epc = if (productIndex < rfidList.size) rfidList[productIndex] else ""
                         
                         if (epc.isNotEmpty()) {
                             Log.d("ScanViewModel", "🔥 Fallback mapping EPC $epc -> ${product.articleName} ${product.size}")
@@ -847,9 +848,9 @@ class ScanViewModel(application: Application) : AndroidViewModel(application) {
                 Log.d("ScanViewModel", "Mapping summary: total=${processedData.size}, valid=$validCount, overscan=$overscanCount, nonPicklist=$nonPicklistCount")
                 
                 // **TRACKING EPC & FALLBACK**: Tangani EPC yang belum termap dari hasil batch
-                var remainingEpcs = rfidListToProcess.filter { !processedEpcs.contains(it) }
+                var remainingEpcs = rfidList.filter { !processedEpcs.contains(it) }
                 Log.d("ScanViewModel", "🔥 ===== EPC NOT FOUND ANALYSIS (pre-fallback) =====")
-                Log.d("ScanViewModel", "🔥 Total EPCs sent to API: ${rfidListToProcess.size}")
+                Log.d("ScanViewModel", "🔥 Total EPCs sent to API: ${rfidList.size}")
                 Log.d("ScanViewModel", "🔥 EPCs processed by API: ${processedEpcs.size}")
                 Log.d("ScanViewModel", "🔥 EPCs NOT mapped yet: ${remainingEpcs.size}")
 
@@ -1593,6 +1594,82 @@ class ScanViewModel(application: Application) : AndroidViewModel(application) {
     fun getCurrentPicklistNumber(): String? = currentPicklistNumber
     
     fun getForeignGroupSummary(groupId: String): ForeignGroupSummary? = foreignGroupSummaries[groupId]
+
+    /**
+     * Hapus SEMUA EPC untuk satu foreign group (berdasarkan groupId),
+     * lalu rebuild foreignGroupItems + _filteredItems sehingga baris NA hilang dari list.
+     */
+    fun removeAllRfidForForeignGroup(groupId: String, rfidScanManager: com.example.cekpicklist.utils.RfidScanManager? = null) {
+        Log.d("ScanViewModel", "🗑️ Removing ALL RFID for foreign group: $groupId")
+
+        viewModelScope.launch {
+            try {
+                val summary = foreignGroupSummaries[groupId]
+                if (summary == null) {
+                    Log.w("ScanViewModel", "⚠️ Foreign group summary not found for id=$groupId")
+                    return@launch
+                }
+
+                val currentData = _processedRfidData.value ?: emptyList()
+
+                // Tentukan EPC yang termasuk group ini:
+                // - warehouseCode harus sama dengan summary.warehouseCode
+                // - nirwanaTagStatus harus sama dengan summary.tagStatus
+                // - articleId/size harus salah satu dari summary.articles
+                val articleKeySet = summary.articles
+                    .map { it.articleId to it.size }
+                    .toSet()
+
+                val (toRemove, toKeep) = currentData.partition { processed ->
+                    val warehouseMatch = processed.warehouse.equals(summary.warehouseCode, ignoreCase = true)
+                    val statusMatch = processed.nirwanaTagStatus.equals(summary.tagStatus, ignoreCase = true)
+                    val articleMatch = articleKeySet.contains(processed.articleId to processed.size)
+                    warehouseMatch && statusMatch && articleMatch
+                }
+
+                if (toRemove.isEmpty()) {
+                    Log.w("ScanViewModel", "⚠️ No processed RFID records found for foreign group id=$groupId")
+                    return@launch
+                }
+
+                val epcsToRemove = toRemove.map { it.epc }.toSet()
+                Log.d("ScanViewModel", "🗑️ Removing ${epcsToRemove.size} EPCs for foreign group id=$groupId, warehouse=${summary.warehouseCode}, tagStatus=${summary.tagStatus}")
+
+                // Update processed data
+                _processedRfidData.value = toKeep
+
+                // Bersihkan dari RfidScanManager dan uniqueRfids / processedEpcPerPicklist
+                if (epcsToRemove.isNotEmpty()) {
+                    if (rfidScanManager != null) {
+                        Log.d("ScanViewModel", "🗑️ Removing ${epcsToRemove.size} EPCs from RfidScanManager for foreign group")
+                        rfidScanManager.removeEpcs(epcsToRemove)
+                    } else {
+                        Log.w("ScanViewModel", "⚠️ Cannot remove EPCs from RfidScanManager for foreign group: reference not provided")
+                    }
+
+                    val uniqueRfids = getCurrentUniqueSet()
+                    epcsToRemove.forEach { epc ->
+                        uniqueRfids.remove(epc)
+                    }
+                    Log.d("ScanViewModel", "🗑️ Removed ${epcsToRemove.size} EPCs from uniqueRfids for foreign group (size now: ${uniqueRfids.size})")
+
+                    val currentPicklist = currentPicklistNumber
+                    if (currentPicklist != null) {
+                        epcsToRemove.forEach { epc ->
+                            processedEpcPerPicklist[currentPicklist]?.remove(epc)
+                        }
+                        Log.d("ScanViewModel", "🗑️ Removed ${epcsToRemove.size} EPCs from processedEpcPerPicklist for foreign group (set size: ${processedEpcPerPicklist[currentPicklist]?.size ?: 0})")
+                    }
+                }
+
+                // Setelah processed data berubah, panggil ulang updateFilteredItems()
+                Log.d("ScanViewModel", "🔄 Rebuilding filtered items after foreign group removal")
+                updateFilteredItems()
+            } catch (e: Exception) {
+                Log.e("ScanViewModel", "❌ Error removing RFID for foreign group $groupId: ${e.message}", e)
+            }
+        }
+    }
     
     /**
      * Get processed EPC list for current picklist (untuk seeding RfidScanManager)
@@ -1756,9 +1833,9 @@ class ScanViewModel(application: Application) : AndroidViewModel(application) {
      * Fungsi terpusat untuk memastikan konsistensi
      */
     private fun updateRfidCounter() {
-        val uniqueSet = getCurrentUniqueSet()
-        _rfidDetectionCount.value = uniqueSet.size
-        Log.d("ScanViewModel", "📊 RFID counter updated (unique) total=${uniqueSet.size}")
+        val uniqueRfids = getCurrentUniqueSet()  // **STANDAR**: Konsisten dengan activity lain
+        _rfidDetectionCount.value = uniqueRfids.size
+        Log.d("ScanViewModel", "📊 RFID counter updated (unique) total=${uniqueRfids.size}")
     }
     
     /**
@@ -1844,33 +1921,15 @@ class ScanViewModel(application: Application) : AndroidViewModel(application) {
                 globalBackgroundReloadJob?.cancel()
                 globalBackgroundReloadJob = null
                 
-                // **PERBAIKAN KRITIS**: Simpan HANYA data yang valid ke Supabase menggunakan TRUE BACKGROUND processing
-                // Gunakan GlobalScope untuk mencegah interference dengan activity lifecycle
-                Log.d("ScanViewModel", "🔥 Starting TRUE BACKGROUND save to Supabase (VALID DATA ONLY)...")
-                Log.d("ScanViewModel", "🔥 Overscan dan Non-picklist data akan DIBUANG, tidak disimpan")
+                // **STANDAR**: Submit HANYA dilakukan pada 2 kondisi:
+                // 1. Semua item sesuai (completion) - dipanggil dari showCompletionAnimation()
+                // 2. Tekan back - dipanggil dari navigateBackToPicklistInput()
+                // Clear TIDAK melakukan submit - hanya clear data lokal
+                Log.d("ScanViewModel", "🧹 Clear operation - NO SUBMIT (submit hanya saat completion atau back press)")
                 
-                // **PERBAIKAN KRITIS**: Gunakan GlobalScope agar proses save tidak ikut di-cancel
-                // saat user keluar dari activity
-                GlobalScope.launch(Dispatchers.IO) {
-                    try {
-                        saveValidDataToSupabaseBatch()
-                        Log.d("ScanViewModel", "✅ Background save completed successfully - only valid data saved")
-                        
-                        // **PERBAIKAN KRITIS**: Clear data SETELAH save selesai
-                        withContext(Dispatchers.Main) {
-                            _processedRfidData.value = emptyList()
-                            Log.d("ScanViewModel", "🧹 Processed data cleared after successful save")
-                        }
-                    } catch (e: Exception) {
-                        Log.e("ScanViewModel", "❌ Background save failed: ${e.message}", e)
-                        
-                        // **PERBAIKAN**: Clear data meskipun save gagal
-                        withContext(Dispatchers.Main) {
-                            _processedRfidData.value = emptyList()
-                            Log.d("ScanViewModel", "🧹 Processed data cleared after failed save")
-                        }
-                    }
-                }
+                // Clear processed data tanpa submit
+                _processedRfidData.value = emptyList()
+                Log.d("ScanViewModel", "🧹 Processed data cleared (no submit)")
                 
                 // **PERBAIKAN**: Izinkan re-scan untuk picklist saat ini setelah Clear
                 currentPicklistNumber?.let { allowRescanPicklists.add(it) }
@@ -2124,12 +2183,12 @@ class ScanViewModel(application: Application) : AndroidViewModel(application) {
                         Log.w("ScanViewModel", "⚠️ Cannot remove EPCs from RfidScanManager: reference not provided")
                     }
                     
-                    // **STEP 3.6**: Remove EPCs from uniqueSet and processedEpcPerPicklist untuk allow re-scan
-                    val uniqueSet = getCurrentUniqueSet()
+                    // **STEP 3.6**: Remove EPCs from uniqueRfids and processedEpcPerPicklist untuk allow re-scan
+                    val uniqueRfids = getCurrentUniqueSet()  // **STANDAR**: Konsisten dengan activity lain
                     epcsToRemove.forEach { epc ->
-                        uniqueSet.remove(epc)
+                        uniqueRfids.remove(epc)
                     }
-                    Log.d("ScanViewModel", "🗑️ Removed ${epcsToRemove.size} EPCs from uniqueSet (uniqueSet size: ${uniqueSet.size})")
+                    Log.d("ScanViewModel", "🗑️ Removed ${epcsToRemove.size} EPCs from uniqueRfids (uniqueRfids size: ${uniqueRfids.size})")
                     
                     if (currentPicklist != null) {
                         epcsToRemove.forEach { epc ->
@@ -2302,12 +2361,12 @@ class ScanViewModel(application: Application) : AndroidViewModel(application) {
                             Log.w("ScanViewModel", "⚠️ Cannot remove EPCs from RfidScanManager: reference not provided")
                         }
                         
-                        // **STEP 3.6**: Remove EPCs from uniqueSet and processedEpcPerPicklist untuk allow re-scan
-                        val uniqueSet = getCurrentUniqueSet()
+                        // **STEP 3.6**: Remove EPCs from uniqueRfids and processedEpcPerPicklist untuk allow re-scan
+                        val uniqueRfids = getCurrentUniqueSet()  // **STANDAR**: Konsisten dengan activity lain
                         epcsToRemove.forEach { epc ->
-                            uniqueSet.remove(epc)
+                            uniqueRfids.remove(epc)
                         }
-                        Log.d("ScanViewModel", "🗑️ Removed ${epcsToRemove.size} EPCs from uniqueSet (uniqueSet size: ${uniqueSet.size})")
+                        Log.d("ScanViewModel", "🗑️ Removed ${epcsToRemove.size} EPCs from uniqueRfids (uniqueRfids size: ${uniqueRfids.size})")
                         
                         if (currentPicklist != null) {
                             epcsToRemove.forEach { epc ->
@@ -2453,10 +2512,10 @@ class ScanViewModel(application: Application) : AndroidViewModel(application) {
                                 Log.w("ScanViewModel", "⚠️ Cannot remove EPC from RfidScanManager: reference not provided")
                             }
                             
-                            // **STEP 3.6**: Remove EPC from uniqueSet and processedEpcPerPicklist untuk allow re-scan
-                            val uniqueSet = getCurrentUniqueSet()
-                            uniqueSet.remove(epcToRemove)
-                            Log.d("ScanViewModel", "🗑️ Removed EPC from uniqueSet: $epcToRemove (uniqueSet size: ${uniqueSet.size})")
+                            // **STEP 3.6**: Remove EPC from uniqueRfids and processedEpcPerPicklist untuk allow re-scan
+                            val uniqueRfids = getCurrentUniqueSet()  // **STANDAR**: Konsisten dengan activity lain
+                            uniqueRfids.remove(epcToRemove)
+                            Log.d("ScanViewModel", "🗑️ Removed EPC from uniqueRfids: $epcToRemove (uniqueRfids size: ${uniqueRfids.size})")
                             
                             if (currentPicklist != null) {
                                 processedEpcPerPicklist[currentPicklist]?.remove(epcToRemove)
@@ -2535,8 +2594,9 @@ class ScanViewModel(application: Application) : AndroidViewModel(application) {
     
     /**
      * OPTIMASI: Simpan data yang valid ke Supabase menggunakan batch processing
+     * @return List<Pair<warehouse, epc>> - EPC yang berhasil disimpan beserta warehouse-nya
      */
-    private suspend fun saveValidDataToSupabaseBatch() {
+    private suspend fun saveValidDataToSupabaseBatch(): List<Pair<String, String>> {
         try {
         // Single-only mode: background processing job check disabled
             
@@ -2546,12 +2606,14 @@ class ScanViewModel(application: Application) : AndroidViewModel(application) {
             Log.d("ScanViewModel", "🔍 DEBUG: processedData.size=${processedData.size}, currentPicklistNumber=$currentPicklistNumber")
             
             if (processedData.isNotEmpty() && currentPicklistNumber != null) {
-                Log.d("ScanViewModel", "🚀 BATCH Saving valid items to Supabase (OVERCAN & NON-PICKLIST WILL BE DISCARDED)...")
+                Log.d("ScanViewModel", "🚀 BATCH Saving valid items to Supabase (OVERCAN, NON-PICKLIST, NONRETAIL & NON-TAGGED WILL BE DISCARDED)...")
                 
                 // Prepare batch data
                 val batchScans = mutableListOf<Sextuple<String, String, String, String, String, String>>()
                 var skippedOverscanCount = 0
                 var skippedNonPicklistCount = 0
+                var skippedNonRetailCount = 0
+                var skippedNonTaggedCount = 0
                 
                 processedData.forEach { data ->
                     val picklistItem = currentItems.find { it.articleId == data.articleId }
@@ -2561,15 +2623,40 @@ class ScanViewModel(application: Application) : AndroidViewModel(application) {
                         item.qtyScan > item.qtyPl
                     } ?: false
                     
+                    // **VALIDASI WAREHOUSE**: NONRETAIL = warehouse yang BUKAN RETAIL
+                    // Cek apakah warehouse bukan RETAIL (bukan "RETAIL" atau "03010301")
+                    // Hanya exact match yang dianggap RETAIL (tidak termasuk "RETAIL STORE", "RETAIL WAREHOUSE", dll)
+                    val warehouseValue = data.warehouse.trim().uppercase()
+                    val normalizedRetailName = DEFAULT_WAREHOUSE_NAME.uppercase() // "RETAIL"
+                    val normalizedRetailCode = DEFAULT_WAREHOUSE_CODE.uppercase() // "03010301"
+                    // NONRETAIL = warehouse yang bukan RETAIL (bukan "RETAIL" atau "03010301" - exact match only)
+                    val isRetail = warehouseValue == normalizedRetailName || 
+                            warehouseValue == normalizedRetailCode
+                    val isNonRetail = warehouseValue.isNotBlank() && !isRetail
+                    
+                    // **VALIDASI TAG STATUS**: Hanya EPC dengan tag status TAGGED yang bisa di-submit
+                    val nirwanaTagStatus = data.nirwanaTagStatus.trim().uppercase()
+                    val isTagged = nirwanaTagStatus == "TAGGED"
+                    
                     when (data.tagStatus) {
                         "VALID" -> {
+                            // **VALIDASI TAG STATUS**: EPC dengan tag status bukan TAGGED tidak bisa di-submit
+                            if (!isTagged) {
+                                skippedNonTaggedCount++
+                                Log.d("ScanViewModel", "🚫 NON-TAGGED DISCARDED: ${data.articleName} (tagStatus=${data.nirwanaTagStatus}, harus TAGGED) - DATA DIBUANG")
+                            }
+                            // **VALIDASI WAREHOUSE**: EPC dengan warehouse NONRETAIL (bukan RETAIL) tidak bisa di-submit
+                            else if (isNonRetail) {
+                                skippedNonRetailCount++
+                                Log.d("ScanViewModel", "🚫 NONRETAIL DISCARDED: ${data.articleName} (warehouse=${data.warehouse}, bukan RETAIL) - DATA DIBUANG")
+                            }
                             // **PERBAIKAN KRITIS**: Cek overscan secara eksplisit sebelum menyimpan
-                            if (isOverscan) {
+                            else if (isOverscan) {
                                 // Item overscan - TIDAK DISIMPAN, DIBUANG
                                 skippedOverscanCount++
                                 Log.d("ScanViewModel", "🚫 OVERSCAN DISCARDED: ${data.articleName} (qtyScan=${picklistItem?.qtyScan} > qtyPl=${picklistItem?.qtyPl}) - DATA DIBUANG")
                             } else if (picklistItem != null) {
-                                // Item valid dan tidak overscan - tambahkan ke batch
+                                // Item valid, TAGGED, tidak overscan, dan bukan NONRETAIL - tambahkan ke batch
                                 batchScans.add(Sextuple(
                                     currentPicklistNumber!!, 
                                     data.articleId, 
@@ -2578,7 +2665,7 @@ class ScanViewModel(application: Application) : AndroidViewModel(application) {
                                     data.articleName,
                                     data.size
                                 ))
-                                Log.d("ScanViewModel", "✅ Added to batch: ${data.articleName} (productId: ${data.productId}, EPC: ${data.epc})")
+                                Log.d("ScanViewModel", "✅ Added to batch: ${data.articleName} (productId: ${data.productId}, EPC: ${data.epc}, warehouse: ${data.warehouse}, tagStatus: ${data.nirwanaTagStatus})")
                             }
                         }
                         "OVERCAN" -> {
@@ -2595,11 +2682,16 @@ class ScanViewModel(application: Application) : AndroidViewModel(application) {
                 }
                 
                 // **PERBAIKAN BARU**: Cek duplikasi sebelum batch save
+                val savedEpcs = mutableListOf<Pair<String, String>>() // (warehouse, epc)
+                
                 if (batchScans.isNotEmpty()) {
                     Log.d("ScanViewModel", "🔍 Checking for duplicate EPCs before batch save...")
                     
                     // Extract EPCs yang akan di-save
                     val epcsToSave = batchScans.map { it.third } // EPC adalah field ketiga
+                    
+                    // Buat map EPC -> warehouse dari processedData untuk lookup
+                    val epcToWarehouseMap = processedData.associate { it.epc to it.warehouse }
                     
                     // Cek apakah EPC sudah ada di database
                     val existingEpcs = repository.batchCheckExistingEpcs(epcsToSave)
@@ -2625,6 +2717,15 @@ class ScanViewModel(application: Application) : AndroidViewModel(application) {
                             if (success) {
                                 Log.d("ScanViewModel", "✅ Batch save completed: ${filteredBatchScans.size} new items saved")
                                 
+                                // **PERBAIKAN BARU**: Simpan EPC yang berhasil disimpan beserta warehouse-nya
+                                filteredBatchScans.forEach { scan ->
+                                    val epc = scan.third
+                                    val warehouse = epcToWarehouseMap[epc] ?: ""
+                                    if (warehouse.isNotBlank()) {
+                                        savedEpcs.add(Pair(warehouse, epc))
+                                    }
+                                }
+                                
                                 // **PERBAIKAN KRITIS**: Reload data dari database setelah save berhasil
                                 startRobustBackgroundDataReload()
                             } else {
@@ -2639,6 +2740,15 @@ class ScanViewModel(application: Application) : AndroidViewModel(application) {
                         if (success) {
                             Log.d("ScanViewModel", "✅ Batch save completed: ${batchScans.size} items saved")
                             
+                            // **PERBAIKAN BARU**: Simpan EPC yang berhasil disimpan beserta warehouse-nya
+                            batchScans.forEach { scan ->
+                                val epc = scan.third
+                                val warehouse = epcToWarehouseMap[epc] ?: ""
+                                if (warehouse.isNotBlank()) {
+                                    savedEpcs.add(Pair(warehouse, epc))
+                                }
+                            }
+                            
                             // **PERBAIKAN KRITIS**: Reload data dari database setelah save berhasil
                             startRobustBackgroundDataReload()
                         } else {
@@ -2649,14 +2759,19 @@ class ScanViewModel(application: Application) : AndroidViewModel(application) {
                     Log.d("ScanViewModel", "⚠️ No valid items to save in batch")
                 }
                 
-                Log.d("ScanViewModel", "📊 Batch save summary: ${batchScans.size} valid items saved, $skippedOverscanCount overscan DISCARDED, $skippedNonPicklistCount non-picklist DISCARDED")
+                Log.d("ScanViewModel", "📊 Batch save summary: ${savedEpcs.size} EPCs saved, $skippedOverscanCount overscan DISCARDED, $skippedNonPicklistCount non-picklist DISCARDED, $skippedNonRetailCount nonretail DISCARDED, $skippedNonTaggedCount non-tagged DISCARDED")
+                
+                return savedEpcs
             } else {
                 Log.d("ScanViewModel", "⚠️ No processed data to save: processedData.size=${processedData.size}, currentPicklistNumber=$currentPicklistNumber")
+                return emptyList()
             }
         } catch (e: kotlinx.coroutines.CancellationException) {
             Log.d("ScanViewModel", "🔥 Batch save cancelled (normal behavior): ${e.message}")
+            return emptyList()
         } catch (e: Exception) {
             Log.e("ScanViewModel", "❌ Error in batch save: ${e.message}", e)
+            return emptyList()
         }
     }
     
@@ -2674,6 +2789,8 @@ class ScanViewModel(application: Application) : AndroidViewModel(application) {
                 val batchScans = mutableListOf<Sextuple<String, String, String, String, String, String>>()
                 var skippedOverscanCount = 0
                 var skippedNonPicklistCount = 0
+                var skippedNonRetailCount = 0
+                var skippedNonTaggedCount = 0
                 
                 processedData.forEach { data ->
                     val picklistItem = currentItems.find { it.articleId == data.articleId }
@@ -2683,15 +2800,40 @@ class ScanViewModel(application: Application) : AndroidViewModel(application) {
                         item.qtyScan > item.qtyPl
                     } ?: false
                     
+                    // **VALIDASI WAREHOUSE**: NONRETAIL = warehouse yang BUKAN RETAIL
+                    // Cek apakah warehouse bukan RETAIL (bukan "RETAIL" atau "03010301")
+                    // Hanya exact match yang dianggap RETAIL (tidak termasuk "RETAIL STORE", "RETAIL WAREHOUSE", dll)
+                    val warehouseValue = data.warehouse.trim().uppercase()
+                    val normalizedRetailName = DEFAULT_WAREHOUSE_NAME.uppercase() // "RETAIL"
+                    val normalizedRetailCode = DEFAULT_WAREHOUSE_CODE.uppercase() // "03010301"
+                    // NONRETAIL = warehouse yang bukan RETAIL (bukan "RETAIL" atau "03010301" - exact match only)
+                    val isRetail = warehouseValue == normalizedRetailName || 
+                            warehouseValue == normalizedRetailCode
+                    val isNonRetail = warehouseValue.isNotBlank() && !isRetail
+                    
+                    // **VALIDASI TAG STATUS**: Hanya EPC dengan tag status TAGGED yang bisa di-submit
+                    val nirwanaTagStatus = data.nirwanaTagStatus.trim().uppercase()
+                    val isTagged = nirwanaTagStatus == "TAGGED"
+                    
                     when (data.tagStatus) {
                         "VALID" -> {
+                            // **VALIDASI TAG STATUS**: EPC dengan tag status bukan TAGGED tidak bisa di-submit
+                            if (!isTagged) {
+                                skippedNonTaggedCount++
+                                Log.d("ScanViewModel", "🚫 NON-TAGGED DISCARDED: ${data.articleName} (tagStatus=${data.nirwanaTagStatus}, harus TAGGED) - DATA DIBUANG")
+                            }
+                            // **VALIDASI WAREHOUSE**: EPC dengan warehouse NONRETAIL (bukan RETAIL) tidak bisa di-submit
+                            else if (isNonRetail) {
+                                skippedNonRetailCount++
+                                Log.d("ScanViewModel", "🚫 NONRETAIL DISCARDED: ${data.articleName} (warehouse=${data.warehouse}, bukan RETAIL) - DATA DIBUANG")
+                            }
                             // **PERBAIKAN KRITIS**: Cek overscan secara eksplisit sebelum menyimpan
-                            if (isOverscan) {
+                            else if (isOverscan) {
                                 // Item overscan - tidak disimpan meskipun status "VALID"
                                 skippedOverscanCount++
                                 Log.d("ScanViewModel", "⚠️ OVERSCAN DETECTED: Skipped overscan item: ${data.articleName} (qtyScan=${picklistItem?.qtyScan} > qtyPl=${picklistItem?.qtyPl})")
                             } else {
-                                // Item valid dan tidak overscan - tambahkan ke batch
+                                // Item valid, TAGGED, tidak overscan, dan bukan NONRETAIL - tambahkan ke batch
                                 batchScans.add(
                                     Sextuple(
                                         currentPicklistNumber!!,
@@ -2702,7 +2844,7 @@ class ScanViewModel(application: Application) : AndroidViewModel(application) {
                                         data.size
                                     )
                                 )
-                                Log.d("ScanViewModel", "✅ Added to batch: ${data.articleName}")
+                                Log.d("ScanViewModel", "✅ Added to batch: ${data.articleName} (warehouse: ${data.warehouse}, tagStatus: ${data.nirwanaTagStatus})")
                             }
                         }
                         "OVERCAN" -> {
@@ -2773,7 +2915,7 @@ class ScanViewModel(application: Application) : AndroidViewModel(application) {
                     Log.d("ScanViewModel", "⚠️ No valid items to save in batch")
                 }
                 
-                Log.d("ScanViewModel", "📊 Batch save summary: ${batchScans.size} valid items saved, $skippedOverscanCount overscan DISCARDED, $skippedNonPicklistCount non-picklist DISCARDED")
+                Log.d("ScanViewModel", "📊 Batch save summary: ${batchScans.size} valid items saved, $skippedOverscanCount overscan DISCARDED, $skippedNonPicklistCount non-picklist DISCARDED, $skippedNonRetailCount nonretail DISCARDED, $skippedNonTaggedCount non-tagged DISCARDED")
                 
                 // **POIN 1, 2, 4, 5: Update semua qty display data setelah save**
                 updateQtySummary()
@@ -2993,17 +3135,43 @@ class ScanViewModel(application: Application) : AndroidViewModel(application) {
     /**
      * Save data ke Supabase saat completion animation dijalankan
      * Method ini dipanggil SEBELUM updatePicklistStatus("completed")
+     * **PERBAIKAN BARU**: Setelah data berhasil disimpan, update tag status ke SOLD untuk semua EPC yang disimpan
      */
-    fun saveDataToSupabaseOnCompletion() {
+    suspend fun saveDataToSupabaseOnCompletion() {
         Log.d("ScanViewModel", "💾 saveDataToSupabaseOnCompletion called - saving new data before completion")
-        
-        viewModelScope.launch {
-            try {
-                saveValidDataToSupabaseBatch()
-                Log.d("ScanViewModel", "✅ Completion save completed successfully")
-            } catch (e: Exception) {
-                Log.e("ScanViewModel", "❌ Completion save failed: ${e.message}", e)
+
+        try {
+            // Simpan data ke Supabase (batch, sekali jalan)
+            val savedEpcs = saveValidDataToSupabaseBatch()
+            Log.d("ScanViewModel", "✅ Completion save completed successfully: ${savedEpcs.size} EPCs saved")
+
+            // **PERBAIKAN BARU**: Update tag status ke SOLD untuk semua EPC yang berhasil disimpan (batch per-warehouse)
+            if (savedEpcs.isNotEmpty()) {
+                Log.d("ScanViewModel", "🔄 Updating tag status to SOLD for ${savedEpcs.size} EPCs...")
+                try {
+                    val results = UpdateTagSold.updateTagSoldFromItems(savedEpcs)
+                    val successCount = results.values.count { it.first }
+                    val totalCount = results.size
+
+                    if (successCount == totalCount) {
+                        Log.d("ScanViewModel", "✅ All tag status updates completed successfully: $successCount/$totalCount warehouse(s)")
+                    } else {
+                        Log.w("ScanViewModel", "⚠️ Partial tag status updates: $successCount/$totalCount warehouse(s) succeeded")
+                        results.forEach { (warehouse, result) ->
+                            if (!result.first) {
+                                Log.e("ScanViewModel", "❌ Warehouse $warehouse failed: ${result.second}")
+                            }
+                        }
+                    }
+                } catch (e: Exception) {
+                    Log.e("ScanViewModel", "❌ Error updating tag status to SOLD: ${e.message}", e)
+                    // Tag status update failure tidak mempengaruhi keberhasilan save data
+                }
+            } else {
+                Log.d("ScanViewModel", "ℹ️ No EPCs saved, skipping tag status update")
             }
+        } catch (e: Exception) {
+            Log.e("ScanViewModel", "❌ Completion save failed: ${e.message}", e)
         }
     }
     
@@ -3314,8 +3482,8 @@ class ScanViewModel(application: Application) : AndroidViewModel(application) {
      * Get all detected RFIDs untuk batch lookup
      */
     fun getAllDetectedRfids(): List<String> {
-        val uniqueSet = getCurrentUniqueSet()
-        val rfidList = uniqueSet.toList()
+        val uniqueRfids = getCurrentUniqueSet()  // **STANDAR**: Konsisten dengan activity lain
+        val rfidList = uniqueRfids.toList()
         Log.d("ScanViewModel", "🔥 Retrieved ${rfidList.size} detected RFIDs for batch lookup")
         return rfidList
     }

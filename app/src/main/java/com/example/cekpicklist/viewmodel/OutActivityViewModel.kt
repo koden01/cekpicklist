@@ -53,8 +53,8 @@ class OutActivityViewModel(application: Application) : AndroidViewModel(applicat
         _isScanning.value = false
     }
     
-    fun addScannedItem(epc: String, articleId: String, articleName: String, size: String, qty: Int) {
-        Logger.PicklistInput.d("Adding scanned item: $epc -> $articleName $size")
+    fun addScannedItem(epc: String, articleId: String, articleName: String, size: String, qty: Int, warehouse: String = "", tagStatus: String = "VALID") {
+        Logger.PicklistInput.d("Adding scanned item: $epc -> $articleName $size (warehouse: $warehouse)")
         
         // **PERBAIKAN**: Cek apakah item sudah ada - hanya tambah item baru (tidak ada penghitungan ulang)
         val existingItem = scannedItemsList.find { it.epc == epc }
@@ -77,11 +77,11 @@ class OutActivityViewModel(application: Application) : AndroidViewModel(applicat
             subCategory = "",
             color = "",
             gender = "",
-            warehouse = "",
-            tagStatus = "VALID"
+            warehouse = warehouse,
+            tagStatus = tagStatus
         )
         scannedItemsList.add(newItem)
-        Logger.PicklistInput.d("Added new unique item: ${newItem.articleName} qty: ${newItem.qty}")
+        Logger.PicklistInput.d("Added new unique item: ${newItem.articleName} qty: ${newItem.qty} warehouse: ${newItem.warehouse}")
         
         _scannedItems.value = scannedItemsList.toList()
     }
@@ -155,12 +155,15 @@ class OutActivityViewModel(application: Application) : AndroidViewModel(applicat
             try {
                 val productInfo = repository.lookupRfid(epc)
                 if (productInfo != null) {
+                    // **PERBAIKAN**: Pass warehouse dan tagStatus dari lookup result
                     addScannedItem(
                         epc = epc,
                         articleId = productInfo.articleId,
                         articleName = productInfo.articleName,
                         size = productInfo.size,
-                        qty = 1
+                        qty = 1,
+                        warehouse = productInfo.warehouse,
+                        tagStatus = productInfo.tagStatus
                     )
                 } else {
                     Logger.PicklistInput.w("No product found for EPC: $epc")

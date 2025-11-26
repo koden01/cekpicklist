@@ -6,4 +6,5 @@
     <string name="stop_location">Stop locate</string>
     <string name="location_fail">Please enter EPC</string>
     <string name="psam_msg_fail">Failed to start location</string>
+    <string name="sync_master_data">Sinkronkan master barcode</string>
 </resources>
