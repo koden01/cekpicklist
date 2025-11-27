@@ -675,16 +675,23 @@ class ScanViewModel(application: Application) : AndroidViewModel(application) {
                         // Item ada di picklist dengan size yang sama - cek status
                         val currentQtyScan = picklistItem.qtyScan
                         val maxAllowedQty = picklistItem.qtyPl
+                        
+                        // **PERBAIKAN BARU**: Item dengan tag status SOLD tidak dihitung dalam qtyScan
+                        // karena sudah terjual dan tidak bisa dipakai untuk picklist fulfillment
+                        val isSold = product.tagStatus.trim().uppercase() == "SOLD"
+                        
                         // **PERBAIKAN KRITIS**: Setiap EPC hanya menambah 1, bukan product.qty
-                        val newQtyScan = currentQtyScan + 1
+                        // Tapi hanya jika bukan SOLD
+                        val newQtyScan = if (isSold) currentQtyScan else currentQtyScan + 1
                         
                         val status = when {
+                            isSold -> "VALID" // Tetap VALID untuk ditampilkan, tapi tidak dihitung
                             newQtyScan <= maxAllowedQty -> "VALID" // Sesuai atau kurang
                             newQtyScan > maxAllowedQty -> "OVERCAN" // Lebih dari rencana
                             else -> "UNKNOWN"
                         }
                         
-                        v("ScanViewModel", "🔥 Item ${product.articleName} ${product.size}: current=$currentQtyScan, new=$newQtyScan, max=$maxAllowedQty, status=$status")
+                        v("ScanViewModel", "🔥 Item ${product.articleName} ${product.size}: current=$currentQtyScan, new=$newQtyScan, max=$maxAllowedQty, status=$status, nirwanaTagStatus=${product.tagStatus}, isSold=$isSold")
                         v("ScanViewModel", "🔥 PicklistItem found: ${picklistItem.articleName} ${picklistItem.size} (${picklistItem.articleId})")
                         
                         val processedItem = ProcessedRfidData(
@@ -708,6 +715,7 @@ class ScanViewModel(application: Application) : AndroidViewModel(application) {
                         processedData.add(processedItem)
                         
                         // **CRITICAL FIX**: Update PicklistItem dengan qtyScan yang baru
+                        // Hanya update jika bukan SOLD (atau update dengan nilai yang sama jika SOLD)
                         val updatedPicklistItem = picklistItem.copy(qtyScan = newQtyScan)
                         currentItems = currentItems.map { item ->
                             if (item.articleId == product.articleId && item.size == product.size) {
@@ -717,7 +725,11 @@ class ScanViewModel(application: Application) : AndroidViewModel(application) {
                             }
                         }
                         
-                        v("ScanViewModel", "🔥 Updated PicklistItem: ${product.articleName} ${product.size} qtyScan: $currentQtyScan -> $newQtyScan")
+                        if (isSold) {
+                            v("ScanViewModel", "🚫 SOLD item detected: ${product.articleName} ${product.size} - NOT counted in qtyScan (qtyScan remains $currentQtyScan)")
+                        } else {
+                            v("ScanViewModel", "🔥 Updated PicklistItem: ${product.articleName} ${product.size} qtyScan: $currentQtyScan -> $newQtyScan")
+                        }
                         v("ScanViewModel", "🔥 Updated item details: articleId=${product.articleId}, size=${product.size}, qtyPl=${picklistItem.qtyPl}")
                         
                     } else {
@@ -779,10 +791,16 @@ class ScanViewModel(application: Application) : AndroidViewModel(application) {
                             if (picklistItem != null) {
                                 val currentQtyScan = picklistItem.qtyScan
                                 val maxAllowedQty = picklistItem.qtyPl
+                                
+                                // **PERBAIKAN BARU**: Item dengan tag status SOLD tidak dihitung dalam qtyScan
+                                val isSold = product.tagStatus.trim().uppercase() == "SOLD"
+                                
                                 // **PERBAIKAN KRITIS**: Setiap EPC hanya menambah 1, bukan product.qty
-                                val newQtyScan = currentQtyScan + 1
+                                // Tapi hanya jika bukan SOLD
+                                val newQtyScan = if (isSold) currentQtyScan else currentQtyScan + 1
                                 
                                 val status = when {
+                                    isSold -> "VALID" // Tetap VALID untuk ditampilkan, tapi tidak dihitung
                                     newQtyScan <= maxAllowedQty -> "VALID"
                                     newQtyScan > maxAllowedQty -> "OVERCAN"
                                     else -> "UNKNOWN"
@@ -815,6 +833,10 @@ class ScanViewModel(application: Application) : AndroidViewModel(application) {
                                     } else {
                                         item
                                     }
+                                }
+                                
+                                if (isSold) {
+                                    Log.d("ScanViewModel", "🚫 SOLD item detected (fallback): ${product.articleName} ${product.size} - NOT counted in qtyScan")
                                 }
                             } else {
                                 val processedItem = ProcessedRfidData(
@@ -865,8 +887,17 @@ class ScanViewModel(application: Application) : AndroidViewModel(application) {
                             if (picklistItem != null) {
                                 val currentQtyScan = picklistItem.qtyScan
                                 val maxAllowedQty = picklistItem.qtyPl
-                                val newQtyScan = currentQtyScan + 1
-                                val status = if (newQtyScan <= maxAllowedQty) "VALID" else "OVERCAN"
+                                
+                                // **PERBAIKAN BARU**: Item dengan tag status SOLD tidak dihitung dalam qtyScan
+                                val isSold = p.tagStatus.trim().uppercase() == "SOLD"
+                                val newQtyScan = if (isSold) currentQtyScan else currentQtyScan + 1
+                                
+                                val status = when {
+                                    isSold -> "VALID" // Tetap VALID untuk ditampilkan, tapi tidak dihitung
+                                    newQtyScan <= maxAllowedQty -> "VALID"
+                                    else -> "OVERCAN"
+                                }
+                                
                                 processedData.add(
                                     ProcessedRfidData(
                                         epc = epc,
@@ -927,8 +958,17 @@ class ScanViewModel(application: Application) : AndroidViewModel(application) {
                                     if (picklistItem != null) {
                                         val currentQtyScan = picklistItem.qtyScan
                                         val maxAllowedQty = picklistItem.qtyPl
-                                        val newQtyScan = currentQtyScan + 1
-                                        val status = if (newQtyScan <= maxAllowedQty) "VALID" else "OVERCAN"
+                                        
+                                        // **PERBAIKAN BARU**: Item dengan tag status SOLD tidak dihitung dalam qtyScan
+                                        val isSold = single.tagStatus.trim().uppercase() == "SOLD"
+                                        val newQtyScan = if (isSold) currentQtyScan else currentQtyScan + 1
+                                        
+                                        val status = when {
+                                            isSold -> "VALID" // Tetap VALID untuk ditampilkan, tapi tidak dihitung
+                                            newQtyScan <= maxAllowedQty -> "VALID"
+                                            else -> "OVERCAN"
+                                        }
+                                        
                                         processedData.add(
                                             ProcessedRfidData(
                                                 epc = epc,
@@ -3684,6 +3724,7 @@ class ScanViewModel(application: Application) : AndroidViewModel(application) {
                 Log.d("ScanViewModel", "✅ Added NEW processed RFID: $epc -> ${productInfo.articleName} ${productInfo.size} (status: $tagStatus)")
                 
                 // **CRITICAL FIX**: Update qtyScan untuk item yang cocok
+                // **PERBAIKAN BARU**: Item dengan tag status SOLD tidak dihitung dalam qtyScan
                 if (tagStatus == "VALID") {
                     val matchingItemIndex = updatedItems.indexOfFirst { item ->
                         item.articleId == productInfo.articleId && item.size == productInfo.size
@@ -3691,12 +3732,19 @@ class ScanViewModel(application: Application) : AndroidViewModel(application) {
                     
                     if (matchingItemIndex != -1) {
                         val matchingItem = updatedItems[matchingItemIndex]
+                        val isSold = productInfo.tagStatus.trim().uppercase() == "SOLD"
+                        
                         // **FIX**: Setiap EPC hanya menambah 1 ke qtyScan, bukan productInfo.qty
-                        val newQtyScan = matchingItem.qtyScan + 1
+                        // Tapi hanya jika bukan SOLD
+                        val newQtyScan = if (isSold) matchingItem.qtyScan else matchingItem.qtyScan + 1
                         val updatedItem = matchingItem.copy(qtyScan = newQtyScan)
                         updatedItems[matchingItemIndex] = updatedItem
                         
-                        Log.d("ScanViewModel", "🔄 Updated qtyScan: ${matchingItem.articleName} ${matchingItem.size} -> qtyScan: ${matchingItem.qtyScan} -> $newQtyScan (EPC count: +1)")
+                        if (isSold) {
+                            Log.d("ScanViewModel", "🚫 SOLD item detected (direct lookup): ${matchingItem.articleName} ${matchingItem.size} - NOT counted in qtyScan (qtyScan remains ${matchingItem.qtyScan})")
+                        } else {
+                            Log.d("ScanViewModel", "🔄 Updated qtyScan: ${matchingItem.articleName} ${matchingItem.size} -> qtyScan: ${matchingItem.qtyScan} -> $newQtyScan (EPC count: +1)")
+                        }
                     }
                 }
             }
