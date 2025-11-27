@@ -343,11 +343,7 @@ class BarcodeInputFragment : Fragment() {
                 openKarungSummaryModal(expedition)
             } else {
                 // Debug: Jika tidak ada expedisi, cek database dan Supabase
-                lifecycleScope.launch {
-                    viewModel.debugDatabaseData()
-                    viewModel.debugSupabaseConnection()
-                    viewModel.debugRawSupabaseCall()
-                }
+                lifecycleScope.launch { viewModel.debugDatabaseData() }
             }
         }
 

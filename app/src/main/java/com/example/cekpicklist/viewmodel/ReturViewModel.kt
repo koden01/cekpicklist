@@ -69,10 +69,10 @@ class ReturViewModel(application: Application) : AndroidViewModel(application) {
         normalizedList.forEach { epc ->
             when {
                 scannedItemsMap.containsKey(epc) -> {
-                    _errorMessage.value = "RFID $epc sudah discan."
+                    // Sudah ada di daftar, abaikan tanpa menampilkan toast
                 }
                 invalidEpcSet.contains(epc) -> {
-                    _errorMessage.value = "RFID $epc tidak valid untuk Retur."
+                    // Sudah tercatat invalid sebelumnya, abaikan
                 }
                 !inFlightLookups.add(epc) -> {
                     // Lookup masih berjalan, abaikan
@@ -98,13 +98,10 @@ class ReturViewModel(application: Application) : AndroidViewModel(application) {
                     }
                 }
 
-                val errorMessages = mutableListOf<String>()
-
                 newEpcs.forEach { epc ->
                     val productInfo = infoByEpc[epc]
                     if (productInfo == null) {
                         invalidEpcSet.add(epc)
-                        errorMessages.add("Produk untuk RFID $epc tidak ditemukan.")
                         return@forEach
                     }
 
@@ -131,18 +128,10 @@ class ReturViewModel(application: Application) : AndroidViewModel(application) {
                     )
 
                     scannedItemsMap[epc] = item
-
-                    if (!isValid) {
-                        errorMessages.add("RFID $epc berstatus ${productInfo.tagStatus}, bukan SOLD.")
-                    }
                 }
 
                 _invalidScanCount.value = invalidEpcSet.size
                 publishAggregatedItems()
-
-                if (errorMessages.isNotEmpty()) {
-                    _errorMessage.value = errorMessages.joinToString("\n")
-                }
 
             } catch (e: Exception) {
                 newEpcs.forEach { epc ->

@@ -334,11 +334,18 @@ object BarcodeCacheManager {
     fun getAllExpedisiRecords(): List<BarcodeSupabaseService.BarcodeSessionRecord> =
         expedisiRecordsCache.values.toList()
 
-    fun getUniqueCourierNamesFromCache(): List<String> =
-        expedisiRecordsCache.values
+    fun getUniqueCourierNamesFromCache(): List<String> {
+        val expedisiNames = expedisiRecordsCache.values
             .mapNotNull { it.couriername?.trim()?.takeIf(String::isNotEmpty) }
-            .distinct()
-            .sorted()
+        val resiNames = resiRecordsCache.values
+            .mapNotNull { it.Keterangan?.trim()?.takeIf(String::isNotEmpty) }
+
+        return (expedisiNames + resiNames)
+            .map { it.trim() }
+            .filter { it.isNotEmpty() }
+            .distinctBy { it.lowercase() }
+            .sortedWith(String.CASE_INSENSITIVE_ORDER)
+    }
 
     fun setCourierNamesCache(courierNames: List<String>) {
         courierNamesCache = courierNames.distinct().sorted()
