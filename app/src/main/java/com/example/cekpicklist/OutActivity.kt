@@ -18,7 +18,6 @@ class OutActivity : BaseRfidActivity() {
     private lateinit var binding: ActivityOutBinding
     private lateinit var viewModel: OutActivityViewModel
     private lateinit var adapter: OutActivityAdapter
-    private var notrans: String = ""
     
     companion object {
         private const val TAG = "OutActivity"
@@ -37,17 +36,12 @@ class OutActivity : BaseRfidActivity() {
         // Initialize ViewModel
         viewModel = ViewModelProvider(this, OutActivityViewModelFactory(application))[OutActivityViewModel::class.java]
         
-        binding.tvNotrans.text = "Memuat..."
-        
-        // Realtime removed (Supabase-only without live subscriptions)
-
         // Setup UI
         setupRecyclerView()
         setupButtons()
         setupObservers()
         setupSettingsIcon()
         setupBackIcon()
-        viewModel.loadNextNotrans()
         
         Logger.PicklistInput.d("OutActivity setup completed")
     }
@@ -177,16 +171,9 @@ class OutActivity : BaseRfidActivity() {
         
         viewModel.submitSuccess.observe(this) { success ->
             if (success) {
-                Logger.PicklistInput.d("Submit successful")
-                ToastUtils.showHighToastWithCooldown(this, "Out activity berhasil disimpan!")
+                Logger.PicklistInput.d("Submit successful - tag status updated to SOLD")
+                ToastUtils.showHighToastWithCooldown(this, "Tag status berhasil diubah ke SOLD!")
                 finish()
-            }
-        }
-
-        viewModel.currentNotrans.observe(this) { next ->
-            if (!next.isNullOrBlank()) {
-                notrans = next
-                binding.tvNotrans.text = next
             }
         }
     }
@@ -318,13 +305,9 @@ class OutActivity : BaseRfidActivity() {
             ToastUtils.showHighToastWithCooldown(this, "Tidak ada item untuk disubmit")
             return
         }
-        if (notrans.isBlank()) {
-            ToastUtils.showHighToastWithCooldown(this, "Nomor transaksi belum siap, coba lagi")
-            return
-        }
         
-        Logger.PicklistInput.d("Performing submit with ${items.size} items")
-        viewModel.submitOutActivity(notrans)
+        Logger.PicklistInput.d("Performing submit - updating tag status to SOLD for ${items.size} items")
+        viewModel.submitOutActivity()
     }
     
     private fun updateSummaryCards() {

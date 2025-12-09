@@ -27,9 +27,6 @@ class OutActivityViewModel(application: Application) : AndroidViewModel(applicat
     private val _submitSuccess = MutableLiveData<Boolean>()
     val submitSuccess: LiveData<Boolean> = _submitSuccess
 
-    private val _currentNotrans = MutableLiveData<String>()
-    val currentNotrans: LiveData<String> = _currentNotrans
-    
     private val scannedItemsList = mutableListOf<OutActivityItem>()
     
     companion object {
@@ -102,40 +99,29 @@ class OutActivityViewModel(application: Application) : AndroidViewModel(applicat
         Logger.PicklistInput.d("Removed ${(before - newList.size)} items for group")
     }
     
-    fun submitOutActivity(notrans: String) {
+    fun submitOutActivity() {
         val items = scannedItemsList.toList()
         if (items.isEmpty()) {
             _errorMessage.value = "Tidak ada item untuk disubmit"
             return
         }
         
-        Logger.PicklistInput.d("Submitting out activity with ${items.size} items, notrans: $notrans")
+        Logger.PicklistInput.d("Submitting out activity - updating tag status to SOLD for ${items.size} items")
         
         viewModelScope.launch {
             try {
-                val success = repository.submitOutActivity(notrans, items)
+                val success = repository.submitOutActivity(items)
                 if (success) {
-                    Logger.PicklistInput.d("Out activity submitted successfully")
+                    Logger.PicklistInput.d("Out activity submitted successfully - tag status updated to SOLD")
                     _submitSuccess.value = true
                 } else {
-                    Logger.PicklistInput.e("Failed to submit out activity")
-                    _errorMessage.value = "Gagal menyimpan out activity"
+                    Logger.PicklistInput.e("Failed to update tag status to SOLD")
+                    Logger.PicklistInput.e("Items count: ${items.size}")
+                    _errorMessage.value = "Gagal mengubah tag status ke SOLD. Cek log untuk detail error."
                 }
             } catch (e: Exception) {
-                Logger.PicklistInput.e("Error submitting out activity: ${e.message}")
-                _errorMessage.value = "Error: ${e.message}"
-            }
-        }
-    }
-
-    fun loadNextNotrans() {
-        viewModelScope.launch {
-            try {
-                val next = repository.fetchNextNotrans()
-                _currentNotrans.value = next
-            } catch (e: Exception) {
-                Log.e(TAG, "Error loading next notrans: ${e.message}")
-                _errorMessage.value = "Gagal memuat nomor transaksi: ${e.message}"
+                Logger.PicklistInput.e("Exception submitting out activity: ${e.javaClass.simpleName}: ${e.message}", e)
+                _errorMessage.value = "Error: ${e.message ?: "Unknown error"}"
             }
         }
     }

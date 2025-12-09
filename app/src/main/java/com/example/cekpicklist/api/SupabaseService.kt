@@ -991,6 +991,16 @@ class SupabaseService {
                     jsonArray.put(jsonObject)
                 }
 
+                val jsonBody = jsonArray.toString()
+                val bodySize = jsonBody.length
+                Log.d("SupabaseService", "📤 Saving ${items.size} out activity scans, notrans=$notrans, bodySize=$bodySize bytes")
+                
+                // Log sample data untuk debugging
+                if (items.isNotEmpty()) {
+                    val sampleItem = items.first()
+                    Log.d("SupabaseService", "📤 Sample item: epc=${sampleItem.epc}, article=${sampleItem.articleName}, size=${sampleItem.size}")
+                }
+
                 val url = URL(insertUrl)
                 val connection = setupConnection(url)
                 connection.requestMethod = "POST"
@@ -1001,7 +1011,7 @@ class SupabaseService {
                 connection.doOutput = true
 
                 val writer = OutputStreamWriter(connection.outputStream)
-                writer.write(jsonArray.toString())
+                writer.write(jsonBody)
                 writer.flush()
                 writer.close()
 
@@ -1009,14 +1019,21 @@ class SupabaseService {
                 val success = responseCode == HttpURLConnection.HTTP_CREATED || responseCode == HttpURLConnection.HTTP_OK
                 if (!success) {
                     val errorResponse = connection.errorStream?.bufferedReader()?.use { it.readText() } ?: "No error body"
-                    Log.e("SupabaseService", "❌ Failed to save out activity scans: HTTP $responseCode, body=$errorResponse")
+                    Log.e("SupabaseService", "❌ Failed to save out activity scans: HTTP $responseCode")
+                    Log.e("SupabaseService", "❌ Error response body: $errorResponse")
+                    Log.e("SupabaseService", "❌ Request URL: $insertUrl")
+                    Log.e("SupabaseService", "❌ Request body size: $bodySize bytes, items count: ${items.size}")
+                    // Log first few characters of request body for debugging (truncate if too long)
+                    val bodyPreview = if (jsonBody.length > 500) jsonBody.substring(0, 500) + "..." else jsonBody
+                    Log.e("SupabaseService", "❌ Request body preview: $bodyPreview")
                 } else {
                     Log.d("SupabaseService", "✅ Saved ${items.size} out activity scans with notrans=$notrans")
                 }
                 success
             }
         } catch (e: Exception) {
-            Log.e("SupabaseService", "❌ Error saving out activity scans: ${e.message}", e)
+            Log.e("SupabaseService", "❌ Exception saving out activity scans: ${e.javaClass.simpleName}: ${e.message}", e)
+            Log.e("SupabaseService", "❌ Stack trace: ${e.stackTrace.take(5).joinToString("\n")}")
             false
         }
     }

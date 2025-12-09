@@ -21,35 +21,25 @@ class OutActivityRepository(application: Application) {
     private val prefs = appContext.getSharedPreferences("out_activity", Context.MODE_PRIVATE)
     
     /**
-     * Submit out activity to database
+     * Submit out activity - hanya update tag status ke SOLD (tidak simpan ke Supabase)
      */
-    suspend fun submitOutActivity(notrans: String, items: List<OutActivityItem>): Boolean = withContext(Dispatchers.IO) {
+    suspend fun submitOutActivity(items: List<OutActivityItem>): Boolean = withContext(Dispatchers.IO) {
         try {
-            Logger.PicklistInput.d("Submitting out activity (SOLD only) with ${items.size} items, notrans: $notrans")
+            Logger.PicklistInput.d("Submitting out activity - updating tag status to SOLD for ${items.size} items")
             
-            val supabaseSaved = supabaseService.saveOutActivityScans(notrans, items)
-            if (!supabaseSaved) {
-                Logger.PicklistInput.e("Failed to save out activity to Supabase")
-                return@withContext false
-            }
-
-            incrementTransactionCounterForToday()
-
-            // Setelah submit, langsung update tag status ke SOLD per-warehouse
-            // **PERBAIKAN**: Update tag status tidak mempengaruhi success submit (data sudah tersimpan di Supabase)
+            // Hanya update tag status ke SOLD per-warehouse (tidak simpan ke Supabase)
             val soldPosted = updateTagStatusSold(items)
             if (!soldPosted) {
-                Logger.PicklistInput.w("⚠️ Posting SOLD tag status returned partial/false result, but data already saved to Supabase")
+                Logger.PicklistInput.e("❌ Failed to update SOLD tag status")
+                return@withContext false
             } else {
-                Logger.PicklistInput.d("✅ SOLD tag status updated successfully")
+                Logger.PicklistInput.d("✅ SOLD tag status updated successfully for ${items.size} items")
             }
 
-            // Return true jika Supabase save berhasil (tag status update adalah opsional)
-            // Tag status bisa di-update manual nanti jika diperlukan
-            supabaseSaved
+            soldPosted
             
         } catch (e: Exception) {
-            Logger.PicklistInput.e("Error submitting out activity: ${e.message}")
+            Logger.PicklistInput.e("Error submitting out activity: ${e.message}", e)
             false
         }
     }
